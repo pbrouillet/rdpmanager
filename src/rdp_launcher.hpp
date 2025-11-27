@@ -96,6 +96,20 @@ struct RDPConnectionParams {
     bool drive_redirection = false;
     std::string redirect_drive_path;
     
+    // Advanced Features (RDP Flags)
+    bool home_drive = false;           // +home-drive: Map home directory
+    bool cert_tofu = false;            // /cert:tofu: Trust on first use
+    bool usb_auto = false;             // /usb:auto: Auto USB redirection
+    bool floatbar = false;             // /floatbar: Floating toolbar
+    bool dynamic_resolution = false;   // /dynamic-resolution
+    bool network_auto = false;         // /network:auto
+    bool gfx_avc420 = false;           // /gfx:AVC420
+    bool compression = false;          // /compression
+    bool audio_pulse = false;          // /audio:sys:pulse
+    bool prevent_session_lock = false; // /prevent-session-lock
+    bool auto_reconnect = false;       // /auto-reconnect
+    int auto_reconnect_max_retries = 3; // /auto-reconnect-max-retries
+    
     // Security
     bool ignore_certificate = false;
     std::string gateway_hostname;

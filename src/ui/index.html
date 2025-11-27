@@ -60,6 +60,97 @@
                         </div>
                     </div>
                     
+                    <!-- Advanced Options Toggle -->
+                    <div class="advanced-toggle" id="advancedToggle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="toggle-icon">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                        Advanced Options
+                    </div>
+                    
+                    <!-- Advanced Options Panel -->
+                    <div class="advanced-options" id="advancedOptions">
+                        <!-- Features Group -->
+                        <div class="options-group">
+                            <h4 class="options-group-title">Features</h4>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label" title="+home-drive: Map your home directory as a drive on the remote machine">
+                                    <input type="checkbox" id="optHomeDrive">
+                                    <span class="checkbox-text">Home Drive</span>
+                                </label>
+                                <label class="checkbox-label" title="+clipboard: Enable clipboard sharing between local and remote">
+                                    <input type="checkbox" id="optClipboard" checked>
+                                    <span class="checkbox-text">Clipboard</span>
+                                </label>
+                                <label class="checkbox-label" title="/usb:auto: Automatically redirect USB devices">
+                                    <input type="checkbox" id="optUsbAuto">
+                                    <span class="checkbox-text">USB Auto</span>
+                                </label>
+                                <label class="checkbox-label" title="/floatbar: Show floating toolbar in fullscreen mode">
+                                    <input type="checkbox" id="optFloatbar">
+                                    <span class="checkbox-text">Float Bar</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Performance Group -->
+                        <div class="options-group">
+                            <h4 class="options-group-title">Performance</h4>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label" title="/dynamic-resolution: Enable dynamic resolution changes">
+                                    <input type="checkbox" id="optDynamicResolution">
+                                    <span class="checkbox-text">Dynamic Resolution</span>
+                                </label>
+                                <label class="checkbox-label" title="/network:auto: Automatic network detection for optimal settings">
+                                    <input type="checkbox" id="optNetworkAuto">
+                                    <span class="checkbox-text">Network Auto</span>
+                                </label>
+                                <label class="checkbox-label" title="/gfx:AVC420: Use H.264 AVC420 graphics mode for better performance">
+                                    <input type="checkbox" id="optGfxAvc420">
+                                    <span class="checkbox-text">GFX AVC420</span>
+                                </label>
+                                <label class="checkbox-label" title="/compression: Enable data compression">
+                                    <input type="checkbox" id="optCompression">
+                                    <span class="checkbox-text">Compression</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Audio & Session Group -->
+                        <div class="options-group">
+                            <h4 class="options-group-title">Audio & Session</h4>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label" title="/audio:sys:pulse: Use PulseAudio for sound output">
+                                    <input type="checkbox" id="optAudioPulse">
+                                    <span class="checkbox-text">PulseAudio</span>
+                                </label>
+                                <label class="checkbox-label" title="/prevent-session-lock: Prevent the remote session from locking">
+                                    <input type="checkbox" id="optPreventLock">
+                                    <span class="checkbox-text">Prevent Lock</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Security & Reconnection Group -->
+                        <div class="options-group">
+                            <h4 class="options-group-title">Security & Reconnection</h4>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label" title="/cert:tofu: Trust On First Use - automatically accept new certificates">
+                                    <input type="checkbox" id="optCertTofu">
+                                    <span class="checkbox-text">Cert TOFU</span>
+                                </label>
+                                <label class="checkbox-label" title="/auto-reconnect: Automatically reconnect on disconnection">
+                                    <input type="checkbox" id="optAutoReconnect">
+                                    <span class="checkbox-text">Auto Reconnect</span>
+                                </label>
+                            </div>
+                            <div class="form-group form-group-inline" id="reconnectRetriesGroup" style="display: none;">
+                                <label for="optReconnectRetries">Max Retries:</label>
+                                <input type="number" id="optReconnectRetries" value="3" min="1" max="10" style="width: 80px;">
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="form-actions">
                         <button type="button" class="btn btn-secondary" id="saveBtn">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -41,7 +41,6 @@ freerdp_opts.add_cmake_defines({
   'WITH_PLATFORM_SERVER': false,
   'WITH_PROXY': false,
   'WITH_SHADOW': false,
-  'CHANNEL_URBDRC': false,
   'WITH_MANPAGES': false,
   'WITH_GSSAPI': false,
   'WITH_PKCS11': false,
@@ -51,6 +50,47 @@ freerdp_opts.add_cmake_defines({
   # Disable features that bring in extra dependencies
   'WITH_FUSE': false,
   'CHANNEL_REMDESK': false,
+  
+  # Enable Azure AD authentication
+  'WITH_AAD': true,
+  
+  # Enable H264 video codec support (via FFmpeg)
+  'WITH_FFMPEG': true,
+  'WITH_VIDEO_FFMPEG': true,
+  'WITH_DSP_FFMPEG': true,
+  # OpenH264 is optional - system may not have it installed
+  # FFmpeg with libx264 provides H264 support
+  'WITH_OPENH264': false,
+  
+  # Enable compression
+  'WITH_BULK_COMPRESSION': true,
+  
+  # Enable clipboard redirection (already ON by default, but explicit)
+  'CHANNEL_CLIPRDR': true,
+  'CHANNEL_CLIPRDR_CLIENT': true,
+  
+  # Enable drive/folder sharing
+  'CHANNEL_DRIVE': true,
+  'CHANNEL_DRIVE_CLIENT': true,
+  
+  # Enable camera/video capture redirection
+  # Note: Requires V4L2 and libusb at runtime
+  'CHANNEL_RDPECAM': true,
+  'CHANNEL_RDPECAM_CLIENT': true,
+  
+  # USB device forwarding - disabled due to complex static linking requirements
+  # for urbdrc_common library. Enable if building with shared libraries or
+  # using system FreeRDP installation.
+  'CHANNEL_URBDRC': false,
+  'CHANNEL_URBDRC_CLIENT': false,
+  
+  # Enable device redirection (printers, serial, parallel, smartcard)
+  'CHANNEL_RDPDR': true,
+  'CHANNEL_RDPDR_CLIENT': true,
+  
+  # Enable dynamic virtual channels (required for many dynamic channels)
+  'CHANNEL_DRDYNVC': true,
+  'CHANNEL_DRDYNVC_CLIENT': true,
 })
 
 # Try to find system FreeRDP first, fallback to subproject
@@ -125,6 +165,12 @@ if is_linux
   xinerama_dep = dependency('xinerama', required: false)
   if xinerama_dep.found()
     platform_deps += xinerama_dep
+  endif
+  
+  # libusb for USB device and camera redirection
+  libusb_dep = dependency('libusb-1.0', required: false)
+  if libusb_dep.found()
+    platform_deps += libusb_dep
   endif
   
 elif is_windows

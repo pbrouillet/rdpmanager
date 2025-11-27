@@ -164,6 +164,21 @@ void js_connect_rdp(webui::window::event* e) {
     std::string username = e->get_string(2);
     std::string domain = e->get_string(3);
     
+    // Advanced options
+    bool home_drive = e->get_bool(4);
+    bool clipboard = e->get_bool(5);
+    bool cert_tofu = e->get_bool(6);
+    bool usb_auto = e->get_bool(7);
+    bool floatbar = e->get_bool(8);
+    bool dynamic_resolution = e->get_bool(9);
+    bool network_auto = e->get_bool(10);
+    bool gfx_avc420 = e->get_bool(11);
+    bool compression = e->get_bool(12);
+    bool audio_pulse = e->get_bool(13);
+    bool prevent_session_lock = e->get_bool(14);
+    bool auto_reconnect = e->get_bool(15);
+    int auto_reconnect_max_retries = e->get_int(16);
+    
     std::cout << "[FRIDAY] Initiating RDP connection to " << host << ":" << port << std::endl;
     
     if (host.empty()) {
@@ -179,7 +194,23 @@ void js_connect_rdp(webui::window::event* e) {
     params.width = 1920;
     params.height = 1080;
     params.fullscreen = false;
-    params.clipboard = true;
+    
+    // Advanced features
+    params.home_drive = home_drive;
+    params.clipboard = clipboard;
+    params.cert_tofu = cert_tofu;
+    params.usb_auto = usb_auto;
+    params.floatbar = floatbar;
+    params.dynamic_resolution = dynamic_resolution;
+    params.network_auto = network_auto;
+    params.gfx_avc420 = gfx_avc420;
+    params.compression = compression;
+    params.audio_pulse = audio_pulse;
+    params.prevent_session_lock = prevent_session_lock;
+    params.auto_reconnect = auto_reconnect;
+    params.auto_reconnect_max_retries = (auto_reconnect_max_retries > 0) ? auto_reconnect_max_retries : 3;
+    
+    // Legacy audio setting (keep for compatibility)
     params.audio = true;
     
     bool success = g_rdp_launcher->launch(params);
@@ -210,7 +241,28 @@ void js_save_connection(webui::window::event* e) {
     std::string username = e->get_string(3);
     std::string domain = e->get_string(4);
     
-    bool success = g_config_manager->save_connection(name, host, port, username, domain);
+    // Advanced options
+    bool home_drive = e->get_bool(5);
+    bool clipboard = e->get_bool(6);
+    bool cert_tofu = e->get_bool(7);
+    bool usb_auto = e->get_bool(8);
+    bool floatbar = e->get_bool(9);
+    bool dynamic_resolution = e->get_bool(10);
+    bool network_auto = e->get_bool(11);
+    bool gfx_avc420 = e->get_bool(12);
+    bool compression = e->get_bool(13);
+    bool audio_pulse = e->get_bool(14);
+    bool prevent_session_lock = e->get_bool(15);
+    bool auto_reconnect = e->get_bool(16);
+    int auto_reconnect_max_retries = e->get_int(17);
+    
+    bool success = g_config_manager->save_connection(
+        name, host, port, username, domain,
+        home_drive, clipboard, cert_tofu, usb_auto, floatbar,
+        dynamic_resolution, network_auto, gfx_avc420, compression,
+        audio_pulse, prevent_session_lock, auto_reconnect,
+        (auto_reconnect_max_retries > 0) ? auto_reconnect_max_retries : 3
+    );
     e->return_bool(success);
 }
 

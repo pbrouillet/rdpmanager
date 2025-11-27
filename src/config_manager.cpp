@@ -133,9 +133,27 @@ bool ConfigManager::load() {
         profile.height = extract_int("height");
         profile.fullscreen = extract_bool("fullscreen");
         
+        // Advanced RDP Options
+        profile.home_drive = extract_bool("home_drive");
+        profile.clipboard = extract_bool("clipboard");
+        profile.cert_tofu = extract_bool("cert_tofu");
+        profile.usb_auto = extract_bool("usb_auto");
+        profile.floatbar = extract_bool("floatbar");
+        profile.dynamic_resolution = extract_bool("dynamic_resolution");
+        profile.network_auto = extract_bool("network_auto");
+        profile.gfx_avc420 = extract_bool("gfx_avc420");
+        profile.compression = extract_bool("compression");
+        profile.audio_pulse = extract_bool("audio_pulse");
+        profile.prevent_session_lock = extract_bool("prevent_session_lock");
+        profile.auto_reconnect = extract_bool("auto_reconnect");
+        profile.auto_reconnect_max_retries = extract_int("auto_reconnect_max_retries");
+        
         if (profile.port == 0) profile.port = 3389;
         if (profile.width == 0) profile.width = 1920;
         if (profile.height == 0) profile.height = 1080;
+        if (profile.auto_reconnect_max_retries == 0) profile.auto_reconnect_max_retries = 3;
+        // Default clipboard to true for older saved connections
+        if (obj.find("\"clipboard\"") == std::string::npos) profile.clipboard = true;
         
         if (!profile.name.empty() && !profile.hostname.empty()) {
             m_connections.push_back(profile);
@@ -164,7 +182,21 @@ bool ConfigManager::save() {
         json << "    \"domain\": \"" << c.domain << "\",\n";
         json << "    \"width\": " << c.width << ",\n";
         json << "    \"height\": " << c.height << ",\n";
-        json << "    \"fullscreen\": " << (c.fullscreen ? "true" : "false") << "\n";
+        json << "    \"fullscreen\": " << (c.fullscreen ? "true" : "false") << ",\n";
+        // Advanced RDP Options
+        json << "    \"home_drive\": " << (c.home_drive ? "true" : "false") << ",\n";
+        json << "    \"clipboard\": " << (c.clipboard ? "true" : "false") << ",\n";
+        json << "    \"cert_tofu\": " << (c.cert_tofu ? "true" : "false") << ",\n";
+        json << "    \"usb_auto\": " << (c.usb_auto ? "true" : "false") << ",\n";
+        json << "    \"floatbar\": " << (c.floatbar ? "true" : "false") << ",\n";
+        json << "    \"dynamic_resolution\": " << (c.dynamic_resolution ? "true" : "false") << ",\n";
+        json << "    \"network_auto\": " << (c.network_auto ? "true" : "false") << ",\n";
+        json << "    \"gfx_avc420\": " << (c.gfx_avc420 ? "true" : "false") << ",\n";
+        json << "    \"compression\": " << (c.compression ? "true" : "false") << ",\n";
+        json << "    \"audio_pulse\": " << (c.audio_pulse ? "true" : "false") << ",\n";
+        json << "    \"prevent_session_lock\": " << (c.prevent_session_lock ? "true" : "false") << ",\n";
+        json << "    \"auto_reconnect\": " << (c.auto_reconnect ? "true" : "false") << ",\n";
+        json << "    \"auto_reconnect_max_retries\": " << c.auto_reconnect_max_retries << "\n";
         json << "  }";
         
         if (i < m_connections.size() - 1) {
@@ -193,7 +225,20 @@ bool ConfigManager::save_connection(const std::string& name,
                                    const std::string& host,
                                    int port,
                                    const std::string& username,
-                                   const std::string& domain) {
+                                   const std::string& domain,
+                                   bool home_drive,
+                                   bool clipboard,
+                                   bool cert_tofu,
+                                   bool usb_auto,
+                                   bool floatbar,
+                                   bool dynamic_resolution,
+                                   bool network_auto,
+                                   bool gfx_avc420,
+                                   bool compression,
+                                   bool audio_pulse,
+                                   bool prevent_session_lock,
+                                   bool auto_reconnect,
+                                   int auto_reconnect_max_retries) {
     // Check if connection with this name exists
     auto it = std::find_if(m_connections.begin(), m_connections.end(),
         [&name](const ConnectionProfile& p) { return p.name == name; });
@@ -204,6 +249,19 @@ bool ConfigManager::save_connection(const std::string& name,
         it->port = (port > 0) ? port : 3389;
         it->username = username;
         it->domain = domain;
+        it->home_drive = home_drive;
+        it->clipboard = clipboard;
+        it->cert_tofu = cert_tofu;
+        it->usb_auto = usb_auto;
+        it->floatbar = floatbar;
+        it->dynamic_resolution = dynamic_resolution;
+        it->network_auto = network_auto;
+        it->gfx_avc420 = gfx_avc420;
+        it->compression = compression;
+        it->audio_pulse = audio_pulse;
+        it->prevent_session_lock = prevent_session_lock;
+        it->auto_reconnect = auto_reconnect;
+        it->auto_reconnect_max_retries = auto_reconnect_max_retries;
     } else {
         // Add new
         ConnectionProfile profile;
@@ -212,6 +270,19 @@ bool ConfigManager::save_connection(const std::string& name,
         profile.port = (port > 0) ? port : 3389;
         profile.username = username;
         profile.domain = domain;
+        profile.home_drive = home_drive;
+        profile.clipboard = clipboard;
+        profile.cert_tofu = cert_tofu;
+        profile.usb_auto = usb_auto;
+        profile.floatbar = floatbar;
+        profile.dynamic_resolution = dynamic_resolution;
+        profile.network_auto = network_auto;
+        profile.gfx_avc420 = gfx_avc420;
+        profile.compression = compression;
+        profile.audio_pulse = audio_pulse;
+        profile.prevent_session_lock = prevent_session_lock;
+        profile.auto_reconnect = auto_reconnect;
+        profile.auto_reconnect_max_retries = auto_reconnect_max_retries;
         m_connections.push_back(profile);
     }
     
@@ -252,7 +323,21 @@ std::string ConfigManager::get_connections_json() const {
         json << "\"hostname\":\"" << c.hostname << "\",";
         json << "\"port\":" << c.port << ",";
         json << "\"username\":\"" << c.username << "\",";
-        json << "\"domain\":\"" << c.domain << "\"";
+        json << "\"domain\":\"" << c.domain << "\",";
+        // Advanced RDP Options
+        json << "\"home_drive\":" << (c.home_drive ? "true" : "false") << ",";
+        json << "\"clipboard\":" << (c.clipboard ? "true" : "false") << ",";
+        json << "\"cert_tofu\":" << (c.cert_tofu ? "true" : "false") << ",";
+        json << "\"usb_auto\":" << (c.usb_auto ? "true" : "false") << ",";
+        json << "\"floatbar\":" << (c.floatbar ? "true" : "false") << ",";
+        json << "\"dynamic_resolution\":" << (c.dynamic_resolution ? "true" : "false") << ",";
+        json << "\"network_auto\":" << (c.network_auto ? "true" : "false") << ",";
+        json << "\"gfx_avc420\":" << (c.gfx_avc420 ? "true" : "false") << ",";
+        json << "\"compression\":" << (c.compression ? "true" : "false") << ",";
+        json << "\"audio_pulse\":" << (c.audio_pulse ? "true" : "false") << ",";
+        json << "\"prevent_session_lock\":" << (c.prevent_session_lock ? "true" : "false") << ",";
+        json << "\"auto_reconnect\":" << (c.auto_reconnect ? "true" : "false") << ",";
+        json << "\"auto_reconnect_max_retries\":" << c.auto_reconnect_max_retries;
         json << "}";
         
         if (i < m_connections.size() - 1) {

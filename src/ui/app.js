@@ -17,6 +17,24 @@ const elements = {
     connectBtn: document.getElementById('connectBtn'),
     saveBtn: document.getElementById('saveBtn'),
     
+    // Advanced Options
+    advancedToggle: document.getElementById('advancedToggle'),
+    advancedOptions: document.getElementById('advancedOptions'),
+    optHomeDrive: document.getElementById('optHomeDrive'),
+    optClipboard: document.getElementById('optClipboard'),
+    optUsbAuto: document.getElementById('optUsbAuto'),
+    optFloatbar: document.getElementById('optFloatbar'),
+    optDynamicResolution: document.getElementById('optDynamicResolution'),
+    optNetworkAuto: document.getElementById('optNetworkAuto'),
+    optGfxAvc420: document.getElementById('optGfxAvc420'),
+    optCompression: document.getElementById('optCompression'),
+    optAudioPulse: document.getElementById('optAudioPulse'),
+    optPreventLock: document.getElementById('optPreventLock'),
+    optCertTofu: document.getElementById('optCertTofu'),
+    optAutoReconnect: document.getElementById('optAutoReconnect'),
+    optReconnectRetries: document.getElementById('optReconnectRetries'),
+    reconnectRetriesGroup: document.getElementById('reconnectRetriesGroup'),
+    
     // Connections list
     connectionsList: document.getElementById('connectionsList'),
     
@@ -288,7 +306,78 @@ function selectConnection(index) {
     elements.username.value = conn.username || '';
     elements.domain.value = conn.domain || '';
     
+    // Fill advanced options
+    setAdvancedOptions(conn);
+    
     renderConnections();
+}
+
+// ============================================================================
+// Advanced Options Management
+// ============================================================================
+
+function getAdvancedOptions() {
+    return {
+        home_drive: elements.optHomeDrive.checked,
+        clipboard: elements.optClipboard.checked,
+        cert_tofu: elements.optCertTofu.checked,
+        usb_auto: elements.optUsbAuto.checked,
+        floatbar: elements.optFloatbar.checked,
+        dynamic_resolution: elements.optDynamicResolution.checked,
+        network_auto: elements.optNetworkAuto.checked,
+        gfx_avc420: elements.optGfxAvc420.checked,
+        compression: elements.optCompression.checked,
+        audio_pulse: elements.optAudioPulse.checked,
+        prevent_session_lock: elements.optPreventLock.checked,
+        auto_reconnect: elements.optAutoReconnect.checked,
+        auto_reconnect_max_retries: parseInt(elements.optReconnectRetries.value) || 3
+    };
+}
+
+function setAdvancedOptions(conn) {
+    elements.optHomeDrive.checked = conn.home_drive || false;
+    elements.optClipboard.checked = conn.clipboard !== false; // Default true
+    elements.optCertTofu.checked = conn.cert_tofu || false;
+    elements.optUsbAuto.checked = conn.usb_auto || false;
+    elements.optFloatbar.checked = conn.floatbar || false;
+    elements.optDynamicResolution.checked = conn.dynamic_resolution || false;
+    elements.optNetworkAuto.checked = conn.network_auto || false;
+    elements.optGfxAvc420.checked = conn.gfx_avc420 || false;
+    elements.optCompression.checked = conn.compression || false;
+    elements.optAudioPulse.checked = conn.audio_pulse || false;
+    elements.optPreventLock.checked = conn.prevent_session_lock || false;
+    elements.optAutoReconnect.checked = conn.auto_reconnect || false;
+    elements.optReconnectRetries.value = conn.auto_reconnect_max_retries || 3;
+    
+    // Show/hide retries field
+    updateReconnectRetriesVisibility();
+}
+
+function resetAdvancedOptions() {
+    elements.optHomeDrive.checked = false;
+    elements.optClipboard.checked = true;
+    elements.optCertTofu.checked = false;
+    elements.optUsbAuto.checked = false;
+    elements.optFloatbar.checked = false;
+    elements.optDynamicResolution.checked = false;
+    elements.optNetworkAuto.checked = false;
+    elements.optGfxAvc420.checked = false;
+    elements.optCompression.checked = false;
+    elements.optAudioPulse.checked = false;
+    elements.optPreventLock.checked = false;
+    elements.optAutoReconnect.checked = false;
+    elements.optReconnectRetries.value = 3;
+    updateReconnectRetriesVisibility();
+}
+
+function updateReconnectRetriesVisibility() {
+    elements.reconnectRetriesGroup.style.display = 
+        elements.optAutoReconnect.checked ? 'flex' : 'none';
+}
+
+function toggleAdvancedOptions() {
+    elements.advancedToggle.classList.toggle('expanded');
+    elements.advancedOptions.classList.toggle('visible');
 }
 
 // ============================================================================
@@ -321,6 +410,9 @@ async function handleConnect() {
     const username = elements.username.value.trim();
     const domain = elements.domain.value.trim();
     
+    // Get advanced options
+    const options = getAdvancedOptions();
+    
     if (!hostname) {
         showToast('Please enter a hostname or IP address', 'error');
         elements.hostname.focus();
@@ -331,7 +423,14 @@ async function handleConnect() {
     elements.connectBtn.disabled = true;
     
     try {
-        const result = await connectRDP(hostname, port, username, domain);
+        const result = await connectRDP(
+            hostname, port, username, domain,
+            options.home_drive, options.clipboard, options.cert_tofu,
+            options.usb_auto, options.floatbar, options.dynamic_resolution,
+            options.network_auto, options.gfx_avc420, options.compression,
+            options.audio_pulse, options.prevent_session_lock,
+            options.auto_reconnect, options.auto_reconnect_max_retries
+        );
         const response = JSON.parse(result);
         
         if (response.success) {
@@ -359,6 +458,9 @@ async function handleSaveConnection() {
     const username = elements.username.value.trim();
     const domain = elements.domain.value.trim();
     
+    // Get advanced options
+    const options = getAdvancedOptions();
+    
     if (!name) {
         showToast('Please enter a connection name', 'error');
         elements.connectionName.focus();
@@ -373,7 +475,14 @@ async function handleSaveConnection() {
     }
     
     try {
-        const success = await saveConnection(name, hostname, port, username, domain);
+        const success = await saveConnection(
+            name, hostname, port, username, domain,
+            options.home_drive, options.clipboard, options.cert_tofu,
+            options.usb_auto, options.floatbar, options.dynamic_resolution,
+            options.network_auto, options.gfx_avc420, options.compression,
+            options.audio_pulse, options.prevent_session_lock,
+            options.auto_reconnect, options.auto_reconnect_max_retries
+        );
         
         if (success) {
             showToast(`Connection "${name}" saved`, 'success');
@@ -432,6 +541,12 @@ function initEventListeners() {
     elements.saveBtn.addEventListener('click', () => {
         openSaveModal();
     });
+    
+    // Advanced options toggle
+    elements.advancedToggle.addEventListener('click', toggleAdvancedOptions);
+    
+    // Auto reconnect checkbox - show/hide retries field
+    elements.optAutoReconnect.addEventListener('change', updateReconnectRetriesVisibility);
     
     // Save Modal controls
     elements.modalClose.addEventListener('click', closeSaveModal);

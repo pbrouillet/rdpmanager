@@ -328,12 +328,79 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     freerdp_settings_set_bool(settings, FreeRDP_DisableThemes, m_params.disable_themes);
     freerdp_settings_set_bool(settings, FreeRDP_AllowFontSmoothing, !m_params.disable_font_smoothing);
     
-    // Dynamic resolution support
-    freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, true);
-    freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, true);
+    // Dynamic resolution support (use param if set, otherwise default to true)
+    if (m_params.dynamic_resolution) {
+        freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, true);
+        freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, true);
+    }
     
     // Window title
     freerdp_settings_set_string(settings, FreeRDP_WindowTitle, m_params.hostname.c_str());
+    
+    // ========================================================================
+    // Advanced RDP Features (GUI Options)
+    // ========================================================================
+    
+    // +home-drive: Map home directory as drive
+    if (m_params.home_drive) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectHomeDrive, true);
+    }
+    
+    // /cert:tofu - Trust On First Use for certificates
+    if (m_params.cert_tofu) {
+        freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, true);
+    }
+    
+    // /usb:auto - Automatic USB redirection
+    // Note: USB redirection requires additional setup; this enables drive redirection as fallback
+    if (m_params.usb_auto) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectDrives, true);
+    }
+    
+    // /floatbar - Floating toolbar in fullscreen (UINT32: 0=disabled, non-zero=enabled)
+    if (m_params.floatbar) {
+        freerdp_settings_set_uint32(settings, FreeRDP_Floatbar, 1);
+    }
+    
+    // /network:auto - Automatic network detection
+    if (m_params.network_auto) {
+        freerdp_settings_set_uint32(settings, FreeRDP_ConnectionType, CONNECTION_TYPE_AUTODETECT);
+        freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, true);
+    }
+    
+    // /gfx:AVC420 - AVC420 graphics mode (H.264)
+    if (m_params.gfx_avc420) {
+        freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, true);
+        freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, false);
+        freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, false);
+        freerdp_settings_set_bool(settings, FreeRDP_GfxH264, true);
+    }
+    
+    // /compression - Enable compression
+    if (m_params.compression) {
+        freerdp_settings_set_bool(settings, FreeRDP_CompressionEnabled, true);
+        freerdp_settings_set_uint32(settings, FreeRDP_CompressionLevel, 2);
+    }
+    
+    // /audio:sys:pulse - PulseAudio sound output
+    // Note: Audio device selection is handled by channel plugins, we just enable audio here
+    if (m_params.audio_pulse) {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, true);
+        freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, true);
+    }
+    
+    // /prevent-session-lock - Prevent remote session from locking
+    // Use FakeMouseMotionInterval to send fake mouse movements (interval in ms, 0 = disabled)
+    if (m_params.prevent_session_lock) {
+        freerdp_settings_set_uint32(settings, FreeRDP_FakeMouseMotionInterval, 60000); // Every 60 seconds
+    }
+    
+    // /auto-reconnect - Enable automatic reconnection
+    if (m_params.auto_reconnect) {
+        freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, true);
+        freerdp_settings_set_uint32(settings, FreeRDP_AutoReconnectMaxRetries, 
+                                    static_cast<uint32_t>(m_params.auto_reconnect_max_retries));
+    }
     
     return true;
 }

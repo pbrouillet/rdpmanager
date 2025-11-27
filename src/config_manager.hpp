@@ -26,6 +26,21 @@ struct ConnectionProfile {
     int width = 1920;
     int height = 1080;
     bool fullscreen = false;
+    
+    // Advanced RDP Options
+    bool home_drive = false;           // +home-drive
+    bool clipboard = true;             // +clipboard
+    bool cert_tofu = false;            // /cert:tofu
+    bool usb_auto = false;             // /usb:auto
+    bool floatbar = false;             // /floatbar
+    bool dynamic_resolution = false;   // /dynamic-resolution
+    bool network_auto = false;         // /network:auto
+    bool gfx_avc420 = false;           // /gfx:AVC420
+    bool compression = false;          // /compression
+    bool audio_pulse = false;          // /audio:sys:pulse
+    bool prevent_session_lock = false; // /prevent-session-lock
+    bool auto_reconnect = false;       // /auto-reconnect
+    int auto_reconnect_max_retries = 3; // /auto-reconnect-max-retries
 };
 
 /**
@@ -53,7 +68,20 @@ public:
                         const std::string& host,
                         int port,
                         const std::string& username,
-                        const std::string& domain);
+                        const std::string& domain,
+                        bool home_drive = false,
+                        bool clipboard = true,
+                        bool cert_tofu = false,
+                        bool usb_auto = false,
+                        bool floatbar = false,
+                        bool dynamic_resolution = false,
+                        bool network_auto = false,
+                        bool gfx_avc420 = false,
+                        bool compression = false,
+                        bool audio_pulse = false,
+                        bool prevent_session_lock = false,
+                        bool auto_reconnect = false,
+                        int auto_reconnect_max_retries = 3);
     
     /**
      * Delete a connection by name
