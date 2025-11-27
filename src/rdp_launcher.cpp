@@ -10,6 +10,7 @@
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
+#include <cstdarg>
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -70,6 +71,10 @@ void RDPSession::set_certificate_callback(CertificateVerifyCallback callback) {
 
 void RDPSession::set_authenticate_callback(AuthenticateCallback callback) {
     m_auth_callback = std::move(callback);
+}
+
+void RDPSession::set_aad_auth_callback(AADAuthCallback callback) {
+    m_aad_callback = std::move(callback);
 }
 
 // Static callback trampolines - these extract the RDPSession from the global map
@@ -246,6 +251,160 @@ int RDPSession::gateway_authenticate_callback(freerdp* instance, char** username
     return 1;
 }
 
+std::string RDPSession::extract_code_from_url(const std::string& url) {
+    // Find "code=" in the URL
+    size_t code_pos = url.find("code=");
+    if (code_pos == std::string::npos) {
+        return "";
+    }
+    
+    code_pos += 5;  // Skip "code="
+    
+    // Find the end of the code (either '&' or end of string)
+    size_t end_pos = url.find('&', code_pos);
+    if (end_pos == std::string::npos) {
+        end_pos = url.length();
+    }
+    
+    return url.substr(code_pos, end_pos - code_pos);
+}
+
+int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char** token, size_t count, ...) {
+    if (!instance || !token) return FALSE;
+    
+    RDPSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        auto it = g_session_map.find(instance);
+        if (it != g_session_map.end()) {
+            session = it->second;
+        }
+    }
+    
+    if (!session || !session->m_aad_callback) {
+        std::cout << "[RDPSession] AAD authentication required (no UI callback set)" << std::endl;
+        std::cout << "[RDPSession] Token type: " << tokenType << ", count: " << count << std::endl;
+        return FALSE;
+    }
+    
+    rdpClientContext* cctx = reinterpret_cast<rdpClientContext*>(instance->context);
+    if (!cctx) {
+        std::cerr << "[RDPSession] No client context available for AAD" << std::endl;
+        return FALSE;
+    }
+    
+    AADAuthRequest request;
+    std::string scope;
+    std::string req_cnf;
+    
+    // Extract variable arguments based on token type
+    va_list ap;
+    va_start(ap, count);
+    
+    AccessTokenType aadTokenType = static_cast<AccessTokenType>(tokenType);
+    
+    switch (aadTokenType) {
+        case ACCESS_TOKEN_TYPE_AAD: {
+            request.type = AADAuthRequest::RDS_AAD;
+            if (count >= 2) {
+                const char* scope_arg = va_arg(ap, const char*);
+                const char* req_cnf_arg = va_arg(ap, const char*);
+                scope = scope_arg ? scope_arg : "";
+                req_cnf = req_cnf_arg ? req_cnf_arg : "";
+                request.scope = scope;
+                request.req_cnf = req_cnf;
+            }
+            
+            // Get the authorization URL to present to the user
+            char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AUTH_REQUEST, 
+                                                        scope.c_str());
+            if (auth_url) {
+                request.auth_url = auth_url;
+                free(auth_url);
+            }
+            break;
+        }
+        case ACCESS_TOKEN_TYPE_AVD: {
+            request.type = AADAuthRequest::AVD;
+            
+            // Get the AVD authorization URL
+            char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_AUTH_REQUEST);
+            if (auth_url) {
+                request.auth_url = auth_url;
+                free(auth_url);
+            }
+            break;
+        }
+        default:
+            va_end(ap);
+            std::cerr << "[RDPSession] Unknown AAD token type: " << tokenType << std::endl;
+            return FALSE;
+    }
+    va_end(ap);
+    
+    if (request.auth_url.empty()) {
+        std::cerr << "[RDPSession] Failed to generate AAD auth URL" << std::endl;
+        return FALSE;
+    }
+    
+    std::cout << "[RDPSession] AAD authentication required" << std::endl;
+    std::cout << "[RDPSession]   Type: " << (request.type == AADAuthRequest::RDS_AAD ? "RDS_AAD" : "AVD") << std::endl;
+    std::cout << "[RDPSession]   Auth URL: " << request.auth_url << std::endl;
+    
+    // Call the UI callback to handle the OAuth flow
+    AADAuthResponse response = session->m_aad_callback(request);
+    
+    if (!response.success || response.redirect_url.empty()) {
+        std::cout << "[RDPSession] AAD authentication cancelled or failed" << std::endl;
+        return FALSE;
+    }
+    
+    std::cout << "[RDPSession] AAD authentication: received redirect URL" << std::endl;
+    
+    // Extract authorization code from redirect URL
+    std::string code = extract_code_from_url(response.redirect_url);
+    if (code.empty()) {
+        std::cerr << "[RDPSession] Failed to extract authorization code from redirect URL" << std::endl;
+        return FALSE;
+    }
+    
+    std::cout << "[RDPSession] AAD authentication: extracted authorization code" << std::endl;
+    
+    // Build token request URL and exchange code for token
+    char* token_request = nullptr;
+    switch (aadTokenType) {
+        case ACCESS_TOKEN_TYPE_AAD:
+            token_request = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_TOKEN_REQUEST,
+                                                       scope.c_str(), code.c_str(), req_cnf.c_str());
+            break;
+        case ACCESS_TOKEN_TYPE_AVD:
+            token_request = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_TOKEN_REQUEST,
+                                                       code.c_str());
+            break;
+        default:
+            return FALSE;
+    }
+    
+    if (!token_request) {
+        std::cerr << "[RDPSession] Failed to build token request" << std::endl;
+        return FALSE;
+    }
+    
+    std::cout << "[RDPSession] AAD authentication: exchanging code for token..." << std::endl;
+    
+    // Exchange code for token using FreeRDP's HTTP client
+    BOOL result = client_common_get_access_token(instance, token_request, token);
+    free(token_request);
+    
+    if (result) {
+        std::cout << "[RDPSession] AAD authentication: successfully obtained access token" << std::endl;
+    } else {
+        std::cerr << "[RDPSession] AAD authentication: failed to exchange code for token" << std::endl;
+    }
+    
+    return result;
+}
+
 void RDPSession::install_callbacks(freerdp* instance) {
     if (!instance) return;
     
@@ -263,7 +422,10 @@ void RDPSession::install_callbacks(freerdp* instance) {
     instance->Authenticate = reinterpret_cast<pAuthenticate>(authenticate_callback);
     instance->GatewayAuthenticate = reinterpret_cast<pAuthenticate>(gateway_authenticate_callback);
     
-    std::cout << "[RDPSession] Installed custom callbacks for certificate and authentication" << std::endl;
+    // Install AAD access token callback for Azure AD authentication
+    instance->GetAccessToken = reinterpret_cast<pGetAccessToken>(get_access_token_callback);
+    
+    std::cout << "[RDPSession] Installed custom callbacks for certificate, authentication, and AAD" << std::endl;
 }
 
 bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
@@ -567,6 +729,9 @@ bool RDPLauncher::launch(const RDPConnectionParams& params) {
     if (m_auth_callback) {
         session->set_authenticate_callback(m_auth_callback);
     }
+    if (m_aad_callback) {
+        session->set_aad_auth_callback(m_aad_callback);
+    }
     
     auto sessionStartResult = session->start();
 
@@ -622,6 +787,10 @@ void RDPLauncher::set_certificate_callback(CertificateVerifyCallback callback) {
 
 void RDPLauncher::set_authenticate_callback(AuthenticateCallback callback) {
     m_auth_callback = std::move(callback);
+}
+
+void RDPLauncher::set_aad_auth_callback(AADAuthCallback callback) {
+    m_aad_callback = std::move(callback);
 }
 
 void RDPLauncher::terminate_all() {

@@ -68,11 +68,39 @@ struct AuthResponse {
 };
 
 /**
+ * AAD Authentication request - for OAuth2 code flow
+ */
+struct AADAuthRequest {
+    enum Type {
+        RDS_AAD,        // RDS AAD authentication (ACCESS_TOKEN_TYPE_AAD)
+        AVD             // Azure Virtual Desktop (ACCESS_TOKEN_TYPE_AVD)
+    };
+    Type type;
+    std::string auth_url;      // URL to present to user for login
+    std::string scope;         // OAuth scope (for RDS_AAD)
+    std::string req_cnf;       // Request confirmation (for RDS_AAD)
+};
+
+/**
+ * AAD Authentication response
+ */
+struct AADAuthResponse {
+    bool success;
+    std::string redirect_url;  // The redirect URL containing the authorization code
+};
+
+/**
  * Callback types for interactive dialogs
  * These allow the UI to handle certificate verification and credential prompts
  */
 using CertificateVerifyCallback = std::function<CertificateAcceptance(const CertificateInfo& info)>;
 using AuthenticateCallback = std::function<AuthResponse(const AuthRequest& request)>;
+
+/**
+ * Callback for AAD authentication - allows UI to handle OAuth flow
+ * Return AADAuthResponse with success=true and the redirect_url containing the authorization code
+ */
+using AADAuthCallback = std::function<AADAuthResponse(const AADAuthRequest& request)>;
 
 /**
  * RDP Connection Parameters
@@ -167,6 +195,7 @@ public:
     // Set callbacks for interactive dialogs (must be set before start())
     void set_certificate_callback(CertificateVerifyCallback callback);
     void set_authenticate_callback(AuthenticateCallback callback);
+    void set_aad_auth_callback(AADAuthCallback callback);
 
 private:
     RDPConnectionParams m_params;
@@ -180,6 +209,7 @@ private:
     // Callbacks for interactive dialogs
     CertificateVerifyCallback m_cert_callback;
     AuthenticateCallback m_auth_callback;
+    AADAuthCallback m_aad_callback;
     
     // Internal methods
     void session_thread_func();
@@ -198,6 +228,10 @@ private:
                                                      const char* old_fingerprint, uint32_t flags);
     static int authenticate_callback(freerdp* instance, char** username, char** password, char** domain);
     static int gateway_authenticate_callback(freerdp* instance, char** username, char** password, char** domain);
+    static int get_access_token_callback(freerdp* instance, int tokenType, char** token, size_t count, ...);
+    
+    // Helper for AAD code extraction
+    static std::string extract_code_from_url(const std::string& url);
 };
 
 /**
@@ -255,6 +289,12 @@ public:
     void set_authenticate_callback(AuthenticateCallback callback);
 
     /**
+     * Set callback for AAD (Azure AD) authentication
+     * This will be propagated to new sessions
+     */
+    void set_aad_auth_callback(AADAuthCallback callback);
+
+    /**
      * Terminate all active sessions
      */
     void terminate_all();
@@ -265,6 +305,7 @@ private:
     ConnectionStateCallback m_state_callback;
     CertificateVerifyCallback m_cert_callback;
     AuthenticateCallback m_auth_callback;
+    AADAuthCallback m_aad_callback;
     mutable std::mutex m_mutex;
     
     // Clean up finished sessions

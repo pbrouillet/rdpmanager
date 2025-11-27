@@ -225,6 +225,104 @@ function closeAuthDialog(success) {
 }
 
 // ============================================================================
+// AAD Authentication Dialog (called from C++ backend for Azure AD OAuth flow)
+// ============================================================================
+let aadAuthWindow = null;
+let aadAuthCheckInterval = null;
+
+function showAADAuthDialog(aadRequest) {
+    console.log('[FRIDAY] AAD Authentication requested:', aadRequest);
+    
+    // Show a toast notification about the OAuth flow
+    showToast(`Azure AD authentication required (${aadRequest.type}). Opening login window...`, 'info', 5000);
+    
+    // Open the auth URL in a popup window
+    const width = 600;
+    const height = 700;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    
+    aadAuthWindow = window.open(
+        aadRequest.authUrl,
+        'AAD Login',
+        `width=${width},height=${height},left=${left},top=${top},popup=yes,scrollbars=yes`
+    );
+    
+    if (!aadAuthWindow) {
+        // Popup was blocked
+        console.error('[FRIDAY] AAD auth popup was blocked');
+        showToast('Popup blocked! Please allow popups for AAD authentication.', 'error');
+        webui.call('aadAuthResponse', false, '');
+        return;
+    }
+    
+    // Monitor the popup window for the redirect URL or closure
+    aadAuthCheckInterval = setInterval(() => {
+        try {
+            // Check if window was closed by user
+            if (aadAuthWindow.closed) {
+                clearInterval(aadAuthCheckInterval);
+                aadAuthCheckInterval = null;
+                console.log('[FRIDAY] AAD auth window closed by user');
+                showToast('Azure AD authentication cancelled', 'warning');
+                webui.call('aadAuthResponse', false, '');
+                return;
+            }
+            
+            // Try to access the URL - will throw if cross-origin
+            const currentUrl = aadAuthWindow.location.href;
+            
+            // Check if we got redirected back with an authorization code
+            if (currentUrl.includes('code=') || currentUrl.includes('error=')) {
+                clearInterval(aadAuthCheckInterval);
+                aadAuthCheckInterval = null;
+                aadAuthWindow.close();
+                
+                if (currentUrl.includes('code=')) {
+                    console.log('[FRIDAY] AAD auth: received authorization code');
+                    showToast('Azure AD authentication successful!', 'success');
+                    webui.call('aadAuthResponse', true, currentUrl);
+                } else {
+                    // Error in OAuth flow
+                    console.error('[FRIDAY] AAD auth error:', currentUrl);
+                    showToast('Azure AD authentication failed', 'error');
+                    webui.call('aadAuthResponse', false, '');
+                }
+                return;
+            }
+        } catch (e) {
+            // Cross-origin error - window is still on the AAD domain, this is expected
+            // Just continue polling
+        }
+    }, 500);
+    
+    // Set a maximum timeout (5 minutes)
+    setTimeout(() => {
+        if (aadAuthCheckInterval) {
+            clearInterval(aadAuthCheckInterval);
+            aadAuthCheckInterval = null;
+            if (aadAuthWindow && !aadAuthWindow.closed) {
+                aadAuthWindow.close();
+            }
+            console.log('[FRIDAY] AAD auth timed out');
+            showToast('Azure AD authentication timed out', 'error');
+            webui.call('aadAuthResponse', false, '');
+        }
+    }, 300000); // 5 minute timeout
+}
+
+function cancelAADAuth() {
+    if (aadAuthCheckInterval) {
+        clearInterval(aadAuthCheckInterval);
+        aadAuthCheckInterval = null;
+    }
+    if (aadAuthWindow && !aadAuthWindow.closed) {
+        aadAuthWindow.close();
+    }
+    webui.call('aadAuthResponse', false, '');
+}
+
+// ============================================================================
 // Connections List
 // ============================================================================
 function renderConnections() {

@@ -15,6 +15,14 @@
                     "value": ":0"
                 },
                 {
+                    "name": "LD_PRELOAD",
+                    "value": ""
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": ""
+                },
+                {
                     "name": "GTK_PATH",
                     "value": ""
                 },
@@ -36,6 +44,14 @@
                 },
                 {
                     "name": "GSETTINGS_SCHEMA_DIR",
+                    "value": ""
+                },
+                {
+                    "name": "GDK_PIXBUF_MODULE_FILE",
+                    "value": ""
+                },
+                {
+                    "name": "GDK_PIXBUF_MODULEDIR",
                     "value": ""
                 }
             ],
@@ -77,6 +93,14 @@
                     "value": ":0"
                 },
                 {
+                    "name": "LD_PRELOAD",
+                    "value": ""
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": ""
+                },
+                {
                     "name": "GTK_PATH",
                     "value": ""
                 },
@@ -99,6 +123,14 @@
                 {
                     "name": "GSETTINGS_SCHEMA_DIR",
                     "value": ""
+                },
+                {
+                    "name": "GDK_PIXBUF_MODULE_FILE",
+                    "value": ""
+                },
+                {
+                    "name": "GDK_PIXBUF_MODULEDIR",
+                    "value": ""
                 }
             ],
             "externalConsole": false,
@@ -115,12 +147,16 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "DISPLAY": ":0",
+                "LD_PRELOAD": "",
+                "LD_LIBRARY_PATH": "",
                 "GTK_PATH": "",
                 "GTK_EXE_PREFIX": "",
                 "GIO_MODULE_DIR": "",
                 "GTK_IM_MODULE_FILE": "",
                 "LOCPATH": "",
-                "GSETTINGS_SCHEMA_DIR": ""
+                "GSETTINGS_SCHEMA_DIR": "",
+                "GDK_PIXBUF_MODULE_FILE": "",
+                "GDK_PIXBUF_MODULEDIR": ""
             },
             "preLaunchTask": "Ninja: Build (Debug)",
             "sourceMap": {},
@@ -153,6 +189,14 @@
                 {
                     "name": "DISPLAY",
                     "value": ":0"
+                },
+                {
+                    "name": "LD_PRELOAD",
+                    "value": ""
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": ""
                 },
                 {
                     "name": "RDP_DEFAULT_HOST",

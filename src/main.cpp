@@ -42,6 +42,11 @@ static std::atomic<bool> g_auth_dialog_pending{false};
 static AuthRequest g_pending_auth_request;
 static AuthResponse g_auth_dialog_result;
 
+// AAD authentication dialog state
+static std::atomic<bool> g_aad_dialog_pending{false};
+static AADAuthRequest g_pending_aad_request;
+static AADAuthResponse g_aad_dialog_result;
+
 /**
  * Certificate verification callback - called from FreeRDP thread
  * Shows a dialog in the UI and waits for user response
@@ -121,6 +126,43 @@ AuthResponse handle_authenticate(const AuthRequest& request) {
 }
 
 /**
+ * AAD Authentication callback - called from FreeRDP thread
+ * Shows a browser/dialog in the UI for OAuth2 code flow and waits for redirect URL
+ */
+AADAuthResponse handle_aad_authenticate(const AADAuthRequest& request) {
+    std::unique_lock<std::mutex> lock(g_dialog_mutex);
+    
+    // Store the request and signal the UI
+    g_pending_aad_request = request;
+    g_aad_dialog_pending = true;
+    g_aad_dialog_result = {false, ""};
+    
+    // Call JavaScript to show the AAD auth dialog/browser
+    if (g_main_window) {
+        std::string type_str = (request.type == AADAuthRequest::RDS_AAD) ? "RDS_AAD" : "AVD";
+        std::string js = "showAADAuthDialog(" +
+            std::string("{") +
+            "\"type\":\"" + type_str + "\"," +
+            "\"authUrl\":\"" + request.auth_url + "\"," +
+            "\"scope\":\"" + request.scope + "\"" +
+            "});";
+        g_main_window->run(js);
+    }
+    
+    // Wait for the UI to respond (with longer timeout for OAuth flow)
+    auto status = g_dialog_cv.wait_for(lock, std::chrono::seconds(300), [] {
+        return !g_aad_dialog_pending.load();
+    });
+    
+    if (!status) {
+        std::cerr << "[FRIDAY] AAD auth dialog timed out" << std::endl;
+        return {false, ""};
+    }
+    
+    return g_aad_dialog_result;
+}
+
+/**
  * JavaScript binding: Respond to certificate dialog
  * Called from the UI when user makes a choice
  */
@@ -151,6 +193,22 @@ void js_auth_response(webui::window::event* e) {
     g_dialog_cv.notify_all();
     
     std::cout << "[FRIDAY] Auth response: " << (success ? "submitted" : "cancelled") << std::endl;
+}
+
+/**
+ * JavaScript binding: Respond to AAD authentication dialog
+ * Called from the UI when OAuth flow completes (with redirect URL) or is cancelled
+ */
+void js_aad_auth_response(webui::window::event* e) {
+    bool success = e->get_bool(0);
+    std::string redirect_url = e->get_string(1);
+    
+    std::lock_guard<std::mutex> lock(g_dialog_mutex);
+    g_aad_dialog_result = {success, redirect_url};
+    g_aad_dialog_pending = false;
+    g_dialog_cv.notify_all();
+    
+    std::cout << "[FRIDAY] AAD auth response: " << (success ? "completed" : "cancelled") << std::endl;
 }
 
 /**
@@ -351,12 +409,14 @@ int main(int argc, char* argv[]) {
     std::cout << "[FRIDAY] UI path: " << ui_path << std::endl;
     
     // Create the main window
+    //webui_set_timeout(0); // Wait forever (never timeout)
     webui::window main_window;
     g_main_window = &main_window;
     
     // Set up RDP callbacks for dialogs
     g_rdp_launcher->set_certificate_callback(handle_certificate_verify);
     g_rdp_launcher->set_authenticate_callback(handle_authenticate);
+    g_rdp_launcher->set_aad_auth_callback(handle_aad_authenticate);
     
     // Configure window properties
     main_window.set_size(1200, 800);
@@ -378,20 +438,22 @@ int main(int argc, char* argv[]) {
     // Bind dialog response functions
     main_window.bind("certificateResponse", js_certificate_response);
     main_window.bind("authResponse", js_auth_response);
+    main_window.bind("aadAuthResponse", js_aad_auth_response);
     
     // Load the HTML file (use relative path since root folder is set)
     std::cout << "[FRIDAY] Loading UI: index.html from " << ui_path << std::endl;
     
-    if (!main_window.show_browser("index.html", AnyBrowser)) {
-        std::cerr << "[ERROR] Failed to open browser window" << std::endl;
-        return 1;
-    }
-    
+    // if (!main_window.show_browser("index.html", AnyBrowser)) {
+    //     std::cerr << "[ERROR] Failed to open browser window" << std::endl;
+    //     return 1;
+    // }
+
+    main_window.show("index.html");
+
     std::cout << "[FRIDAY] Systems online. Awaiting your command, Boss." << std::endl;
     
     // Wait until the window is closed
     webui::wait();
-    
     g_main_window = nullptr;
     
     std::cout << "[FRIDAY] Shutting down. Goodbye, Boss." << std::endl;
