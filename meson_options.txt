@@ -1,0 +1,29 @@
+option('use_system_freerdp',
+  type: 'boolean',
+  value: false,
+  description: 'Use system-installed FreeRDP instead of submodule'
+)
+
+option('use_system_webui',
+  type: 'boolean', 
+  value: false,
+  description: 'Use system-installed WebUI instead of wrap'
+)
+
+option('default_rdp_port',
+  type: 'integer',
+  value: 3389,
+  description: 'Default RDP port for connections'
+)
+
+option('enable_clipboard',
+  type: 'boolean',
+  value: true,
+  description: 'Enable clipboard redirection in RDP sessions'
+)
+
+option('enable_audio',
+  type: 'boolean',
+  value: true,
+  description: 'Enable audio redirection in RDP sessions'
+)

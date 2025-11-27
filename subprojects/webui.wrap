@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/webui-dev/webui.git
+revision = main
+depth = 1
+patch_directory = webui
+
+[provide]
+webui = webui_dep

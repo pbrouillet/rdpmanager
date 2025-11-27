@@ -1,0 +1,118 @@
+# Alternative meson.build - Uses system FreeRDP (simpler setup)
+# 
+# To use this instead of the main meson.build:
+#   mv meson.build meson.build.full
+#   mv meson.build.simple meson.build
+#
+# This version uses the system-installed FreeRDP and WebUI,
+# making it faster to build but requires manual dependency installation.
+
+project('webui-rdp-client', 'cpp', 'c',
+  version: '0.1.0',
+  default_options: [
+    'cpp_std=c++17',
+    'c_std=c11',
+    'warning_level=2',
+    'buildtype=debugoptimized',
+  ]
+)
+
+# Platform detection
+host_system = host_machine.system()
+is_windows = host_system == 'windows'
+is_linux = host_system == 'linux'
+
+# Compiler
+cpp = meson.get_compiler('cpp')
+
+# Common dependencies
+thread_dep = dependency('threads')
+
+# ============================================================================
+# WebUI - Use wrap file (auto-downloaded)
+# ============================================================================
+webui_dep = dependency('webui', fallback: ['webui', 'webui_dep'])
+
+# ============================================================================
+# FreeRDP - Use system installation
+# ============================================================================
+# This uses pkgconfig to find system FreeRDP
+# Install with: sudo apt install freerdp2-dev (Ubuntu/Debian)
+#               sudo pacman -S freerdp (Arch)
+#               brew install freerdp (macOS)
+
+freerdp_dep = dependency('freerdp2', required: false)
+freerdp_client_dep = dependency('freerdp-client2', required: false)
+winpr_dep = dependency('winpr2', required: false)
+
+# Try FreeRDP 3 if 2 not found
+if not freerdp_dep.found()
+  freerdp_dep = dependency('freerdp3', required: false)
+  freerdp_client_dep = dependency('freerdp-client3', required: false)
+  winpr_dep = dependency('winpr3', required: false)
+endif
+
+use_freerdp_lib = freerdp_dep.found() and winpr_dep.found()
+
+if not use_freerdp_lib
+  warning('FreeRDP libraries not found - will use subprocess mode only')
+  warning('Install freerdp2-dev or freerdp-dev for library integration')
+endif
+
+# ============================================================================
+# Platform dependencies
+# ============================================================================
+platform_deps = []
+
+if is_linux
+  x11_dep = dependency('x11', required: false)
+  if x11_dep.found()
+    platform_deps += x11_dep
+  endif
+elif is_windows
+  platform_deps += cpp.find_library('ws2_32')
+  platform_deps += cpp.find_library('user32')
+  platform_deps += cpp.find_library('shell32')
+endif
+
+# ============================================================================
+# Sources
+# ============================================================================
+sources = files(
+  'src/main.cpp',
+  'src/rdp_launcher.cpp',
+  'src/config_manager.cpp',
+)
+
+# Include directories
+inc_dirs = include_directories('src')
+
+# ============================================================================
+# Build
+# ============================================================================
+
+# Collect all dependencies
+all_deps = [thread_dep, webui_dep] + platform_deps
+
+if use_freerdp_lib
+  all_deps += [freerdp_dep, freerdp_client_dep, winpr_dep]
+endif
+
+executable('webui-rdp-client',
+  sources,
+  include_directories: inc_dirs,
+  dependencies: all_deps,
+  install: true,
+  cpp_args: [
+    '-DUI_PATH="' + meson.current_source_dir() / 'src/ui"',
+  ],
+)
+
+# ============================================================================
+# Summary
+# ============================================================================
+summary({
+  'Platform': host_system,
+  'Build type': get_option('buildtype'),
+  'FreeRDP library': use_freerdp_lib ? 'Found' : 'Not found (subprocess mode)',
+}, section: 'Configuration')

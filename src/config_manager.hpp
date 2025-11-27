@@ -1,0 +1,84 @@
+#pragma once
+
+/**
+ * Configuration Manager
+ * 
+ * Handles saving and loading RDP connection profiles.
+ */
+
+#include <string>
+#include <vector>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+/**
+ * Saved connection profile
+ */
+struct ConnectionProfile {
+    std::string name;
+    std::string hostname;
+    int port = 3389;
+    std::string username;
+    std::string domain;
+    
+    // Display preferences
+    int width = 1920;
+    int height = 1080;
+    bool fullscreen = false;
+};
+
+/**
+ * Configuration Manager class
+ */
+class ConfigManager {
+public:
+    ConfigManager();
+    ~ConfigManager() = default;
+    
+    /**
+     * Load connections from config file
+     */
+    bool load();
+    
+    /**
+     * Save connections to config file
+     */
+    bool save();
+    
+    /**
+     * Save a single connection profile
+     */
+    bool save_connection(const std::string& name,
+                        const std::string& host,
+                        int port,
+                        const std::string& username,
+                        const std::string& domain);
+    
+    /**
+     * Delete a connection by name
+     */
+    bool delete_connection(const std::string& name);
+    
+    /**
+     * Get connection by name
+     */
+    ConnectionProfile* get_connection(const std::string& name);
+    
+    /**
+     * Get all connections as JSON string (for frontend)
+     */
+    std::string get_connections_json() const;
+    
+    /**
+     * Get list of all connection profiles
+     */
+    const std::vector<ConnectionProfile>& get_connections() const { return m_connections; }
+    
+private:
+    std::vector<ConnectionProfile> m_connections;
+    fs::path m_config_path;
+    
+    fs::path get_config_directory() const;
+    fs::path get_config_file_path() const;
+};

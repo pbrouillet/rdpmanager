@@ -1,0 +1,3 @@
+[submodule "subprojects/freerdp"]
+	path = subprojects/freerdp
+	url = https://github.com/FreeRDP/FreeRDP.git

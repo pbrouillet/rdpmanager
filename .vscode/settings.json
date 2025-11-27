@@ -1,0 +1,67 @@
+{
+    // Meson build system
+    "mesonbuild.buildFolder": "build",
+    "mesonbuild.configureOnOpen": true,
+    "mesonbuild.configureOptions": [
+        "--buildtype=debug"
+    ],
+    
+    // C/C++ settings
+    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
+    "C_Cpp.errorSquiggles": "enabled",
+    "C_Cpp.autocompleteAddParentheses": true,
+    
+    // Editor settings for C++
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": false,
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true
+    },
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true
+    },
+    
+    // File associations
+    "files.associations": {
+        "*.h": "c",
+        "*.hpp": "cpp",
+        "*.cpp": "cpp",
+        "meson.build": "meson",
+        "meson_options.txt": "meson"
+    },
+    
+    // Exclude build directories from search
+    "files.exclude": {
+        "**/build": true,
+        "**/build-release": true,
+        "**/.git": true,
+        "**/subprojects/freerdp": true
+    },
+    "search.exclude": {
+        "**/build": true,
+        "**/build-release": true,
+        "**/subprojects/freerdp": true,
+        "**/subprojects/webui": true
+    },
+    
+    // Terminal settings
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    
+    // Debug settings
+    "debug.allowBreakpointsEverywhere": true,
+    "debug.showBreakpointsInOverviewRuler": true,
+    
+    // Recommended extensions
+    "recommendations": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "mesonbuild.mesonbuild",
+        "vadimcn.vscode-lldb",
+        "twxs.cmake"
+    ],
+    "C_Cpp.default.compileCommands": "/home/pierrickc/src/webui-rdp-client/build/compile_commands.json"
+}

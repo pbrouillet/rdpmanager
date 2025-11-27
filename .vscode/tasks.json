@@ -1,0 +1,148 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Meson: Setup (Debug)",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "setup",
+                "build",
+                "--buildtype=debug",
+                "--wipe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Configure Meson build system (debug mode)"
+        },
+        {
+            "label": "Meson: Setup (Release)",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "setup",
+                "build-release",
+                "--buildtype=release",
+                "--wipe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Configure Meson build system (release mode)"
+        },
+        {
+            "label": "Ninja: Build (Debug)",
+            "type": "shell",
+            "command": "ninja",
+            "args": [
+                "-C",
+                "build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build project with Ninja (debug)",
+            "dependsOn": []
+        },
+        {
+            "label": "Ninja: Build (Release)",
+            "type": "shell",
+            "command": "ninja",
+            "args": [
+                "-C",
+                "build-release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build project with Ninja (release)"
+        },
+        {
+            "label": "Ninja: Clean",
+            "type": "shell",
+            "command": "ninja",
+            "args": [
+                "-C",
+                "build",
+                "clean"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Clean build artifacts"
+        },
+        {
+            "label": "Meson: Reconfigure",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "configure",
+                "build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Reconfigure Meson options"
+        },
+        {
+            "label": "Full Build: Setup + Build (Debug)",
+            "dependsOn": [
+                "Meson: Setup (Debug)",
+                "Ninja: Build (Debug)"
+            ],
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Full clean setup and build"
+        },
+        {
+            "label": "Git: Init Submodules",
+            "type": "shell",
+            "command": "git",
+            "args": [
+                "submodule",
+                "update",
+                "--init",
+                "--recursive"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Initialize and update git submodules"
+        },
+        {
+            "label": "Run Application",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/webui-rdp-client",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "test",
+            "problemMatcher": [],
+            "detail": "Run the built application",
+            "dependsOn": "Ninja: Build (Debug)"
+        }
+    ]
+}
