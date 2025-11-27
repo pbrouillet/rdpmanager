@@ -10,6 +10,10 @@
 #include <filesystem>
 #include <string>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
+#include <optional>
+#include <atomic>
 
 #include "rdp_launcher.hpp"
 #include "config_manager.hpp"
@@ -19,6 +23,135 @@ namespace fs = std::filesystem;
 // Global instances
 static std::unique_ptr<RDPLauncher> g_rdp_launcher;
 static std::unique_ptr<ConfigManager> g_config_manager;
+static webui::window* g_main_window = nullptr;
+
+// ============================================================================
+// Dialog synchronization mechanism
+// We need to show dialogs from the UI thread and wait for the response
+// ============================================================================
+static std::mutex g_dialog_mutex;
+static std::condition_variable g_dialog_cv;
+
+// Certificate dialog state
+static std::atomic<bool> g_cert_dialog_pending{false};
+static CertificateInfo g_pending_cert_info;
+static CertificateAcceptance g_cert_dialog_result{CertificateAcceptance::Reject};
+
+// Auth dialog state  
+static std::atomic<bool> g_auth_dialog_pending{false};
+static AuthRequest g_pending_auth_request;
+static AuthResponse g_auth_dialog_result;
+
+/**
+ * Certificate verification callback - called from FreeRDP thread
+ * Shows a dialog in the UI and waits for user response
+ */
+CertificateAcceptance handle_certificate_verify(const CertificateInfo& info) {
+    std::unique_lock<std::mutex> lock(g_dialog_mutex);
+    
+    // Store the certificate info and signal the UI
+    g_pending_cert_info = info;
+    g_cert_dialog_pending = true;
+    g_cert_dialog_result = CertificateAcceptance::Reject;
+    
+    // Call JavaScript to show the certificate dialog
+    if (g_main_window) {
+        std::string js = "showCertificateDialog(" +
+            std::string("{") +
+            "\"host\":\"" + info.host + "\"," +
+            "\"port\":" + std::to_string(info.port) + "," +
+            "\"commonName\":\"" + info.common_name + "\"," +
+            "\"subject\":\"" + info.subject + "\"," +
+            "\"issuer\":\"" + info.issuer + "\"," +
+            "\"fingerprint\":\"" + info.fingerprint + "\"," +
+            "\"isChanged\":" + (info.is_changed ? "true" : "false") + "," +
+            "\"oldFingerprint\":\"" + info.old_fingerprint + "\"" +
+            "});";
+        g_main_window->run(js);
+    }
+    
+    // Wait for the UI to respond (with timeout)
+    auto status = g_dialog_cv.wait_for(lock, std::chrono::seconds(120), [] {
+        return !g_cert_dialog_pending.load();
+    });
+    
+    if (!status) {
+        std::cerr << "[FRIDAY] Certificate dialog timed out" << std::endl;
+        return CertificateAcceptance::Reject;
+    }
+    
+    return g_cert_dialog_result;
+}
+
+/**
+ * Authentication callback - called from FreeRDP thread
+ * Shows a dialog in the UI and waits for user response
+ */
+AuthResponse handle_authenticate(const AuthRequest& request) {
+    std::unique_lock<std::mutex> lock(g_dialog_mutex);
+    
+    // Store the request and signal the UI
+    g_pending_auth_request = request;
+    g_auth_dialog_pending = true;
+    g_auth_dialog_result = {false, "", "", ""};
+    
+    // Call JavaScript to show the auth dialog
+    if (g_main_window) {
+        std::string js = "showAuthDialog(" +
+            std::string("{") +
+            "\"hostname\":\"" + request.hostname + "\"," +
+            "\"isGateway\":" + (request.is_gateway ? "true" : "false") + "," +
+            "\"currentUsername\":\"" + request.current_username + "\"," +
+            "\"currentDomain\":\"" + request.current_domain + "\"" +
+            "});";
+        g_main_window->run(js);
+    }
+    
+    // Wait for the UI to respond (with timeout)
+    auto status = g_dialog_cv.wait_for(lock, std::chrono::seconds(120), [] {
+        return !g_auth_dialog_pending.load();
+    });
+    
+    if (!status) {
+        std::cerr << "[FRIDAY] Auth dialog timed out" << std::endl;
+        return {false, "", "", ""};
+    }
+    
+    return g_auth_dialog_result;
+}
+
+/**
+ * JavaScript binding: Respond to certificate dialog
+ * Called from the UI when user makes a choice
+ */
+void js_certificate_response(webui::window::event* e) {
+    int choice = e->get_int(0);  // 0=reject, 1=accept permanent, 2=accept temporary
+    
+    std::lock_guard<std::mutex> lock(g_dialog_mutex);
+    g_cert_dialog_result = static_cast<CertificateAcceptance>(choice);
+    g_cert_dialog_pending = false;
+    g_dialog_cv.notify_all();
+    
+    std::cout << "[FRIDAY] Certificate response: " << choice << std::endl;
+}
+
+/**
+ * JavaScript binding: Respond to auth dialog
+ * Called from the UI when user submits credentials
+ */
+void js_auth_response(webui::window::event* e) {
+    bool success = e->get_bool(0);
+    std::string username = e->get_string(1);
+    std::string password = e->get_string(2);
+    std::string domain = e->get_string(3);
+    
+    std::lock_guard<std::mutex> lock(g_dialog_mutex);
+    g_auth_dialog_result = {success, username, password, domain};
+    g_auth_dialog_pending = false;
+    g_dialog_cv.notify_all();
+    
+    std::cout << "[FRIDAY] Auth response: " << (success ? "submitted" : "cancelled") << std::endl;
+}
 
 /**
  * JavaScript binding: Connect to RDP server
@@ -167,9 +300,21 @@ int main(int argc, char* argv[]) {
     
     // Create the main window
     webui::window main_window;
+    g_main_window = &main_window;
+    
+    // Set up RDP callbacks for dialogs
+    g_rdp_launcher->set_certificate_callback(handle_certificate_verify);
+    g_rdp_launcher->set_authenticate_callback(handle_authenticate);
     
     // Configure window properties
     main_window.set_size(1200, 800);
+    
+    // Set the root folder for serving CSS, JS, and other files
+    if (!main_window.set_root_folder(ui_path.string())) {
+        std::cerr << "[ERROR] Failed to set root folder: " << ui_path << std::endl;
+        return 1;
+    }
+    std::cout << "[FRIDAY] Root folder set to: " << ui_path << std::endl;
     
     // Bind JavaScript functions
     main_window.bind("connectRDP", js_connect_rdp);
@@ -178,11 +323,14 @@ int main(int argc, char* argv[]) {
     main_window.bind("deleteConnection", js_delete_connection);
     main_window.bind("getAppInfo", js_get_app_info);
     
-    // Load the HTML file
-    fs::path html_path = ui_path / "index.html";
-    std::cout << "[FRIDAY] Loading UI from: " << html_path << std::endl;
+    // Bind dialog response functions
+    main_window.bind("certificateResponse", js_certificate_response);
+    main_window.bind("authResponse", js_auth_response);
     
-    if (!main_window.show_browser(html_path.string(), AnyBrowser)) {
+    // Load the HTML file (use relative path since root folder is set)
+    std::cout << "[FRIDAY] Loading UI: index.html from " << ui_path << std::endl;
+    
+    if (!main_window.show_browser("index.html", AnyBrowser)) {
         std::cerr << "[ERROR] Failed to open browser window" << std::endl;
         return 1;
     }
@@ -191,6 +339,8 @@ int main(int argc, char* argv[]) {
     
     // Wait until the window is closed
     webui::wait();
+    
+    g_main_window = nullptr;
     
     std::cout << "[FRIDAY] Shutting down. Goodbye, Boss." << std::endl;
     

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>F.R.I.D.A.Y. - Remote Desktop Client</title>
+    <script src="/webui.js"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -129,6 +130,93 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="modalCancel">Cancel</button>
                 <button class="btn btn-primary" id="modalSave">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Certificate Verification Modal -->
+    <div class="modal" id="certModal">
+        <div class="modal-content modal-large">
+            <div class="modal-header modal-header-warning">
+                <h3>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; vertical-align: middle; margin-right: 8px;">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <span id="certModalTitle">Certificate Verification Required</span>
+                </h3>
+            </div>
+            <div class="modal-body">
+                <div class="cert-warning" id="certWarning">
+                    <p>The server's certificate could not be verified. This may indicate a security issue.</p>
+                </div>
+                <div class="cert-details">
+                    <div class="cert-row">
+                        <span class="cert-label">Host:</span>
+                        <span class="cert-value" id="certHost">-</span>
+                    </div>
+                    <div class="cert-row">
+                        <span class="cert-label">Common Name:</span>
+                        <span class="cert-value" id="certCN">-</span>
+                    </div>
+                    <div class="cert-row">
+                        <span class="cert-label">Subject:</span>
+                        <span class="cert-value" id="certSubject">-</span>
+                    </div>
+                    <div class="cert-row">
+                        <span class="cert-label">Issuer:</span>
+                        <span class="cert-value" id="certIssuer">-</span>
+                    </div>
+                    <div class="cert-row">
+                        <span class="cert-label">Fingerprint:</span>
+                        <span class="cert-value cert-fingerprint" id="certFingerprint">-</span>
+                    </div>
+                    <div class="cert-row" id="certOldFingerprintRow" style="display: none;">
+                        <span class="cert-label">Previous Fingerprint:</span>
+                        <span class="cert-value cert-fingerprint" id="certOldFingerprint">-</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="certReject">Reject</button>
+                <button class="btn btn-secondary" id="certAcceptTemp">Accept (This Session)</button>
+                <button class="btn btn-primary" id="certAcceptPerm">Accept & Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Authentication Modal -->
+    <div class="modal" id="authModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; vertical-align: middle; margin-right: 8px;">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <span id="authModalTitle">Authentication Required</span>
+                </h3>
+                <button class="modal-close" id="authModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="authPrompt">Enter your credentials to connect.</p>
+                <div class="form-group">
+                    <label for="authUsername">Username</label>
+                    <input type="text" id="authUsername" placeholder="user@domain.com">
+                </div>
+                <div class="form-group">
+                    <label for="authPassword">Password</label>
+                    <input type="password" id="authPassword" placeholder="Password">
+                </div>
+                <div class="form-group">
+                    <label for="authDomain">Domain</label>
+                    <input type="text" id="authDomain" placeholder="DOMAIN">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="authCancel">Cancel</button>
+                <button class="btn btn-primary" id="authSubmit">Connect</button>
             </div>
         </div>
     </div>

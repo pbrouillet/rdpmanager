@@ -3,7 +3,8 @@
 /**
  * RDP Launcher - FreeRDP Integration Module
  * 
- * Handles spawning and managing FreeRDP client connections.
+ * Uses FreeRDP library API to create and manage RDP client connections.
+ * Directly integrates with the X11 FreeRDP client for popup windows.
  */
 
 #include <string>
@@ -13,6 +14,65 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
+#include <optional>
+#include <cstdint>
+
+// Forward declarations for FreeRDP types
+struct rdp_settings;
+typedef struct rdp_settings rdpSettings;
+struct rdp_freerdp;
+typedef struct rdp_freerdp freerdp;
+
+/**
+ * Certificate information for verification dialogs
+ */
+struct CertificateInfo {
+    std::string host;
+    uint16_t port;
+    std::string common_name;
+    std::string subject;
+    std::string issuer;
+    std::string fingerprint;
+    bool is_changed;           // true if certificate changed from stored one
+    std::string old_fingerprint;  // Previous fingerprint if changed
+};
+
+/**
+ * Certificate verification result
+ */
+enum class CertificateAcceptance {
+    Reject = 0,              // Don't accept the certificate
+    AcceptPermanently = 1,   // Accept and store for future connections
+    AcceptTemporarily = 2    // Accept for this session only
+};
+
+/**
+ * Authentication request information
+ */
+struct AuthRequest {
+    std::string hostname;
+    bool is_gateway;         // true if this is for gateway authentication
+    std::string current_username;
+    std::string current_domain;
+};
+
+/**
+ * Authentication response
+ */
+struct AuthResponse {
+    bool success;
+    std::string username;
+    std::string password;
+    std::string domain;
+};
+
+/**
+ * Callback types for interactive dialogs
+ * These allow the UI to handle certificate verification and credential prompts
+ */
+using CertificateVerifyCallback = std::function<CertificateAcceptance(const CertificateInfo& info)>;
+using AuthenticateCallback = std::function<AuthResponse(const AuthRequest& request)>;
 
 /**
  * RDP Connection Parameters
@@ -90,6 +150,10 @@ public:
     // Get the process ID (for subprocess approach)
     int get_pid() const { return m_pid; }
     
+    // Set callbacks for interactive dialogs (must be set before start())
+    void set_certificate_callback(CertificateVerifyCallback callback);
+    void set_authenticate_callback(AuthenticateCallback callback);
+
 private:
     RDPConnectionParams m_params;
     std::atomic<RDPConnectionState> m_state;
@@ -97,10 +161,29 @@ private:
     std::thread m_session_thread;
     int m_pid = -1;
     mutable std::mutex m_mutex;
+    void* m_context = nullptr;  // FreeRDP rdpContext pointer
+    
+    // Callbacks for interactive dialogs
+    CertificateVerifyCallback m_cert_callback;
+    AuthenticateCallback m_auth_callback;
     
     // Internal methods
     void session_thread_func();
-    std::vector<std::string> build_command_args() const;
+    bool apply_settings_to_context(rdpSettings* settings) const;
+    void install_callbacks(freerdp* instance);
+    
+    // Static callback trampolines (called by FreeRDP)
+    // Using uint32_t/int for portability since DWORD/BOOL are Windows types
+    static uint32_t verify_certificate_callback(freerdp* instance, const char* host, uint16_t port,
+                                             const char* common_name, const char* subject,
+                                             const char* issuer, const char* fingerprint, uint32_t flags);
+    static uint32_t verify_changed_certificate_callback(freerdp* instance, const char* host, uint16_t port,
+                                                     const char* common_name, const char* subject,
+                                                     const char* issuer, const char* new_fingerprint,
+                                                     const char* old_subject, const char* old_issuer,
+                                                     const char* old_fingerprint, uint32_t flags);
+    static int authenticate_callback(freerdp* instance, char** username, char** password, char** domain);
+    static int gateway_authenticate_callback(freerdp* instance, char** username, char** password, char** domain);
 };
 
 /**
@@ -146,18 +229,29 @@ public:
     void set_state_callback(ConnectionStateCallback callback);
     
     /**
+     * Set callback for certificate verification dialogs
+     * This will be propagated to new sessions
+     */
+    void set_certificate_callback(CertificateVerifyCallback callback);
+    
+    /**
+     * Set callback for authentication dialogs
+     * This will be propagated to new sessions
+     */
+    void set_authenticate_callback(AuthenticateCallback callback);
+
+    /**
      * Terminate all active sessions
      */
     void terminate_all();
-    
+
 private:
     std::string m_last_error;
     std::vector<std::shared_ptr<RDPSession>> m_sessions;
     ConnectionStateCallback m_state_callback;
+    CertificateVerifyCallback m_cert_callback;
+    AuthenticateCallback m_auth_callback;
     mutable std::mutex m_mutex;
-    
-    // Locate the xfreerdp/wfreerdp executable
-    std::string find_freerdp_executable() const;
     
     // Clean up finished sessions
     void cleanup_sessions();

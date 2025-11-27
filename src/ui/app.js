@@ -20,12 +20,38 @@ const elements = {
     // Connections list
     connectionsList: document.getElementById('connectionsList'),
     
-    // Modal
+    // Save Modal
     saveModal: document.getElementById('saveModal'),
     connectionName: document.getElementById('connectionName'),
     modalClose: document.getElementById('modalClose'),
     modalCancel: document.getElementById('modalCancel'),
     modalSave: document.getElementById('modalSave'),
+    
+    // Certificate Modal
+    certModal: document.getElementById('certModal'),
+    certModalTitle: document.getElementById('certModalTitle'),
+    certWarning: document.getElementById('certWarning'),
+    certHost: document.getElementById('certHost'),
+    certCN: document.getElementById('certCN'),
+    certSubject: document.getElementById('certSubject'),
+    certIssuer: document.getElementById('certIssuer'),
+    certFingerprint: document.getElementById('certFingerprint'),
+    certOldFingerprintRow: document.getElementById('certOldFingerprintRow'),
+    certOldFingerprint: document.getElementById('certOldFingerprint'),
+    certReject: document.getElementById('certReject'),
+    certAcceptTemp: document.getElementById('certAcceptTemp'),
+    certAcceptPerm: document.getElementById('certAcceptPerm'),
+    
+    // Auth Modal
+    authModal: document.getElementById('authModal'),
+    authModalTitle: document.getElementById('authModalTitle'),
+    authModalClose: document.getElementById('authModalClose'),
+    authPrompt: document.getElementById('authPrompt'),
+    authUsername: document.getElementById('authUsername'),
+    authPassword: document.getElementById('authPassword'),
+    authDomain: document.getElementById('authDomain'),
+    authCancel: document.getElementById('authCancel'),
+    authSubmit: document.getElementById('authSubmit'),
     
     // Other
     status: document.getElementById('status'),
@@ -86,6 +112,98 @@ function openSaveModal() {
 function closeSaveModal() {
     elements.saveModal.classList.remove('active');
     elements.connectionName.value = '';
+}
+
+// ============================================================================
+// Certificate Dialog (called from C++ backend)
+// ============================================================================
+function showCertificateDialog(certInfo) {
+    console.log('[FRIDAY] Certificate verification requested:', certInfo);
+    
+    // Update the title based on whether certificate changed
+    if (certInfo.isChanged) {
+        elements.certModalTitle.textContent = 'Certificate Has Changed!';
+        elements.certWarning.innerHTML = `
+            <p><strong>WARNING:</strong> The server's certificate has changed since your last connection.</p>
+            <p>This could indicate a man-in-the-middle attack, or the server may have simply updated its certificate.</p>
+        `;
+        elements.certOldFingerprintRow.style.display = 'flex';
+        elements.certOldFingerprint.textContent = certInfo.oldFingerprint;
+    } else {
+        elements.certModalTitle.textContent = 'Certificate Verification Required';
+        elements.certWarning.innerHTML = `
+            <p>The server's certificate could not be verified. This may indicate:</p>
+            <ul>
+                <li>A self-signed certificate (common for internal servers)</li>
+                <li>A certificate from an untrusted authority</li>
+                <li>A potential security issue</li>
+            </ul>
+        `;
+        elements.certOldFingerprintRow.style.display = 'none';
+    }
+    
+    // Fill in the certificate details
+    elements.certHost.textContent = `${certInfo.host}:${certInfo.port}`;
+    elements.certCN.textContent = certInfo.commonName || '-';
+    elements.certSubject.textContent = certInfo.subject || '-';
+    elements.certIssuer.textContent = certInfo.issuer || '-';
+    elements.certFingerprint.textContent = certInfo.fingerprint || '-';
+    
+    // Show the modal
+    elements.certModal.classList.add('active');
+}
+
+function closeCertificateDialog(result) {
+    elements.certModal.classList.remove('active');
+    // Send response to C++ backend: 0=reject, 1=accept permanent, 2=accept temporary
+    webui.call('certificateResponse', result);
+}
+
+// ============================================================================
+// Authentication Dialog (called from C++ backend)
+// ============================================================================
+function showAuthDialog(authRequest) {
+    console.log('[FRIDAY] Authentication requested:', authRequest);
+    
+    // Update title and prompt based on context
+    if (authRequest.isGateway) {
+        elements.authModalTitle.textContent = 'Gateway Authentication Required';
+        elements.authPrompt.textContent = `Enter your credentials for gateway: ${authRequest.hostname}`;
+    } else {
+        elements.authModalTitle.textContent = 'Authentication Required';
+        elements.authPrompt.textContent = `Enter your credentials for: ${authRequest.hostname}`;
+    }
+    
+    // Pre-fill with existing values
+    elements.authUsername.value = authRequest.currentUsername || '';
+    elements.authDomain.value = authRequest.currentDomain || '';
+    elements.authPassword.value = '';
+    
+    // Show the modal and focus password if username is filled
+    elements.authModal.classList.add('active');
+    if (elements.authUsername.value) {
+        elements.authPassword.focus();
+    } else {
+        elements.authUsername.focus();
+    }
+}
+
+function closeAuthDialog(success) {
+    elements.authModal.classList.remove('active');
+    
+    if (success) {
+        webui.call('authResponse', 
+            true,
+            elements.authUsername.value,
+            elements.authPassword.value,
+            elements.authDomain.value
+        );
+    } else {
+        webui.call('authResponse', false, '', '', '');
+    }
+    
+    // Clear password field for security
+    elements.authPassword.value = '';
 }
 
 // ============================================================================
@@ -178,7 +296,7 @@ function selectConnection(index) {
 // ============================================================================
 async function loadConnections() {
     try {
-        const result = await webui.call('getConnections');
+        const result = await getConnections();
         connections = JSON.parse(result);
         renderConnections();
     } catch (error) {
@@ -189,7 +307,7 @@ async function loadConnections() {
 
 async function loadAppInfo() {
     try {
-        const result = await webui.call('getAppInfo');
+        const result = await getAppInfo();
         const info = JSON.parse(result);
         elements.appInfo.textContent = `${info.name} v${info.version} | FreeRDP ${info.freerdp_version}`;
     } catch (error) {
@@ -213,7 +331,7 @@ async function handleConnect() {
     elements.connectBtn.disabled = true;
     
     try {
-        const result = await webui.call('connectRDP', hostname, port, username, domain);
+        const result = await connectRDP(hostname, port, username, domain);
         const response = JSON.parse(result);
         
         if (response.success) {
@@ -255,7 +373,7 @@ async function handleSaveConnection() {
     }
     
     try {
-        const success = await webui.call('saveConnection', name, hostname, port, username, domain);
+        const success = await saveConnection(name, hostname, port, username, domain);
         
         if (success) {
             showToast(`Connection "${name}" saved`, 'success');
@@ -276,7 +394,7 @@ async function handleDeleteConnection(name) {
     }
     
     try {
-        const success = await webui.call('deleteConnection', name);
+        const success = await deleteConnection(name);
         
         if (success) {
             showToast(`Connection "${name}" deleted`, 'info');
@@ -315,26 +433,66 @@ function initEventListeners() {
         openSaveModal();
     });
     
-    // Modal controls
+    // Save Modal controls
     elements.modalClose.addEventListener('click', closeSaveModal);
     elements.modalCancel.addEventListener('click', closeSaveModal);
     elements.modalSave.addEventListener('click', handleSaveConnection);
     
-    // Modal backdrop click
+    // Save Modal backdrop click
     elements.saveModal.addEventListener('click', (e) => {
         if (e.target === elements.saveModal) {
             closeSaveModal();
         }
     });
     
+    // Certificate Modal controls
+    elements.certReject.addEventListener('click', () => closeCertificateDialog(0));
+    elements.certAcceptPerm.addEventListener('click', () => closeCertificateDialog(1));
+    elements.certAcceptTemp.addEventListener('click', () => closeCertificateDialog(2));
+    
+    // Certificate Modal backdrop click (reject on outside click)
+    elements.certModal.addEventListener('click', (e) => {
+        if (e.target === elements.certModal) {
+            closeCertificateDialog(0);
+        }
+    });
+    
+    // Auth Modal controls
+    elements.authModalClose.addEventListener('click', () => closeAuthDialog(false));
+    elements.authCancel.addEventListener('click', () => closeAuthDialog(false));
+    elements.authSubmit.addEventListener('click', () => closeAuthDialog(true));
+    
+    // Auth Modal backdrop click (cancel on outside click)
+    elements.authModal.addEventListener('click', (e) => {
+        if (e.target === elements.authModal) {
+            closeAuthDialog(false);
+        }
+    });
+    
+    // Auth Modal - submit on Enter in password field
+    elements.authPassword.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            closeAuthDialog(true);
+        }
+    });
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-        // Escape to close modal
-        if (e.key === 'Escape' && elements.saveModal.classList.contains('active')) {
-            closeSaveModal();
+        // Escape to close modals
+        if (e.key === 'Escape') {
+            if (elements.saveModal.classList.contains('active')) {
+                closeSaveModal();
+            }
+            if (elements.certModal.classList.contains('active')) {
+                closeCertificateDialog(0);  // Reject on escape
+            }
+            if (elements.authModal.classList.contains('active')) {
+                closeAuthDialog(false);  // Cancel on escape
+            }
         }
         
-        // Enter in modal to save
+        // Enter in save modal to save
         if (e.key === 'Enter' && elements.saveModal.classList.contains('active')) {
             e.preventDefault();
             handleSaveConnection();

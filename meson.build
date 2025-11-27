@@ -48,12 +48,18 @@ freerdp_opts.add_cmake_defines({
   'WITH_CLIENT_SDL': false,
   'WITH_CLIENT_WAYLAND': false,
   'WITH_WAYLAND': false,
+  # Disable features that bring in extra dependencies
+  'WITH_FUSE': false,
+  'CHANNEL_REMDESK': false,
 })
 
 # Try to find system FreeRDP first, fallback to subproject
 freerdp_dep = dependency('freerdp3', required: false)
 freerdp_client_dep = dependency('freerdp-client3', required: false)
 winpr_dep = dependency('winpr3', required: false)
+
+# X11 FreeRDP client library (contains RdpClientEntry for popup windows)
+xfreerdp_client_dep = dependency('xfreerdp-client', required: false)
 
 if not freerdp_dep.found() or not freerdp_client_dep.found()
   # Build from submodule using CMake
@@ -62,6 +68,8 @@ if not freerdp_dep.found() or not freerdp_client_dep.found()
   freerdp_dep = freerdp_sub.dependency('freerdp')
   freerdp_client_dep = freerdp_sub.dependency('freerdp-client')
   winpr_dep = freerdp_sub.dependency('winpr')
+  # Get the X11 client library for direct integration
+  xfreerdp_client_dep = freerdp_sub.dependency('xfreerdp_client')
 endif
 
 # ============================================================================
@@ -75,6 +83,50 @@ if is_linux
   if x11_dep.found()
     platform_deps += x11_dep
   endif
+  
+  # Audio support (ALSA)
+  alsa_dep = dependency('alsa', required: false)
+  if alsa_dep.found()
+    platform_deps += alsa_dep
+  endif
+  
+  # Printing support (CUPS)
+  cups_dep = dependency('cups', required: false)
+  if cups_dep.found()
+    platform_deps += cups_dep
+  endif
+  
+  # Additional X11 extensions
+  xi_dep = dependency('xi', required: false)
+  if xi_dep.found()
+    platform_deps += xi_dep
+  endif
+  
+  xrandr_dep = dependency('xrandr', required: false)
+  if xrandr_dep.found()
+    platform_deps += xrandr_dep
+  endif
+  
+  xrender_dep = dependency('xrender', required: false)
+  if xrender_dep.found()
+    platform_deps += xrender_dep
+  endif
+  
+  xfixes_dep = dependency('xfixes', required: false)
+  if xfixes_dep.found()
+    platform_deps += xfixes_dep
+  endif
+  
+  xcursor_dep = dependency('xcursor', required: false)
+  if xcursor_dep.found()
+    platform_deps += xcursor_dep
+  endif
+  
+  xinerama_dep = dependency('xinerama', required: false)
+  if xinerama_dep.found()
+    platform_deps += xinerama_dep
+  endif
+  
 elif is_windows
   platform_deps += cpp.find_library('ws2_32')
   platform_deps += cpp.find_library('user32')
@@ -116,6 +168,7 @@ executable('webui-rdp-client',
   dependencies: [
     thread_dep,
     webui_dep,
+    xfreerdp_client_dep,  # X11 FreeRDP client for popup windows
     freerdp_dep,
     freerdp_client_dep,
     winpr_dep,

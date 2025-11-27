@@ -13,6 +13,30 @@
                 {
                     "name": "DISPLAY",
                     "value": ":0"
+                },
+                {
+                    "name": "GTK_PATH",
+                    "value": ""
+                },
+                {
+                    "name": "GTK_EXE_PREFIX",
+                    "value": ""
+                },
+                {
+                    "name": "GIO_MODULE_DIR",
+                    "value": ""
+                },
+                {
+                    "name": "GTK_IM_MODULE_FILE",
+                    "value": ""
+                },
+                {
+                    "name": "LOCPATH",
+                    "value": ""
+                },
+                {
+                    "name": "GSETTINGS_SCHEMA_DIR",
+                    "value": ""
                 }
             ],
             "externalConsole": false,
@@ -51,6 +75,30 @@
                 {
                     "name": "DISPLAY",
                     "value": ":0"
+                },
+                {
+                    "name": "GTK_PATH",
+                    "value": ""
+                },
+                {
+                    "name": "GTK_EXE_PREFIX",
+                    "value": ""
+                },
+                {
+                    "name": "GIO_MODULE_DIR",
+                    "value": ""
+                },
+                {
+                    "name": "GTK_IM_MODULE_FILE",
+                    "value": ""
+                },
+                {
+                    "name": "LOCPATH",
+                    "value": ""
+                },
+                {
+                    "name": "GSETTINGS_SCHEMA_DIR",
+                    "value": ""
                 }
             ],
             "externalConsole": false,
@@ -66,7 +114,13 @@
             "args": [],
             "cwd": "${workspaceFolder}",
             "env": {
-                "DISPLAY": ":0"
+                "DISPLAY": ":0",
+                "GTK_PATH": "",
+                "GTK_EXE_PREFIX": "",
+                "GIO_MODULE_DIR": "",
+                "GTK_IM_MODULE_FILE": "",
+                "LOCPATH": "",
+                "GSETTINGS_SCHEMA_DIR": ""
             },
             "preLaunchTask": "Ninja: Build (Debug)",
             "sourceMap": {},

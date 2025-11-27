@@ -1,8 +1,8 @@
 /**
  * RDP Launcher Implementation
  * 
- * Uses FreeRDP to spawn RDP client connections.
- * Supports both subprocess spawning (xfreerdp) and library integration.
+ * Uses FreeRDP library API to create RDP client connections.
+ * Directly links to the X11 FreeRDP client for popup windows.
  */
 
 #include "rdp_launcher.hpp"
@@ -12,30 +12,41 @@
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
+#include <cstring>
 
 #ifdef _WIN32
     #include <windows.h>
     #include <shellapi.h>
-    #define FREERDP_EXECUTABLE "wfreerdp.exe"
 #else
     #include <unistd.h>
     #include <sys/types.h>
     #include <sys/wait.h>
     #include <signal.h>
-    #define FREERDP_EXECUTABLE "xfreerdp3"
-    #define FREERDP_EXECUTABLE_FALLBACK "xfreerdp"
 #endif
 
-// Try to include FreeRDP headers for version info
-// These may not be available if building with subprocess-only approach
-#if __has_include(<freerdp/version.h>)
-    #include <freerdp/version.h>
-    #define HAS_FREERDP_HEADERS 1
-#else
-    #define HAS_FREERDP_HEADERS 0
-#endif
+// FreeRDP library headers for direct integration
+#include <freerdp/freerdp.h>
+#include <freerdp/client.h>
+#include <freerdp/settings.h>
+#include <freerdp/version.h>
+
+// For UINT16, DWORD, BOOL types
+#include <winpr/wtypes.h>
+
+// For storing session associations with freerdp instances
+#include <unordered_map>
+
+// X11 client entry point
+extern "C" {
+    int RdpClientEntry(RDP_CLIENT_ENTRY_POINTS* pEntryPoints);
+}
 
 namespace fs = std::filesystem;
+
+// Global map to associate freerdp instances with RDPSession objects
+// This is needed because FreeRDP callbacks don't provide a custom user data pointer
+static std::mutex g_session_map_mutex;
+static std::unordered_map<freerdp*, RDPSession*> g_session_map;
 
 // ============================================================================
 // RDPSession Implementation
@@ -53,83 +64,278 @@ RDPSession::~RDPSession() {
     stop();
 }
 
-std::vector<std::string> RDPSession::build_command_args() const {
-    std::vector<std::string> args;
+void RDPSession::set_certificate_callback(CertificateVerifyCallback callback) {
+    m_cert_callback = std::move(callback);
+}
+
+void RDPSession::set_authenticate_callback(AuthenticateCallback callback) {
+    m_auth_callback = std::move(callback);
+}
+
+// Static callback trampolines - these extract the RDPSession from the global map
+uint32_t RDPSession::verify_certificate_callback(freerdp* instance, const char* host, uint16_t port,
+                                               const char* common_name, const char* subject,
+                                               const char* issuer, const char* fingerprint, uint32_t flags) {
+    (void)flags;  // Unused
+    if (!instance) return 0;
     
-    // Server address
-    args.push_back("/v:" + m_params.hostname);
-    
-    // Port (if non-default)
-    if (m_params.port != 3389) {
-        args.push_back("/port:" + std::to_string(m_params.port));
-    }
-    
-    // Authentication
-    if (!m_params.username.empty()) {
-        args.push_back("/u:" + m_params.username);
-    }
-    if (!m_params.domain.empty()) {
-        args.push_back("/d:" + m_params.domain);
-    }
-    if (!m_params.password.empty()) {
-        args.push_back("/p:" + m_params.password);
-    }
-    
-    // Display settings
-    if (m_params.fullscreen) {
-        args.push_back("/f");
-    } else {
-        args.push_back("/w:" + std::to_string(m_params.width));
-        args.push_back("/h:" + std::to_string(m_params.height));
-    }
-    args.push_back("/bpp:" + std::to_string(m_params.bpp));
-    
-    // Features
-    if (m_params.clipboard) {
-        args.push_back("+clipboard");
-    }
-    if (m_params.audio) {
-        args.push_back("/sound");
-        args.push_back("/microphone");
-    }
-    if (m_params.drive_redirection && !m_params.redirect_drive_path.empty()) {
-        args.push_back("/drive:shared," + m_params.redirect_drive_path);
-    }
-    
-    // Security
-    if (m_params.ignore_certificate) {
-        args.push_back("/cert:ignore");
-    } else {
-        // Use system certificate store, prompt for unknown
-        args.push_back("/cert:tofu");
-    }
-    
-    // Gateway (if specified)
-    if (!m_params.gateway_hostname.empty()) {
-        args.push_back("/g:" + m_params.gateway_hostname);
-        if (m_params.gateway_port != 443) {
-            args.push_back("/gp:" + std::to_string(m_params.gateway_port));
+    // Look up the session from the global map
+    RDPSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        auto it = g_session_map.find(instance);
+        if (it != g_session_map.end()) {
+            session = it->second;
         }
     }
     
+    if (!session || !session->m_cert_callback) {
+        // No callback set - prompt in console (default behavior)
+        std::cout << "[RDPSession] Certificate verification required (no UI callback set)" << std::endl;
+        std::cout << "  Host: " << (host ? host : "") << ":" << port << std::endl;
+        std::cout << "  CN: " << (common_name ? common_name : "") << std::endl;
+        std::cout << "  Fingerprint: " << (fingerprint ? fingerprint : "") << std::endl;
+        // Return 0 to reject, as we can't show a dialog
+        return 0;
+    }
+    
+    CertificateInfo info;
+    info.host = host ? host : "";
+    info.port = port;
+    info.common_name = common_name ? common_name : "";
+    info.subject = subject ? subject : "";
+    info.issuer = issuer ? issuer : "";
+    info.fingerprint = fingerprint ? fingerprint : "";
+    info.is_changed = false;
+    
+    CertificateAcceptance result = session->m_cert_callback(info);
+    return static_cast<uint32_t>(result);
+}
+
+uint32_t RDPSession::verify_changed_certificate_callback(freerdp* instance, const char* host, uint16_t port,
+                                                       const char* common_name, const char* subject,
+                                                       const char* issuer, const char* new_fingerprint,
+                                                       const char* old_subject, const char* old_issuer,
+                                                       const char* old_fingerprint, uint32_t flags) {
+    (void)old_subject;  // Unused
+    (void)old_issuer;   // Unused
+    (void)flags;        // Unused
+    
+    if (!instance) return 0;
+    
+    RDPSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        auto it = g_session_map.find(instance);
+        if (it != g_session_map.end()) {
+            session = it->second;
+        }
+    }
+    
+    if (!session || !session->m_cert_callback) {
+        std::cout << "[RDPSession] Changed certificate verification required (no UI callback set)" << std::endl;
+        return 0;
+    }
+    
+    CertificateInfo info;
+    info.host = host ? host : "";
+    info.port = port;
+    info.common_name = common_name ? common_name : "";
+    info.subject = subject ? subject : "";
+    info.issuer = issuer ? issuer : "";
+    info.fingerprint = new_fingerprint ? new_fingerprint : "";
+    info.is_changed = true;
+    info.old_fingerprint = old_fingerprint ? old_fingerprint : "";
+    
+    CertificateAcceptance result = session->m_cert_callback(info);
+    return static_cast<uint32_t>(result);
+}
+
+int RDPSession::authenticate_callback(freerdp* instance, char** username, char** password, char** domain) {
+    if (!instance) return 0;
+    
+    RDPSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        auto it = g_session_map.find(instance);
+        if (it != g_session_map.end()) {
+            session = it->second;
+        }
+    }
+    
+    if (!session || !session->m_auth_callback) {
+        std::cout << "[RDPSession] Authentication required (no UI callback set)" << std::endl;
+        return 0;
+    }
+    
+    AuthRequest request;
+    if (instance->context && instance->context->settings) {
+        request.hostname = freerdp_settings_get_string(instance->context->settings, FreeRDP_ServerHostname);
+    }
+    request.is_gateway = false;
+    request.current_username = (username && *username) ? *username : "";
+    request.current_domain = (domain && *domain) ? *domain : "";
+    
+    AuthResponse response = session->m_auth_callback(request);
+    
+    if (!response.success) {
+        return 0;
+    }
+    
+    // Free old values and set new ones
+    if (username) {
+        free(*username);
+        *username = strdup(response.username.c_str());
+    }
+    if (password) {
+        free(*password);
+        *password = strdup(response.password.c_str());
+    }
+    if (domain) {
+        free(*domain);
+        *domain = strdup(response.domain.c_str());
+    }
+    
+    return 1;
+}
+
+int RDPSession::gateway_authenticate_callback(freerdp* instance, char** username, char** password, char** domain) {
+    if (!instance) return 0;
+    
+    RDPSession* session = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        auto it = g_session_map.find(instance);
+        if (it != g_session_map.end()) {
+            session = it->second;
+        }
+    }
+    
+    if (!session || !session->m_auth_callback) {
+        std::cout << "[RDPSession] Gateway authentication required (no UI callback set)" << std::endl;
+        return 0;
+    }
+    
+    AuthRequest request;
+    if (instance->context && instance->context->settings) {
+        request.hostname = freerdp_settings_get_string(instance->context->settings, FreeRDP_GatewayHostname);
+    }
+    request.is_gateway = true;
+    request.current_username = (username && *username) ? *username : "";
+    request.current_domain = (domain && *domain) ? *domain : "";
+    
+    AuthResponse response = session->m_auth_callback(request);
+    
+    if (!response.success) {
+        return 0;
+    }
+    
+    if (username) {
+        free(*username);
+        *username = strdup(response.username.c_str());
+    }
+    if (password) {
+        free(*password);
+        *password = strdup(response.password.c_str());
+    }
+    if (domain) {
+        free(*domain);
+        *domain = strdup(response.domain.c_str());
+    }
+    
+    return 1;
+}
+
+void RDPSession::install_callbacks(freerdp* instance) {
+    if (!instance) return;
+    
+    // Register this session in the global map
+    {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        g_session_map[instance] = this;
+    }
+    
+    // Install certificate verification callbacks
+    instance->VerifyCertificateEx = reinterpret_cast<pVerifyCertificateEx>(verify_certificate_callback);
+    instance->VerifyChangedCertificateEx = reinterpret_cast<pVerifyChangedCertificateEx>(verify_changed_certificate_callback);
+    
+    // Install authentication callbacks
+    instance->Authenticate = reinterpret_cast<pAuthenticate>(authenticate_callback);
+    instance->GatewayAuthenticate = reinterpret_cast<pAuthenticate>(gateway_authenticate_callback);
+    
+    std::cout << "[RDPSession] Installed custom callbacks for certificate and authentication" << std::endl;
+}
+
+bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
+    if (!settings) return false;
+    
+    // Server address and port
+    if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, m_params.hostname.c_str())) {
+        std::cerr << "[ERROR] Failed to set ServerHostname" << std::endl;
+        return false;
+    }
+    freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, m_params.port);
+    
+    // Authentication
+    if (!m_params.username.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_Username, m_params.username.c_str());
+    }
+    if (!m_params.domain.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_Domain, m_params.domain.c_str());
+    }
+    if (!m_params.password.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_Password, m_params.password.c_str());
+    }
+    
+    // Display settings
+    freerdp_settings_set_bool(settings, FreeRDP_Fullscreen, m_params.fullscreen);
+    freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, m_params.width);
+    freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, m_params.height);
+    freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, m_params.bpp);
+    
+    // Features
+    freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, m_params.clipboard);
+    if (m_params.audio) {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, true);
+        freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, true);
+    }
+    if (m_params.drive_redirection && !m_params.redirect_drive_path.empty()) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectDrives, true);
+    }
+    
+    // Security - certificate handling
+    if (m_params.ignore_certificate) {
+        freerdp_settings_set_bool(settings, FreeRDP_IgnoreCertificate, true);
+    } else {
+        freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, false);
+    }
+    
+    // Security protocol settings
+    // Disable Kerberos for workgroup machines - the NTLM fallback doesn't work reliably
+    // when Kerberos credential acquisition fails with "Cannot find KDC" errors.
+    // For domain-joined machines, you may want to remove or make this configurable.
+    freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList, "!kerberos,!u2u,ntlm");
+    
+    // Gateway settings
+    if (!m_params.gateway_hostname.empty()) {
+        freerdp_settings_set_bool(settings, FreeRDP_GatewayEnabled, true);
+        freerdp_settings_set_string(settings, FreeRDP_GatewayHostname, m_params.gateway_hostname.c_str());
+        freerdp_settings_set_uint32(settings, FreeRDP_GatewayPort, m_params.gateway_port);
+    }
+    
     // Performance options
-    if (m_params.disable_wallpaper) {
-        args.push_back("-wallpaper");
-    }
-    if (m_params.disable_themes) {
-        args.push_back("-themes");
-    }
-    if (m_params.disable_font_smoothing) {
-        args.push_back("-fonts");
-    }
+    freerdp_settings_set_bool(settings, FreeRDP_DisableWallpaper, m_params.disable_wallpaper);
+    freerdp_settings_set_bool(settings, FreeRDP_DisableThemes, m_params.disable_themes);
+    freerdp_settings_set_bool(settings, FreeRDP_AllowFontSmoothing, !m_params.disable_font_smoothing);
     
     // Dynamic resolution support
-    args.push_back("/dynamic-resolution");
+    freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, true);
+    freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, true);
     
-    // Title
-    args.push_back("/title:" + m_params.hostname);
+    // Window title
+    freerdp_settings_set_string(settings, FreeRDP_WindowTitle, m_params.hostname.c_str());
     
-    return args;
+    return true;
 }
 
 bool RDPSession::start() {
@@ -149,119 +355,104 @@ bool RDPSession::start() {
 }
 
 void RDPSession::session_thread_func() {
-    auto args = build_command_args();
+    rdpContext* context = nullptr;
     
-#ifdef _WIN32
-    // Windows: Use CreateProcess
-    std::string cmd = FREERDP_EXECUTABLE;
-    for (const auto& arg : args) {
-        cmd += " " + arg;
+    // Initialize FreeRDP X11 client entry points
+    RDP_CLIENT_ENTRY_POINTS clientEntryPoints = { 0 };
+    clientEntryPoints.Size = sizeof(RDP_CLIENT_ENTRY_POINTS);
+    clientEntryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
+    
+    if (RdpClientEntry(&clientEntryPoints) != 0) {
+        std::cerr << "[ERROR] Failed to initialize FreeRDP client entry points" << std::endl;
+        m_state = RDPConnectionState::Error;
+        m_running = false;
+        return;
     }
     
-    STARTUPINFOA si = { sizeof(si) };
-    PROCESS_INFORMATION pi;
+    // Create client context
+    context = freerdp_client_context_new(&clientEntryPoints);
+    if (!context) {
+        std::cerr << "[ERROR] Failed to create FreeRDP client context" << std::endl;
+        m_state = RDPConnectionState::Error;
+        m_running = false;
+        return;
+    }
     
-    if (CreateProcessA(
-            nullptr,
-            const_cast<char*>(cmd.c_str()),
-            nullptr, nullptr,
-            FALSE,
-            0,
-            nullptr, nullptr,
-            &si, &pi)) {
-        m_pid = static_cast<int>(pi.dwProcessId);
-        m_state = RDPConnectionState::Connected;
+    // Store context for later cleanup
+    m_context = context;
+    
+    // Apply connection parameters to settings
+    rdpSettings* settings = context->settings;
+    if (!apply_settings_to_context(settings)) {
+        std::cerr << "[ERROR] Failed to apply RDP settings" << std::endl;
+        freerdp_client_context_free(context);
+        m_context = nullptr;
+        m_state = RDPConnectionState::Error;
+        m_running = false;
+        return;
+    }
+    
+    // Install our custom callbacks for certificate verification and authentication
+    install_callbacks(context->instance);
+    
+    std::cout << "[RDPSession] Starting FreeRDP X11 client for " << m_params.hostname << std::endl;
+    
+    // Start the client (this spawns the X11 window)
+    if (freerdp_client_start(context) != 0) {
+        std::cerr << "[ERROR] Failed to start FreeRDP client" << std::endl;
+        // Remove from global session map before cleanup
+        if (context->instance) {
+            std::lock_guard<std::mutex> lock(g_session_map_mutex);
+            g_session_map.erase(context->instance);
+        }
+        freerdp_client_context_free(context);
+        m_context = nullptr;
+        m_state = RDPConnectionState::Error;
+        m_running = false;
+        return;
+    }
+    
+    m_state = RDPConnectionState::Connected;
+    
+    // Get the client thread and wait for it to finish
+    HANDLE thread = freerdp_client_get_thread(context);
+    if (thread) {
+        DWORD exitCode = 0;
+        WaitForSingleObject(thread, INFINITE);
+        GetExitCodeThread(thread, &exitCode);
         
-        // Wait for process to exit
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        
-        DWORD exit_code;
-        GetExitCodeProcess(pi.hProcess, &exit_code);
-        
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        
-        m_state = (exit_code == 0) 
-            ? RDPConnectionState::Disconnected 
+        m_state = (exitCode == 0)
+            ? RDPConnectionState::Disconnected
             : RDPConnectionState::Error;
     } else {
         m_state = RDPConnectionState::Error;
     }
-#else
-    // Linux/macOS: Use fork/exec
-    pid_t pid = fork();
     
-    if (pid == 0) {
-        // Child process
-        std::vector<char*> argv;
-        
-        // Try xfreerdp3 first, fall back to xfreerdp
-        std::string exe_name = FREERDP_EXECUTABLE;
-        argv.push_back(const_cast<char*>(exe_name.c_str()));
-        
-        for (auto& arg : args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-        
-        // Try xfreerdp3 first
-        execvp(FREERDP_EXECUTABLE, argv.data());
-        
-        // If that fails, try xfreerdp
-        argv[0] = const_cast<char*>(FREERDP_EXECUTABLE_FALLBACK);
-        execvp(FREERDP_EXECUTABLE_FALLBACK, argv.data());
-        
-        // If both fail, exit with error
-        std::cerr << "[ERROR] Failed to execute FreeRDP client" << std::endl;
-        _exit(127);
-    } else if (pid > 0) {
-        // Parent process
-        m_pid = pid;
-        m_state = RDPConnectionState::Connected;
-        
-        // Wait for child to exit
-        int status;
-        waitpid(pid, &status, 0);
-        
-        if (WIFEXITED(status)) {
-            int exit_code = WEXITSTATUS(status);
-            m_state = (exit_code == 0)
-                ? RDPConnectionState::Disconnected
-                : RDPConnectionState::Error;
-        } else {
-            m_state = RDPConnectionState::Disconnected;
-        }
-    } else {
-        // Fork failed
-        m_state = RDPConnectionState::Error;
+    // Stop and cleanup
+    freerdp_client_stop(context);
+    
+    // Remove from global session map
+    if (context->instance) {
+        std::lock_guard<std::mutex> lock(g_session_map_mutex);
+        g_session_map.erase(context->instance);
     }
-#endif
+    
+    freerdp_client_context_free(context);
+    m_context = nullptr;
     
     m_running = false;
 }
 
 void RDPSession::stop() {
-    if (!m_running || m_pid <= 0) {
+    if (!m_running) {
         return;
     }
     
-#ifdef _WIN32
-    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, m_pid);
-    if (hProcess) {
-        TerminateProcess(hProcess, 0);
-        CloseHandle(hProcess);
+    // Stop the FreeRDP client if context is valid
+    if (m_context) {
+        std::cout << "[RDPSession] Stopping FreeRDP client session" << std::endl;
+        freerdp_client_stop(static_cast<rdpContext*>(m_context));
     }
-#else
-    kill(m_pid, SIGTERM);
-    
-    // Give it a moment to terminate gracefully
-    usleep(100000);  // 100ms
-    
-    // Force kill if still running
-    if (m_running) {
-        kill(m_pid, SIGKILL);
-    }
-#endif
     
     // Wait for thread to finish
     if (m_session_thread.joinable()) {
@@ -282,7 +473,7 @@ RDPConnectionState RDPSession::get_state() const {
 // ============================================================================
 
 RDPLauncher::RDPLauncher() {
-    std::cout << "[RDPLauncher] Initialized. FreeRDP version: " 
+    std::cout << "[RDPLauncher] Initialized (using FreeRDP library API). Version: " 
               << get_freerdp_version() << std::endl;
 }
 
@@ -290,79 +481,29 @@ RDPLauncher::~RDPLauncher() {
     terminate_all();
 }
 
-std::string RDPLauncher::find_freerdp_executable() const {
-    // Check common locations
-    std::vector<std::string> search_paths = {
-#ifdef _WIN32
-        "wfreerdp.exe",
-        "C:\\Program Files\\FreeRDP\\wfreerdp.exe",
-        "C:\\Program Files (x86)\\FreeRDP\\wfreerdp.exe",
-#else
-        "xfreerdp3",
-        "xfreerdp",
-        "/usr/bin/xfreerdp3",
-        "/usr/bin/xfreerdp",
-        "/usr/local/bin/xfreerdp3",
-        "/usr/local/bin/xfreerdp",
-        "/opt/freerdp/bin/xfreerdp",
-#endif
-    };
-    
-    // Check if in PATH
-    for (const auto& path : search_paths) {
-        if (fs::exists(path)) {
-            return path;
-        }
-        
-        // Also check PATH environment
-#ifdef _WIN32
-        char buffer[MAX_PATH];
-        if (SearchPathA(nullptr, path.c_str(), nullptr, MAX_PATH, buffer, nullptr)) {
-            return buffer;
-        }
-#else
-        std::string which_cmd = "which " + path + " 2>/dev/null";
-        FILE* pipe = popen(which_cmd.c_str(), "r");
-        if (pipe) {
-            char buffer[256];
-            if (fgets(buffer, sizeof(buffer), pipe)) {
-                pclose(pipe);
-                std::string result(buffer);
-                // Remove newline
-                result.erase(std::remove(result.begin(), result.end(), '\n'), result.end());
-                if (!result.empty() && fs::exists(result)) {
-                    return result;
-                }
-            }
-            pclose(pipe);
-        }
-#endif
-    }
-    
-    return "";
-}
-
 bool RDPLauncher::launch(const RDPConnectionParams& params) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    // Verify FreeRDP is available
-    std::string exe_path = find_freerdp_executable();
-    if (exe_path.empty()) {
-        m_last_error = "FreeRDP client not found. Please install xfreerdp or wfreerdp.";
-        std::cerr << "[ERROR] " << m_last_error << std::endl;
-        return false;
-    }
-    
-    std::cout << "[RDPLauncher] Using FreeRDP at: " << exe_path << std::endl;
-    std::cout << "[RDPLauncher] Connecting to: " << params.hostname << ":" << params.port << std::endl;
+    std::cout << "[RDPLauncher] Launching RDP session to: " << params.hostname 
+              << ":" << params.port << std::endl;
     
     // Clean up finished sessions
     cleanup_sessions();
     
-    // Create new session
+    // Create new session using library API
     auto session = std::make_shared<RDPSession>(params);
     
-    if (!session->start()) {
+    // Propagate callbacks to the session
+    if (m_cert_callback) {
+        session->set_certificate_callback(m_cert_callback);
+    }
+    if (m_auth_callback) {
+        session->set_authenticate_callback(m_auth_callback);
+    }
+    
+    auto sessionStartResult = session->start();
+
+    if (!sessionStartResult) {
         m_last_error = "Failed to start RDP session";
         return false;
     }
@@ -379,10 +520,9 @@ bool RDPLauncher::launch(const RDPConnectionParams& params) {
 }
 
 bool RDPLauncher::launch_embedded(const RDPConnectionParams& params) {
-    // This would use the FreeRDP library API directly for embedded rendering
-    // More complex implementation - placeholder for now
-    m_last_error = "Embedded mode not yet implemented. Use standard launch().";
-    return false;
+    // With library integration, launch() now uses the library API directly
+    // This method can be used for future window embedding if needed
+    return launch(params);
 }
 
 std::string RDPLauncher::get_last_error() const {
@@ -390,41 +530,7 @@ std::string RDPLauncher::get_last_error() const {
 }
 
 std::string RDPLauncher::get_freerdp_version() const {
-#if HAS_FREERDP_HEADERS
     return FREERDP_VERSION_FULL;
-#else
-    // Try to get version from command line
-#ifdef _WIN32
-    std::string cmd = "wfreerdp /version 2>&1";
-#else
-    std::string cmd = "xfreerdp3 /version 2>&1 || xfreerdp /version 2>&1";
-#endif
-    
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (pipe) {
-        char buffer[256];
-        std::string result;
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-            result += buffer;
-        }
-        pclose(pipe);
-        
-        // Parse version from output
-        if (result.find("FreeRDP") != std::string::npos) {
-            // Extract version number
-            size_t pos = result.find("version");
-            if (pos != std::string::npos) {
-                pos = result.find_first_of("0123456789", pos);
-                if (pos != std::string::npos) {
-                    size_t end = result.find_first_not_of("0123456789.", pos);
-                    return result.substr(pos, end - pos);
-                }
-            }
-        }
-    }
-    
-    return "Unknown";
-#endif
 }
 
 std::vector<std::shared_ptr<RDPSession>> RDPLauncher::get_active_sessions() const {
@@ -441,6 +547,14 @@ std::vector<std::shared_ptr<RDPSession>> RDPLauncher::get_active_sessions() cons
 
 void RDPLauncher::set_state_callback(ConnectionStateCallback callback) {
     m_state_callback = std::move(callback);
+}
+
+void RDPLauncher::set_certificate_callback(CertificateVerifyCallback callback) {
+    m_cert_callback = std::move(callback);
+}
+
+void RDPLauncher::set_authenticate_callback(AuthenticateCallback callback) {
+    m_auth_callback = std::move(callback);
 }
 
 void RDPLauncher::terminate_all() {

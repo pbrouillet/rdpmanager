@@ -486,6 +486,87 @@ body {
     justify-content: flex-end;
 }
 
+/* Large modal variant */
+.modal-large {
+    max-width: 550px;
+}
+
+/* Warning header variant */
+.modal-header-warning {
+    background: rgba(248, 81, 73, 0.1);
+    border-bottom-color: var(--color-error);
+}
+
+.modal-header-warning h3 {
+    color: var(--color-error);
+}
+
+/* Certificate dialog styles */
+.cert-warning {
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    color: var(--color-text-primary);
+}
+
+.cert-warning p {
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+.cert-warning p:last-child {
+    margin-bottom: 0;
+}
+
+.cert-warning ul {
+    margin: var(--spacing-sm) 0 0 var(--spacing-lg);
+    padding: 0;
+}
+
+.cert-warning li {
+    margin: var(--spacing-xs) 0;
+}
+
+.cert-details {
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+}
+
+.cert-row {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.cert-row:last-child {
+    border-bottom: none;
+}
+
+.cert-label {
+    color: var(--color-text-secondary);
+    min-width: 130px;
+    flex-shrink: 0;
+}
+
+.cert-value {
+    color: var(--color-text-primary);
+    word-break: break-all;
+}
+
+.cert-fingerprint {
+    font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    font-size: 0.85rem;
+    color: var(--color-accent-secondary);
+}
+
+/* Auth dialog password input */
+input[type="password"] {
+    letter-spacing: 0.2em;
+}
+
 /* Toast Notifications */
 .toast-container {
     position: fixed;
