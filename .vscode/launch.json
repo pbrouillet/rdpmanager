@@ -6,7 +6,9 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/webui-rdp-client",
-            "args": [],
+            "args": [
+                //"--debug-port=9222"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [
@@ -84,7 +86,9 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/webui-rdp-client",
-            "args": [],
+            "args": [
+                //"--debug-port=9222"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [
@@ -143,7 +147,9 @@
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/webui-rdp-client",
-            "args": [],
+            "args": [
+                //"--debug-port=9222"
+            ],
             "cwd": "${workspaceFolder}",
             "env": {
                 "DISPLAY": ":0",
@@ -182,7 +188,9 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/webui-rdp-client",
-            "args": [],
+            "args": [
+                //"--debug-port=9222"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [

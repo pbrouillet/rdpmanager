@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>F.R.I.D.A.Y. - Remote Desktop Client</title>
+    <title>Remote Desktop Client</title>
     <script src="/webui.js"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -36,6 +36,20 @@
                     </svg>
                     New Connection
                 </h2>
+                
+                <!-- Import RDP File Button -->
+                <div class="import-section">
+                    <input type="file" id="rdpFileInput" accept=".rdp,.rdpw" style="display: none;">
+                    <button type="button" class="btn btn-secondary btn-import" id="importBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        Import .rdp / .rdpw File
+                    </button>
+                    <span class="import-hint">Import Dev Box, AVD, or RDP connection files</span>
+                </div>
                 
                 <form id="connectionForm" class="connection-form">
                     <div class="form-row">
@@ -147,6 +161,31 @@
                             <div class="form-group form-group-inline" id="reconnectRetriesGroup" style="display: none;">
                                 <label for="optReconnectRetries">Max Retries:</label>
                                 <input type="number" id="optReconnectRetries" value="3" min="1" max="10" style="width: 80px;">
+                            </div>
+                        </div>
+                        
+                        <!-- Gateway / AVD Settings Group -->
+                        <div class="options-group">
+                            <h4 class="options-group-title">RD Gateway / Azure Virtual Desktop</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="optGatewayHostname">Gateway Hostname</label>
+                                    <input type="text" id="optGatewayHostname" placeholder="gateway.example.com:443">
+                                </div>
+                            </div>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label" title="Enable AAD (Azure AD) authentication for the connection">
+                                    <input type="checkbox" id="optAadAuth">
+                                    <span class="checkbox-text">AAD Auth</span>
+                                </label>
+                                <label class="checkbox-label" title="Target machine is Azure AD joined">
+                                    <input type="checkbox" id="optAadJoined">
+                                    <span class="checkbox-text">AAD Joined</span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="loadBalanceInfoGroup" style="display: none;">
+                                <label for="optLoadBalanceInfo">Load Balance Info (AVD)</label>
+                                <input type="text" id="optLoadBalanceInfo" placeholder="mth://...">
                             </div>
                         </div>
                     </div>

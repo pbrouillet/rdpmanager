@@ -98,29 +98,46 @@ bool ConfigManager::load() {
         ConnectionProfile profile;
         
         // Extract fields (simple string extraction)
-        auto extract_string = [&obj](const std::string& key) -> std::string {
-            std::string search = "\"" + key + "\":\"";
+        // Helper to skip whitespace
+        auto skip_whitespace = [&obj](size_t pos) -> size_t {
+            while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t' || obj[pos] == '\n' || obj[pos] == '\r')) {
+                pos++;
+            }
+            return pos;
+        };
+        
+        auto extract_string = [&obj, &skip_whitespace](const std::string& key) -> std::string {
+            std::string search = "\"" + key + "\":";
             size_t start = obj.find(search);
             if (start == std::string::npos) return "";
             start += search.length();
+            start = skip_whitespace(start);
+            if (start >= obj.size() || obj[start] != '"') return "";
+            start++; // skip opening quote
             size_t end = obj.find('"', start);
             if (end == std::string::npos) return "";
             return obj.substr(start, end - start);
         };
         
-        auto extract_int = [&obj](const std::string& key) -> int {
+        auto extract_int = [&obj, &skip_whitespace](const std::string& key) -> int {
             std::string search = "\"" + key + "\":";
             size_t start = obj.find(search);
             if (start == std::string::npos) return 0;
             start += search.length();
-            return std::stoi(obj.substr(start));
+            start = skip_whitespace(start);
+            try {
+                return std::stoi(obj.substr(start));
+            } catch (...) {
+                return 0;
+            }
         };
         
-        auto extract_bool = [&obj](const std::string& key) -> bool {
+        auto extract_bool = [&obj, &skip_whitespace](const std::string& key) -> bool {
             std::string search = "\"" + key + "\":";
             size_t start = obj.find(search);
             if (start == std::string::npos) return false;
             start += search.length();
+            start = skip_whitespace(start);
             return obj.substr(start, 4) == "true";
         };
         
@@ -221,69 +238,40 @@ bool ConfigManager::save() {
     return true;
 }
 
-bool ConfigManager::save_connection(const std::string& name,
-                                   const std::string& host,
-                                   int port,
-                                   const std::string& username,
-                                   const std::string& domain,
-                                   bool home_drive,
-                                   bool clipboard,
-                                   bool cert_tofu,
-                                   bool usb_auto,
-                                   bool floatbar,
-                                   bool dynamic_resolution,
-                                   bool network_auto,
-                                   bool gfx_avc420,
-                                   bool compression,
-                                   bool audio_pulse,
-                                   bool prevent_session_lock,
-                                   bool auto_reconnect,
-                                   int auto_reconnect_max_retries) {
+bool ConfigManager::save_connection(const ConnectionProfile& profile) {
     // Check if connection with this name exists
     auto it = std::find_if(m_connections.begin(), m_connections.end(),
-        [&name](const ConnectionProfile& p) { return p.name == name; });
+        [&profile](const ConnectionProfile& p) { return p.name == profile.name; });
     
     if (it != m_connections.end()) {
-        // Update existing
-        it->hostname = host;
-        it->port = (port > 0) ? port : 3389;
-        it->username = username;
-        it->domain = domain;
-        it->home_drive = home_drive;
-        it->clipboard = clipboard;
-        it->cert_tofu = cert_tofu;
-        it->usb_auto = usb_auto;
-        it->floatbar = floatbar;
-        it->dynamic_resolution = dynamic_resolution;
-        it->network_auto = network_auto;
-        it->gfx_avc420 = gfx_avc420;
-        it->compression = compression;
-        it->audio_pulse = audio_pulse;
-        it->prevent_session_lock = prevent_session_lock;
-        it->auto_reconnect = auto_reconnect;
-        it->auto_reconnect_max_retries = auto_reconnect_max_retries;
+        // Update existing - preserve name, update everything else
+        it->hostname = profile.hostname;
+        it->port = (profile.port > 0) ? profile.port : 3389;
+        it->username = profile.username;
+        it->domain = profile.domain;
+        it->width = profile.width;
+        it->height = profile.height;
+        it->fullscreen = profile.fullscreen;
+        it->home_drive = profile.home_drive;
+        it->clipboard = profile.clipboard;
+        it->cert_tofu = profile.cert_tofu;
+        it->usb_auto = profile.usb_auto;
+        it->floatbar = profile.floatbar;
+        it->dynamic_resolution = profile.dynamic_resolution;
+        it->network_auto = profile.network_auto;
+        it->gfx_avc420 = profile.gfx_avc420;
+        it->compression = profile.compression;
+        it->audio_pulse = profile.audio_pulse;
+        it->prevent_session_lock = profile.prevent_session_lock;
+        it->auto_reconnect = profile.auto_reconnect;
+        it->auto_reconnect_max_retries = profile.auto_reconnect_max_retries;
     } else {
-        // Add new
-        ConnectionProfile profile;
-        profile.name = name;
-        profile.hostname = host;
-        profile.port = (port > 0) ? port : 3389;
-        profile.username = username;
-        profile.domain = domain;
-        profile.home_drive = home_drive;
-        profile.clipboard = clipboard;
-        profile.cert_tofu = cert_tofu;
-        profile.usb_auto = usb_auto;
-        profile.floatbar = floatbar;
-        profile.dynamic_resolution = dynamic_resolution;
-        profile.network_auto = network_auto;
-        profile.gfx_avc420 = gfx_avc420;
-        profile.compression = compression;
-        profile.audio_pulse = audio_pulse;
-        profile.prevent_session_lock = prevent_session_lock;
-        profile.auto_reconnect = auto_reconnect;
-        profile.auto_reconnect_max_retries = auto_reconnect_max_retries;
-        m_connections.push_back(profile);
+        // Add new - copy the profile and fix port if needed
+        ConnectionProfile new_profile = profile;
+        if (new_profile.port <= 0) {
+            new_profile.port = 3389;
+        }
+        m_connections.push_back(new_profile);
     }
     
     return save();

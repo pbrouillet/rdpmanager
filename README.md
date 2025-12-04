@@ -1,4 +1,4 @@
-# F.R.I.D.A.Y. - WebUI RDP Client
+# WebUI RDP Client
 
 A native C++ Remote Desktop client featuring a modern web-based UI powered by [WebUI](https://github.com/webui-dev/webui) and [FreeRDP](https://github.com/FreeRDP/FreeRDP).
 
@@ -220,4 +220,3 @@ MIT License - See LICENSE file for details.
 
 - [WebUI](https://github.com/webui-dev/webui) - Lightweight web-based UI library
 - [FreeRDP](https://github.com/FreeRDP/FreeRDP) - Free RDP client implementation
-- Inspired by Tony Stark's F.R.I.D.A.Y. AI assistant

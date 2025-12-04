@@ -64,24 +64,7 @@ public:
     /**
      * Save a single connection profile
      */
-    bool save_connection(const std::string& name,
-                        const std::string& host,
-                        int port,
-                        const std::string& username,
-                        const std::string& domain,
-                        bool home_drive = false,
-                        bool clipboard = true,
-                        bool cert_tofu = false,
-                        bool usb_auto = false,
-                        bool floatbar = false,
-                        bool dynamic_resolution = false,
-                        bool network_auto = false,
-                        bool gfx_avc420 = false,
-                        bool compression = false,
-                        bool audio_pulse = false,
-                        bool prevent_session_lock = false,
-                        bool auto_reconnect = false,
-                        int auto_reconnect_max_retries = 3);
+    bool save_connection(const ConnectionProfile& profile);
     
     /**
      * Delete a connection by name

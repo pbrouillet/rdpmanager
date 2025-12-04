@@ -147,6 +147,53 @@ struct RDPConnectionParams {
     bool disable_wallpaper = false;
     bool disable_themes = false;
     bool disable_font_smoothing = false;
+    
+    // ========================================================================
+    // AVD / Dev Box / Azure AD specific settings
+    // ========================================================================
+    
+    // Azure AD Authentication
+    bool target_is_aad_joined = false;     // Target is Azure AD joined
+    bool enable_rds_aad_auth = false;      // Enable RDS AAD authentication
+    std::string aad_tenant_id;             // Azure AD tenant ID
+    
+    // Gateway settings (for AVD/WVD)
+    int gateway_usage_method = 0;          // 0=none, 1=always, 2=detect
+    int gateway_credentials_source = 0;    // 0=any, 1=smartcard, 4=ask
+    int gateway_brokering_type = 0;        // Gateway brokering type
+    bool gateway_use_http_transport = true; // Use HTTP transport for gateway
+    
+    // AVD/WVD specific
+    std::string load_balance_info;         // Load balance info string
+    std::string wvd_endpoint_pool;         // WVD endpoint pool ID
+    std::string arm_path;                  // Azure Resource Manager path
+    std::string workspace_id;              // Workspace ID
+    std::string remote_application_program; // Remote app program
+    std::string remote_desktop_name;       // Remote desktop display name
+    
+    // Redirection settings from RDP file
+    bool redirect_printers = false;
+    bool redirect_smart_cards = false;
+    bool redirect_com_ports = false;
+    bool redirect_location = false;
+    std::string drives_to_redirect;
+    std::string cameras_to_redirect;
+    std::string usb_devices_to_redirect;
+    
+    // Audio from RDP file
+    int audio_mode = 0;                    // 0=local, 1=remote, 2=none
+    int audio_capture_mode = 0;            // Audio capture
+    
+    // Helper to check if this is an AVD/Dev Box connection
+    bool is_avd_connection() const {
+        return !wvd_endpoint_pool.empty() || !arm_path.empty() || 
+               !load_balance_info.empty() || enable_rds_aad_auth;
+    }
+    
+    // Helper to check if gateway is required
+    bool uses_gateway() const {
+        return !gateway_hostname.empty() && gateway_usage_method > 0;
+    }
 };
 
 /**

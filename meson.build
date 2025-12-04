@@ -117,6 +117,9 @@ endif
 # ============================================================================
 platform_deps = []
 
+# JSON parsing library (jansson)
+jansson_dep = dependency('jansson', required: true)
+
 if is_linux
   # X11 for window management
   x11_dep = dependency('x11', required: false)
@@ -184,14 +187,19 @@ endif
 # ============================================================================
 sources = files(
   'src/main.cpp',
+  'src/gui/main_window.cpp',
+  'src/gui/aad_auth_handler.cpp',
   'src/rdp_launcher.cpp',
   'src/config_manager.cpp',
+  'src/rdp_file_parser.cpp',
+  'src/dialog_manager.cpp',
+  'src/js_handlers.cpp',
 )
 
 # ============================================================================
 # Include directories
 # ============================================================================
-inc_dirs = include_directories('src')
+inc_dirs = include_directories('src', 'src/gui')
 
 # ============================================================================
 # Install UI assets
@@ -214,6 +222,7 @@ executable('webui-rdp-client',
   dependencies: [
     thread_dep,
     webui_dep,
+    jansson_dep,
     xfreerdp_client_dep,  # X11 FreeRDP client for popup windows
     freerdp_dep,
     freerdp_client_dep,

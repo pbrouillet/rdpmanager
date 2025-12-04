@@ -1,4 +1,4 @@
-/* F.R.I.D.A.Y. RDP Client - Stark Industries Theme */
+/* RDP Client - Stark Industries Theme */
 
 :root {
     /* Colors - Stark Industries palette */
@@ -833,4 +833,72 @@ input[type="password"] {
     outline: none;
     border-color: var(--color-accent-primary);
     box-shadow: 0 0 0 2px var(--color-accent-glow);
+}
+
+/* Import Section */
+.import-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.import-section:hover {
+    border-color: var(--color-accent-primary);
+    background: var(--color-bg-hover);
+}
+
+.import-section.drag-over {
+    border-color: var(--color-accent-secondary);
+    background: rgba(0, 212, 255, 0.1);
+}
+
+.btn-import {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.95rem;
+}
+
+.btn-import svg {
+    width: 18px;
+    height: 18px;
+}
+
+.import-hint {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+/* AVD Connection Badge */
+.connection-item.avd-connection {
+    border-left: 3px solid var(--color-accent-secondary);
+}
+
+.connection-item.avd-connection .connection-icon {
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--color-accent-secondary);
+}
+
+.connection-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    background: var(--color-accent-secondary);
+    color: var(--color-bg-primary);
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.connection-host {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
 }

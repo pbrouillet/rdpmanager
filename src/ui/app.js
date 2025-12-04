@@ -1,8 +1,14 @@
 /**
- * F.R.I.D.A.Y. RDP Client - Frontend Application
+ * RDP Client - Frontend Application
  * 
  * Handles UI interactions and communicates with the C++ backend via WebUI bindings.
  */
+
+// ============================================================================
+// Global State
+// ============================================================================
+// Stores the last imported RDP file data for AVD-specific parameters
+let importedRdpData = null;
 
 // ============================================================================
 // DOM Elements
@@ -16,6 +22,10 @@ const elements = {
     domain: document.getElementById('domain'),
     connectBtn: document.getElementById('connectBtn'),
     saveBtn: document.getElementById('saveBtn'),
+    
+    // Import
+    importBtn: document.getElementById('importBtn'),
+    rdpFileInput: document.getElementById('rdpFileInput'),
     
     // Advanced Options
     advancedToggle: document.getElementById('advancedToggle'),
@@ -34,6 +44,13 @@ const elements = {
     optAutoReconnect: document.getElementById('optAutoReconnect'),
     optReconnectRetries: document.getElementById('optReconnectRetries'),
     reconnectRetriesGroup: document.getElementById('reconnectRetriesGroup'),
+    
+    // Gateway / AVD Options
+    optGatewayHostname: document.getElementById('optGatewayHostname'),
+    optAadAuth: document.getElementById('optAadAuth'),
+    optAadJoined: document.getElementById('optAadJoined'),
+    optLoadBalanceInfo: document.getElementById('optLoadBalanceInfo'),
+    loadBalanceInfoGroup: document.getElementById('loadBalanceInfoGroup'),
     
     // Connections list
     connectionsList: document.getElementById('connectionsList'),
@@ -136,7 +153,7 @@ function closeSaveModal() {
 // Certificate Dialog (called from C++ backend)
 // ============================================================================
 function showCertificateDialog(certInfo) {
-    console.log('[FRIDAY] Certificate verification requested:', certInfo);
+    console.log('[RDPMAN] Certificate verification requested:', certInfo);
     
     // Update the title based on whether certificate changed
     if (certInfo.isChanged) {
@@ -181,7 +198,7 @@ function closeCertificateDialog(result) {
 // Authentication Dialog (called from C++ backend)
 // ============================================================================
 function showAuthDialog(authRequest) {
-    console.log('[FRIDAY] Authentication requested:', authRequest);
+    console.log('[RDPMAN] Authentication requested:', authRequest);
     
     // Update title and prompt based on context
     if (authRequest.isGateway) {
@@ -225,102 +242,26 @@ function closeAuthDialog(success) {
 }
 
 // ============================================================================
-// AAD Authentication Dialog (called from C++ backend for Azure AD OAuth flow)
+// AAD Authentication Status (OAuth flow is now handled by native C++ WebUI window)
 // ============================================================================
-let aadAuthWindow = null;
-let aadAuthCheckInterval = null;
 
-function showAADAuthDialog(aadRequest) {
-    console.log('[FRIDAY] AAD Authentication requested:', aadRequest);
-    
-    // Show a toast notification about the OAuth flow
-    showToast(`Azure AD authentication required (${aadRequest.type}). Opening login window...`, 'info', 5000);
-    
-    // Open the auth URL in a popup window
-    const width = 600;
-    const height = 700;
-    const left = (screen.width - width) / 2;
-    const top = (screen.height - height) / 2;
-    
-    aadAuthWindow = window.open(
-        aadRequest.authUrl,
-        'AAD Login',
-        `width=${width},height=${height},left=${left},top=${top},popup=yes,scrollbars=yes`
-    );
-    
-    if (!aadAuthWindow) {
-        // Popup was blocked
-        console.error('[FRIDAY] AAD auth popup was blocked');
-        showToast('Popup blocked! Please allow popups for AAD authentication.', 'error');
-        webui.call('aadAuthResponse', false, '');
-        return;
+/**
+ * Called from C++ backend to notify about AAD auth completion
+ * The actual OAuth window is now a native WebUI window opened by the backend
+ */
+function onAADAuthComplete(success) {
+    if (success) {
+        console.log('[RDPMAN] AAD authentication successful');
+        showToast('Azure AD authentication successful!', 'success');
+    } else {
+        console.log('[RDPMAN] AAD authentication failed or cancelled');
+        showToast('Azure AD authentication failed or cancelled', 'warning');
     }
-    
-    // Monitor the popup window for the redirect URL or closure
-    aadAuthCheckInterval = setInterval(() => {
-        try {
-            // Check if window was closed by user
-            if (aadAuthWindow.closed) {
-                clearInterval(aadAuthCheckInterval);
-                aadAuthCheckInterval = null;
-                console.log('[FRIDAY] AAD auth window closed by user');
-                showToast('Azure AD authentication cancelled', 'warning');
-                webui.call('aadAuthResponse', false, '');
-                return;
-            }
-            
-            // Try to access the URL - will throw if cross-origin
-            const currentUrl = aadAuthWindow.location.href;
-            
-            // Check if we got redirected back with an authorization code
-            if (currentUrl.includes('code=') || currentUrl.includes('error=')) {
-                clearInterval(aadAuthCheckInterval);
-                aadAuthCheckInterval = null;
-                aadAuthWindow.close();
-                
-                if (currentUrl.includes('code=')) {
-                    console.log('[FRIDAY] AAD auth: received authorization code');
-                    showToast('Azure AD authentication successful!', 'success');
-                    webui.call('aadAuthResponse', true, currentUrl);
-                } else {
-                    // Error in OAuth flow
-                    console.error('[FRIDAY] AAD auth error:', currentUrl);
-                    showToast('Azure AD authentication failed', 'error');
-                    webui.call('aadAuthResponse', false, '');
-                }
-                return;
-            }
-        } catch (e) {
-            // Cross-origin error - window is still on the AAD domain, this is expected
-            // Just continue polling
-        }
-    }, 500);
-    
-    // Set a maximum timeout (5 minutes)
-    setTimeout(() => {
-        if (aadAuthCheckInterval) {
-            clearInterval(aadAuthCheckInterval);
-            aadAuthCheckInterval = null;
-            if (aadAuthWindow && !aadAuthWindow.closed) {
-                aadAuthWindow.close();
-            }
-            console.log('[FRIDAY] AAD auth timed out');
-            showToast('Azure AD authentication timed out', 'error');
-            webui.call('aadAuthResponse', false, '');
-        }
-    }, 300000); // 5 minute timeout
 }
 
-function cancelAADAuth() {
-    if (aadAuthCheckInterval) {
-        clearInterval(aadAuthCheckInterval);
-        aadAuthCheckInterval = null;
-    }
-    if (aadAuthWindow && !aadAuthWindow.closed) {
-        aadAuthWindow.close();
-    }
-    webui.call('aadAuthResponse', false, '');
-}
+// Note: showAADAuthDialog is no longer used - the C++ backend now opens
+// a native WebUI window for AAD authentication and intercepts the redirect
+// URL with the authorization code automatically.
 
 // ============================================================================
 // Connections List
@@ -398,6 +339,9 @@ function selectConnection(index) {
     selectedConnection = index;
     const conn = connections[index];
     
+    // Clear imported RDP data when loading a saved connection
+    importedRdpData = null;
+    
     // Fill form with connection details
     elements.hostname.value = conn.hostname;
     elements.port.value = conn.port;
@@ -416,19 +360,30 @@ function selectConnection(index) {
 
 function getAdvancedOptions() {
     return {
-        home_drive: elements.optHomeDrive.checked,
-        clipboard: elements.optClipboard.checked,
-        cert_tofu: elements.optCertTofu.checked,
-        usb_auto: elements.optUsbAuto.checked,
-        floatbar: elements.optFloatbar.checked,
-        dynamic_resolution: elements.optDynamicResolution.checked,
-        network_auto: elements.optNetworkAuto.checked,
-        gfx_avc420: elements.optGfxAvc420.checked,
-        compression: elements.optCompression.checked,
-        audio_pulse: elements.optAudioPulse.checked,
-        prevent_session_lock: elements.optPreventLock.checked,
-        auto_reconnect: elements.optAutoReconnect.checked,
-        auto_reconnect_max_retries: parseInt(elements.optReconnectRetries.value) || 3
+        home_drive: elements.optHomeDrive?.checked || false,
+        clipboard: elements.optClipboard?.checked !== false,  // Default true
+        cert_tofu: elements.optCertTofu?.checked || false,
+        usb_auto: elements.optUsbAuto?.checked || false,
+        floatbar: elements.optFloatbar?.checked || false,
+        dynamic_resolution: elements.optDynamicResolution?.checked || false,
+        network_auto: elements.optNetworkAuto?.checked || false,
+        gfx_avc420: elements.optGfxAvc420?.checked || false,
+        compression: elements.optCompression?.checked || false,
+        audio_pulse: elements.optAudioPulse?.checked || false,
+        prevent_session_lock: elements.optPreventLock?.checked || false,
+        auto_reconnect: elements.optAutoReconnect?.checked || false,
+        auto_reconnect_max_retries: parseInt(elements.optReconnectRetries?.value) || 3,
+        // Gateway / AVD options
+        gateway_hostname: elements.optGatewayHostname?.value?.trim() || '',
+        enable_rds_aad_auth: elements.optAadAuth?.checked || false,
+        target_is_aad_joined: elements.optAadJoined?.checked || false,
+        load_balance_info: elements.optLoadBalanceInfo?.value?.trim() || '',
+        // Additional AVD fields from imported RDP data
+        aad_tenant_id: importedRdpData?.aad_tenant_id || '',
+        wvd_endpoint_pool: importedRdpData?.wvd_endpoint_pool || '',
+        arm_path: importedRdpData?.arm_path || '',
+        workspace_id: importedRdpData?.workspace_id || '',
+        remote_application_program: importedRdpData?.remote_application_program || ''
     };
 }
 
@@ -447,11 +402,21 @@ function setAdvancedOptions(conn) {
     elements.optAutoReconnect.checked = conn.auto_reconnect || false;
     elements.optReconnectRetries.value = conn.auto_reconnect_max_retries || 3;
     
-    // Show/hide retries field
+    // Gateway / AVD options
+    elements.optGatewayHostname.value = conn.gateway_hostname || '';
+    elements.optAadAuth.checked = conn.enable_rds_aad_auth || false;
+    elements.optAadJoined.checked = conn.target_is_aad_joined || false;
+    elements.optLoadBalanceInfo.value = conn.load_balance_info || '';
+    
+    // Show/hide conditional fields
     updateReconnectRetriesVisibility();
+    updateAvdFieldsVisibility();
 }
 
 function resetAdvancedOptions() {
+    // Clear imported RDP data
+    importedRdpData = null;
+    
     elements.optHomeDrive.checked = false;
     elements.optClipboard.checked = true;
     elements.optCertTofu.checked = false;
@@ -465,7 +430,19 @@ function resetAdvancedOptions() {
     elements.optPreventLock.checked = false;
     elements.optAutoReconnect.checked = false;
     elements.optReconnectRetries.value = 3;
+    // Gateway / AVD options
+    elements.optGatewayHostname.value = '';
+    elements.optAadAuth.checked = false;
+    elements.optAadJoined.checked = false;
+    elements.optLoadBalanceInfo.value = '';
     updateReconnectRetriesVisibility();
+    updateAvdFieldsVisibility();
+}
+
+function updateAvdFieldsVisibility() {
+    // Show load balance info field when AAD options are enabled
+    const showAvdFields = elements.optAadAuth.checked || elements.optAadJoined.checked;
+    elements.loadBalanceInfoGroup.style.display = showAvdFields ? 'block' : 'none';
 }
 
 function updateReconnectRetriesVisibility() {
@@ -479,12 +456,126 @@ function toggleAdvancedOptions() {
 }
 
 // ============================================================================
+// RDP File Import
+// ============================================================================
+
+async function handleImportRdpFile(file) {
+    if (!file) return;
+    
+    console.log('[RDPMAN] Importing RDP file:', file.name);
+    
+    // Read the file content
+    const content = await file.text();
+    
+    try {
+        const result = await importRdpFile(content);
+        const data = JSON.parse(result);
+        
+        if (!data.success) {
+            showToast(`Failed to parse RDP file: ${data.error}`, 'error');
+            return;
+        }
+        
+        const rdp = data.data;
+        console.log('[RDPMAN] Parsed RDP file:', rdp);
+        
+        // Store the full RDP data for later use (includes AVD-specific fields)
+        importedRdpData = rdp;
+                // Fill in the form with parsed values
+        if (elements.hostname) elements.hostname.value = rdp.full_address || '';
+        if (elements.port) elements.port.value = rdp.server_port || 3389;
+        if (elements.username) elements.username.value = rdp.username || '';
+        if (elements.domain) elements.domain.value = rdp.domain || '';
+        
+        // Set advanced options
+        if (elements.optDynamicResolution) elements.optDynamicResolution.checked = rdp.dynamic_resolution || false;
+        if (elements.optClipboard) elements.optClipboard.checked = rdp.redirect_clipboard !== false;
+        
+        // Gateway settings
+        if (rdp.gateway_hostname && elements.optGatewayHostname) {
+            elements.optGatewayHostname.value = rdp.gateway_hostname;
+        }
+        
+        // AVD / AAD settings
+        if (elements.optAadAuth) elements.optAadAuth.checked = rdp.enable_rds_aad_auth || false;
+        if (elements.optAadJoined) elements.optAadJoined.checked = rdp.target_is_aad_joined || false;
+        
+        if (rdp.load_balance_info && elements.optLoadBalanceInfo) {
+            elements.optLoadBalanceInfo.value = rdp.load_balance_info;
+        }
+        
+        // Show the advanced options if we have gateway/AVD settings
+        if (rdp.is_avd_connection || rdp.uses_gateway) {
+            if (elements.advancedOptions && !elements.advancedOptions.classList.contains('visible')) {
+                toggleAdvancedOptions();
+            }
+        }
+        
+        updateAvdFieldsVisibility();
+        
+        // Show success message
+        const displayName = rdp.display_name || rdp.full_address;
+        showToast(`Imported: ${displayName}`, 'success');
+        
+        if (rdp.is_avd_connection) {
+            showToast('AVD/Dev Box connection detected - AAD authentication will be used', 'info', 5000);
+        }
+        
+    } catch (error) {
+        console.error('[RDPMAN] Import error:', error);
+        showToast('Failed to import RDP file', 'error');
+    }
+}
+
+function setupDragAndDrop() {
+    const importSection = document.querySelector('.import-section');
+    if (!importSection) return;
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        importSection.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+        importSection.addEventListener(eventName, () => {
+            importSection.classList.add('drag-over');
+        });
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+        importSection.addEventListener(eventName, () => {
+            importSection.classList.remove('drag-over');
+        });
+    });
+    
+    importSection.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const file = files[0];
+            if (file.name.endsWith('.rdp') || file.name.endsWith('.rdpw')) {
+                handleImportRdpFile(file);
+            } else {
+                showToast('Please drop an .rdp or .rdpw file', 'warning');
+            }
+        }
+    });
+}
+
+// ============================================================================
 // Backend Communication
 // ============================================================================
 async function loadConnections() {
     try {
         const result = await getConnections();
-        connections = JSON.parse(result);
+        if (result === undefined || result === null || result === '') {
+            console.warn('[RDPMAN] getConnections returned empty result');
+            connections = [];
+        } else {
+            connections = JSON.parse(result);
+        }
+        console.log('[RDPMAN] Loaded', connections.length, 'connections');
         renderConnections();
     } catch (error) {
         console.error('Failed to load connections:', error);
@@ -521,14 +612,40 @@ async function handleConnect() {
     elements.connectBtn.disabled = true;
     
     try {
-        const result = await connectRDP(
-            hostname, port, username, domain,
-            options.home_drive, options.clipboard, options.cert_tofu,
-            options.usb_auto, options.floatbar, options.dynamic_resolution,
-            options.network_auto, options.gfx_avc420, options.compression,
-            options.audio_pulse, options.prevent_session_lock,
-            options.auto_reconnect, options.auto_reconnect_max_retries
-        );
+        // Build connection params as JSON object
+        const connectionParams = {
+            hostname: hostname,
+            port: port,
+            username: username,
+            domain: domain,
+            // Advanced options
+            home_drive: options.home_drive,
+            clipboard: options.clipboard,
+            cert_tofu: options.cert_tofu,
+            usb_auto: options.usb_auto,
+            floatbar: options.floatbar,
+            dynamic_resolution: options.dynamic_resolution,
+            network_auto: options.network_auto,
+            gfx_avc420: options.gfx_avc420,
+            compression: options.compression,
+            audio_pulse: options.audio_pulse,
+            prevent_session_lock: options.prevent_session_lock,
+            auto_reconnect: options.auto_reconnect,
+            auto_reconnect_max_retries: options.auto_reconnect_max_retries,
+            // Gateway / AVD options
+            gateway_hostname: options.gateway_hostname,
+            enable_rds_aad_auth: options.enable_rds_aad_auth,
+            target_is_aad_joined: options.target_is_aad_joined,
+            load_balance_info: options.load_balance_info,
+            // Additional AVD parameters
+            aad_tenant_id: options.aad_tenant_id,
+            wvd_endpoint_pool: options.wvd_endpoint_pool,
+            arm_path: options.arm_path,
+            workspace_id: options.workspace_id,
+            remote_application_program: options.remote_application_program
+        };
+        
+        const result = await connectRDP(JSON.stringify(connectionParams));
         const response = JSON.parse(result);
         
         if (response.success) {
@@ -541,7 +658,15 @@ async function handleConnect() {
         }
     } catch (error) {
         console.error('Connect error:', error);
-        showToast('Failed to initiate connection', 'error');
+        let errorMsg = 'Unknown error';
+        if (error instanceof Error) {
+            errorMsg = error.message;
+        } else if (typeof error === 'string') {
+            errorMsg = error;
+        } else if (error) {
+            errorMsg = JSON.stringify(error);
+        }
+        showToast('Failed to initiate connection: ' + errorMsg, 'error');
         updateStatus('Error', false);
         setTimeout(() => updateStatus('Systems Online', true), 3000);
     } finally {
@@ -573,14 +698,30 @@ async function handleSaveConnection() {
     }
     
     try {
-        const success = await saveConnection(
-            name, hostname, port, username, domain,
-            options.home_drive, options.clipboard, options.cert_tofu,
-            options.usb_auto, options.floatbar, options.dynamic_resolution,
-            options.network_auto, options.gfx_avc420, options.compression,
-            options.audio_pulse, options.prevent_session_lock,
-            options.auto_reconnect, options.auto_reconnect_max_retries
-        );
+        // Build connection params as JSON object (WebUI has 16-arg limit)
+        const connectionParams = {
+            name: name,
+            hostname: hostname,
+            port: port,
+            username: username,
+            domain: domain,
+            // Advanced options
+            home_drive: options.home_drive,
+            clipboard: options.clipboard,
+            cert_tofu: options.cert_tofu,
+            usb_auto: options.usb_auto,
+            floatbar: options.floatbar,
+            dynamic_resolution: options.dynamic_resolution,
+            network_auto: options.network_auto,
+            gfx_avc420: options.gfx_avc420,
+            compression: options.compression,
+            audio_pulse: options.audio_pulse,
+            prevent_session_lock: options.prevent_session_lock,
+            auto_reconnect: options.auto_reconnect,
+            auto_reconnect_max_retries: options.auto_reconnect_max_retries
+        };
+        
+        const success = await saveConnection(JSON.stringify(connectionParams));
         
         if (success) {
             showToast(`Connection "${name}" saved`, 'success');
@@ -640,11 +781,27 @@ function initEventListeners() {
         openSaveModal();
     });
     
+    // Import button and file input
+    elements.importBtn.addEventListener('click', () => {
+        elements.rdpFileInput.click();
+    });
+    
+    elements.rdpFileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleImportRdpFile(e.target.files[0]);
+            e.target.value = ''; // Reset for next import
+        }
+    });
+    
     // Advanced options toggle
     elements.advancedToggle.addEventListener('click', toggleAdvancedOptions);
     
     // Auto reconnect checkbox - show/hide retries field
     elements.optAutoReconnect.addEventListener('change', updateReconnectRetriesVisibility);
+    
+    // AAD checkboxes - show/hide AVD fields
+    elements.optAadAuth.addEventListener('change', updateAvdFieldsVisibility);
+    elements.optAadJoined.addEventListener('change', updateAvdFieldsVisibility);
     
     // Save Modal controls
     elements.modalClose.addEventListener('click', closeSaveModal);
@@ -730,17 +887,25 @@ function initEventListeners() {
 // ============================================================================
 // Initialization
 // ============================================================================
-async function init() {
-    console.log('[FRIDAY] Initializing interface...');
-    
-    initEventListeners();
+
+// Called by C++ when WebUI connection is established
+async function onWebuiReady() {
+    console.log('[RDPMAN] WebUI connection ready, loading data...');
     await loadAppInfo();
     await loadConnections();
+    console.log('[RDPMAN] Initial data loaded.');
+}
+
+async function init() {
+    console.log('[RDPMAN] Initializing interface...');
+    
+    initEventListeners();
+    setupDragAndDrop();
     
     // Focus hostname field
     elements.hostname.focus();
     
-    console.log('[FRIDAY] Interface ready, Boss.');
+    console.log('[RDPMAN] Interface ready, waiting for WebUI connection...');
 }
 
 // Start when DOM is ready

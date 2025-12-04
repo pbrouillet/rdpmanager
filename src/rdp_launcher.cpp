@@ -327,11 +327,45 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
         case ACCESS_TOKEN_TYPE_AVD: {
             request.type = AADAuthRequest::AVD;
             
+            // Debug: Print AVD-related settings
+            rdpSettings* settings = instance->context->settings;
+            const char* avd_scope = freerdp_settings_get_string(settings, FreeRDP_GatewayAvdScope);
+            const char* avd_client_id = freerdp_settings_get_string(settings, FreeRDP_GatewayAvdClientID);
+            const char* avd_tenant = freerdp_settings_get_string(settings, FreeRDP_GatewayAvdAadtenantid);
+            const char* azure_ad = freerdp_settings_get_string(settings, FreeRDP_GatewayAzureActiveDirectory);
+            std::cout << "[RDPSession] AVD Debug Settings:" << std::endl;
+            std::cout << "[RDPSession]   GatewayAvdScope: " << (avd_scope ? avd_scope : "(null)") << std::endl;
+            std::cout << "[RDPSession]   GatewayAvdClientID: " << (avd_client_id ? avd_client_id : "(null)") << std::endl;
+            std::cout << "[RDPSession]   GatewayAvdAadtenantid: " << (avd_tenant ? avd_tenant : "(null)") << std::endl;
+            std::cout << "[RDPSession]   GatewayAzureActiveDirectory: " << (azure_ad ? azure_ad : "(null)") << std::endl;
+            
             // Get the AVD authorization URL
             char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_AUTH_REQUEST);
             if (auth_url) {
                 request.auth_url = auth_url;
+                std::cout << "[RDPSession]   Generated auth_url length: " << strlen(auth_url) << std::endl;
+                std::cout << "[RDPSession]   Generated auth_url: " << auth_url << std::endl;
+                // Keep original ms-appx-web:// redirect URI - we intercept navigation in WebUI
                 free(auth_url);
+            } else {
+                std::cerr << "[RDPSession]   Failed to generate auth URL - freerdp_client_get_aad_url returned NULL" << std::endl;
+                
+                // Try to manually construct the URL as a fallback
+                if (avd_scope && avd_client_id) {
+                    std::string fallback_url = "https://login.microsoftonline.com/";
+                    fallback_url += (avd_tenant ? avd_tenant : "common");
+                    fallback_url += "/oauth2/v2.0/authorize";
+                    fallback_url += "?client_id=";
+                    fallback_url += avd_client_id;
+                    fallback_url += "&response_type=code";
+                    fallback_url += "&scope=";
+                    fallback_url += avd_scope;
+                    // Use ms-appx-web:// redirect - we intercept navigation in WebUI
+                    fallback_url += "&redirect_uri=ms-appx-web%3A%2F%2FMicrosoft.AAD.BrokerPlugin%2F";
+                    fallback_url += avd_client_id;
+                    request.auth_url = fallback_url;
+                    std::cout << "[RDPSession]   Using fallback auth_url: " << fallback_url << std::endl;
+                }
             }
             break;
         }
@@ -473,19 +507,91 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     }
     
     // Security protocol settings
-    // Disable Kerberos for workgroup machines - the NTLM fallback doesn't work reliably
-    // when Kerberos credential acquisition fails with "Cannot find KDC" errors.
-    // For domain-joined machines, you may want to remove or make this configurable.
-    freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList, "!kerberos,!u2u,ntlm");
+    // For AAD-joined machines, we need to allow AAD auth instead of NTLM
+    if (m_params.enable_rds_aad_auth || m_params.target_is_aad_joined) {
+        // Enable AAD authentication
+        freerdp_settings_set_bool(settings, FreeRDP_AadSecurity, true);
+        std::cout << "[RDPSession] AAD authentication enabled" << std::endl;
+    } else {
+        // Disable Kerberos for workgroup machines - the NTLM fallback doesn't work reliably
+        // when Kerberos credential acquisition fails with "Cannot find KDC" errors.
+        freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList, "!kerberos,!u2u,ntlm");
+    }
     
-    // Gateway settings
+    // ========================================================================
+    // Gateway settings (including AVD/Dev Box support)
+    // ========================================================================
     if (!m_params.gateway_hostname.empty()) {
         freerdp_settings_set_bool(settings, FreeRDP_GatewayEnabled, true);
         freerdp_settings_set_string(settings, FreeRDP_GatewayHostname, m_params.gateway_hostname.c_str());
         freerdp_settings_set_uint32(settings, FreeRDP_GatewayPort, m_params.gateway_port);
+        
+        // Gateway usage method (gatewayusagemethod)
+        // 0 = Don't use gateway, 1 = Always use gateway, 2 = Use gateway if direct fails
+        freerdp_settings_set_uint32(settings, FreeRDP_GatewayUsageMethod, m_params.gateway_usage_method);
+        
+        // For AVD/Dev Box, use HTTP transport over the gateway
+        if (m_params.gateway_use_http_transport || m_params.is_avd_connection()) {
+            freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpTransport, true);
+            freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpUseWebsockets, true);
+            std::cout << "[RDPSession] Gateway HTTP transport enabled for AVD connection" << std::endl;
+        }
+        
+        // Gateway credentials source
+        freerdp_settings_set_uint32(settings, FreeRDP_GatewayCredentialsSource, m_params.gateway_credentials_source);
+        
+        // Enable ARM transport for AVD
+        if (m_params.is_avd_connection()) {
+            freerdp_settings_set_bool(settings, FreeRDP_GatewayArmTransport, true);
+            std::cout << "[RDPSession] Gateway ARM transport enabled for AVD" << std::endl;
+        }
     }
     
+    // ========================================================================
+    // AVD/Dev Box specific settings
+    // ========================================================================
+    if (!m_params.load_balance_info.empty()) {
+        // LoadBalanceInfo is a pointer type, use set_pointer_len
+        freerdp_settings_set_pointer_len(settings, FreeRDP_LoadBalanceInfo, 
+                                         m_params.load_balance_info.c_str(),
+                                         m_params.load_balance_info.size());
+        std::cout << "[RDPSession] Load balance info set: " << m_params.load_balance_info << std::endl;
+    }
+    
+    // AAD Tenant ID for Azure authentication
+    if (!m_params.aad_tenant_id.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_GatewayAvdAadtenantid, m_params.aad_tenant_id.c_str());
+        std::cout << "[RDPSession] AAD Tenant ID set: " << m_params.aad_tenant_id << std::endl;
+    }
+    
+    // AVD-specific settings
+    if (!m_params.arm_path.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_GatewayAvdArmpath, m_params.arm_path.c_str());
+    }
+    if (!m_params.wvd_endpoint_pool.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_GatewayAvdWvdEndpointPool, m_params.wvd_endpoint_pool.c_str());
+    }
+    if (!m_params.workspace_id.empty()) {
+        freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationWorkingDir, m_params.workspace_id.c_str());
+    }
+    
+    // Remote application program (for RemoteApp connections or AVD ARM transport)
+    // For AVD connections with load_balance_info, FreeRDP ARM transport requires
+    // RemoteApplicationProgram to be set (even if empty for desktop sessions)
+    if (!m_params.remote_application_program.empty()) {
+        freerdp_settings_set_bool(settings, FreeRDP_RemoteApplicationMode, true);
+        freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationProgram, m_params.remote_application_program.c_str());
+        std::cout << "[RDPSession] RemoteApplicationProgram set: " << m_params.remote_application_program << std::endl;
+    } else if (!m_params.load_balance_info.empty()) {
+        // AVD ARM transport requires RemoteApplicationProgram to be non-NULL
+        // For desktop sessions (not RemoteApp), we set it to an empty string
+        freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationProgram, "");
+        std::cout << "[RDPSession] RemoteApplicationProgram set to empty (AVD desktop session)" << std::endl;
+    }
+    
+    // ========================================================================
     // Performance options
+    // ========================================================================
     freerdp_settings_set_bool(settings, FreeRDP_DisableWallpaper, m_params.disable_wallpaper);
     freerdp_settings_set_bool(settings, FreeRDP_DisableThemes, m_params.disable_themes);
     freerdp_settings_set_bool(settings, FreeRDP_AllowFontSmoothing, !m_params.disable_font_smoothing);
@@ -496,8 +602,42 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, true);
     }
     
-    // Window title
-    freerdp_settings_set_string(settings, FreeRDP_WindowTitle, m_params.hostname.c_str());
+    // Window title - use remote desktop name if available
+    std::string window_title = m_params.remote_desktop_name.empty() 
+                               ? m_params.hostname 
+                               : m_params.remote_desktop_name;
+    freerdp_settings_set_string(settings, FreeRDP_WindowTitle, window_title.c_str());
+    
+    // ========================================================================
+    // Additional redirection settings from RDP file
+    // ========================================================================
+    if (m_params.redirect_printers) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectPrinters, true);
+    }
+    if (m_params.redirect_smart_cards) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectSmartCards, true);
+    }
+    if (m_params.redirect_com_ports) {
+        freerdp_settings_set_bool(settings, FreeRDP_RedirectSerialPorts, true);
+    }
+    
+    // Audio mode from RDP file
+    // audiomode: 0=bring to local, 1=leave at remote, 2=do not play
+    if (m_params.audio_mode == 0) {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, true);
+        freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, false);
+    } else if (m_params.audio_mode == 1) {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, false);
+        freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, true);
+    } else {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, false);
+        freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, false);
+    }
+    
+    // Audio capture
+    if (m_params.audio_capture_mode == 1) {
+        freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, true);
+    }
     
     // ========================================================================
     // Advanced RDP Features (GUI Options)
