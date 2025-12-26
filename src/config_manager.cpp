@@ -52,7 +52,8 @@ fs::path ConfigManager::get_config_directory() const {
 }
 
 fs::path ConfigManager::get_config_file_path() const {
-    return get_config_directory() / "connections.json";
+    fs::path configFilePath = get_config_directory() / "connections.json";
+    return configFilePath;
 }
 
 bool ConfigManager::load() {
@@ -274,7 +275,8 @@ bool ConfigManager::save_connection(const ConnectionProfile& profile) {
         m_connections.push_back(new_profile);
     }
     
-    return save();
+    auto saveResult = save();
+    return saveResult;
 }
 
 bool ConfigManager::delete_connection(const std::string& name) {
@@ -286,7 +288,8 @@ bool ConfigManager::delete_connection(const std::string& name) {
     }
     
     m_connections.erase(it);
-    return save();
+    auto saveResult = save();
+    return saveResult;
 }
 
 ConnectionProfile* ConfigManager::get_connection(const std::string& name) {
@@ -334,5 +337,6 @@ std::string ConfigManager::get_connections_json() const {
     }
     
     json << "]";
-    return json.str();
+    auto serializedJson = json.str();
+    return serializedJson;
 }

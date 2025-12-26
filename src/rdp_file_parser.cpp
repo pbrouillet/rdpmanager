@@ -23,7 +23,9 @@ std::optional<RDPFileData> RDPFileParser::parse_file(const std::string& filepath
     buffer << file.rdbuf();
     file.close();
     
-    return parse_content(buffer.str());
+    std::string content = buffer.str();
+    auto result = parse_content(content);
+    return result;
 }
 
 std::optional<RDPFileData> RDPFileParser::parse_content(const std::string& content) {
@@ -353,5 +355,6 @@ std::string RDPFileParser::to_json(const RDPFileData& data) {
     
     json << "}";
     
-    return json.str();
+    std::string jsonString = json.str();
+    return jsonString;
 }

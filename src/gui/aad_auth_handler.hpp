@@ -36,6 +36,19 @@ public:
     AADAuthHandler& operator=(AADAuthHandler&&) = delete;
 
     /**
+     * Enable manual code flow mode.
+     * In this mode, the OAuth URL is printed to the console and the user
+     * must manually copy/paste it into their browser, then paste the
+     * redirect URL back into the console.
+     */
+    static void enable_manual_code_flow();
+
+    /**
+     * Check if manual code flow mode is enabled
+     */
+    static bool is_manual_code_flow_enabled();
+
+    /**
      * Set the main window for displaying toast notifications
      */
     void set_main_window(webui::window* window);
@@ -55,7 +68,10 @@ public:
     /**
      * Check if an AAD authentication is currently in progress
      */
-    bool is_pending() const { return m_pending.load(); }
+    bool is_pending() const {
+        bool pending = m_pending.load();
+        return pending;
+    }
 
 private:
     /**
@@ -65,9 +81,20 @@ private:
     AADAuthResponse handle_authenticate(const AADAuthRequest& request);
 
     /**
+     * Handle manual code flow - prints URL to console and waits for user input
+     * Called when manual code flow mode is enabled
+     */
+    AADAuthResponse handle_manual_code_flow(const AADAuthRequest& request);
+
+    /**
      * Static event handler for WebUI callbacks
      */
     static void s_handle_window_events(webui::window::event* e);
+    
+    /**
+     * Static handler for OAuth callback from JavaScript
+     */
+    static void s_handle_oauth_callback(webui::window::event* e);
 
     /**
      * Process navigation events to intercept OAuth redirects
@@ -90,8 +117,12 @@ private:
 
     // Authentication state
     std::atomic<bool> m_pending{false};
+    std::atomic<bool> m_navigating_to_oauth{false};  // True when we've redirected to OAuth URL
     AADAuthRequest m_request;
     AADAuthResponse m_result;
+    
+    // Original redirect URI for URL reconstruction (ms-appx-web:// or nativeclient)
+    std::string m_original_redirect_uri;
 
     // OAuth window
     std::unique_ptr<webui::window> m_window;
@@ -102,6 +133,9 @@ private:
 
     // Static instance pointer for WebUI callbacks
     static AADAuthHandler* s_instance;
+
+    // Static flag for manual code flow mode
+    static bool s_manual_code_flow;
 };
 
 #endif // AAD_AUTH_HANDLER_HPP

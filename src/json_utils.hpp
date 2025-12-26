@@ -52,7 +52,8 @@ inline std::string escape_string(const std::string& s) {
 inline std::string get_string(json_t* obj, const char* key, const std::string& default_val = "") {
     json_t* val = json_object_get(obj, key);
     if (val && json_is_string(val)) {
-        return json_string_value(val);
+        const char* strValue = json_string_value(val);
+        return strValue;
     }
     return default_val;
 }
@@ -67,7 +68,8 @@ inline std::string get_string(json_t* obj, const char* key, const std::string& d
 inline int get_int(json_t* obj, const char* key, int default_val = 0) {
     json_t* val = json_object_get(obj, key);
     if (val && json_is_integer(val)) {
-        return static_cast<int>(json_integer_value(val));
+        int intValue = static_cast<int>(json_integer_value(val));
+        return intValue;
     }
     return default_val;
 }
@@ -83,7 +85,8 @@ inline bool get_bool(json_t* obj, const char* key, bool default_val = false) {
     json_t* val = json_object_get(obj, key);
     if (val) {
         if (json_is_boolean(val)) {
-            return json_is_true(val);
+            bool boolValue = json_is_true(val);
+            return boolValue;
         }
     }
     return default_val;

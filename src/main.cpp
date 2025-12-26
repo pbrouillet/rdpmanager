@@ -10,6 +10,7 @@
 #include <string>
 
 #include "gui/main_window.hpp"
+#include "gui/aad_auth_handler.hpp"
 
 int main(int argc, char* argv[]) {
     std::cout << "============================================" << std::endl;
@@ -27,6 +28,9 @@ int main(int argc, char* argv[]) {
             } catch (...) {
                 std::cerr << "[RDPMAN] Invalid debug port: " << arg.substr(13) << std::endl;
             }
+        } else if (arg == "-USE_MANUAL_CODE_FLOW") {
+            // Enable manual AAD code flow mode
+            AADAuthHandler::enable_manual_code_flow();
         }
     }
     

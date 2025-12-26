@@ -279,6 +279,9 @@ private:
     
     // Helper for AAD code extraction
     static std::string extract_code_from_url(const std::string& url);
+    
+    // Helper to replace ms-appx-web:// redirect URI with nativeclient
+    static std::string replace_msappx_redirect_uri(const std::string& url);
 };
 
 /**

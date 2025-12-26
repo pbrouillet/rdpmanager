@@ -37,7 +37,8 @@ inline fs::path find_ui_path() {
     
     for (const auto& path : search_paths) {
         if (fs::exists(path / "index.html")) {
-            return fs::absolute(path);
+            fs::path absolutePath = fs::absolute(path);
+            return absolutePath;
         }
     }
     
