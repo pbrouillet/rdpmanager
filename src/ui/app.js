@@ -99,8 +99,6 @@ const elements = {
     // Delete Confirmation Modal
     deleteModal: document.getElementById('deleteModal'),
     deleteModalClose: document.getElementById('deleteModalClose'),
-    deleteModalCancel: document.getElementById('deleteModalCancel'),
-    deleteModalConfirm: document.getElementById('deleteModalConfirm'),
     deleteConnectionName: document.getElementById('deleteConnectionName'),
     
     // Context Menu
@@ -956,17 +954,26 @@ function initEventListeners() {
         }
     });
     
-    // Delete Modal controls
+    // Delete Modal controls - use event delegation to avoid WebUI interception
     elements.deleteModalClose.addEventListener('click', closeDeleteModal);
-    elements.deleteModalCancel.addEventListener('click', closeDeleteModal);
-    elements.deleteModalConfirm.addEventListener('click', () => {
-        console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
-        if (contextMenuTarget !== null) {
-            const conn = connections[contextMenuTarget];
-            console.log('[RDPMAN] Deleting connection:', conn);
-            handleDeleteConnection(conn.name);
-        } else {
-            console.error('[RDPMAN] contextMenuTarget is null!');
+    
+    // Handle delete modal actions via event delegation on the footer
+    const deleteModalFooter = elements.deleteModal.querySelector('.modal-footer');
+    deleteModalFooter.addEventListener('click', (e) => {
+        const action = e.target.closest('[data-action]')?.dataset.action;
+        console.log('[RDPMAN] Delete modal action clicked:', action);
+        
+        if (action === 'cancel-delete') {
+            closeDeleteModal();
+        } else if (action === 'confirm-delete') {
+            console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
+            if (contextMenuTarget !== null) {
+                const conn = connections[contextMenuTarget];
+                console.log('[RDPMAN] Deleting connection:', conn);
+                handleDeleteConnection(conn.name);
+            } else {
+                console.error('[RDPMAN] contextMenuTarget is null!');
+            }
         }
     });
     
