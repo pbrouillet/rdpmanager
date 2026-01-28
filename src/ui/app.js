@@ -958,8 +958,12 @@ function initEventListeners() {
     elements.deleteModalClose.addEventListener('click', closeDeleteModal);
     
     // Handle delete modal actions via event delegation on the footer
-    const deleteModalFooter = elements.deleteModal.querySelector('.modal-footer');
+    console.log('[RDPMAN] Setting up delete modal, deleteModal:', elements.deleteModal);
+    const deleteModalFooter = elements.deleteModal?.querySelector('.modal-footer');
+    console.log('[RDPMAN] Delete modal footer found:', deleteModalFooter);
+    
     if (deleteModalFooter) {
+        console.log('[RDPMAN] Adding click listener to delete modal footer');
         deleteModalFooter.addEventListener('click', (e) => {
             const action = e.target.closest('[data-action]')?.dataset.action;
             console.log('[RDPMAN] Delete modal action clicked:', action, 'target:', e.target);
