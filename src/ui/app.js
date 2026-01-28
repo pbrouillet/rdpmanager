@@ -254,6 +254,7 @@ function handleContextMenuEdit() {
 function handleContextMenuDelete() {
     if (contextMenuTarget !== null) {
         const conn = connections[contextMenuTarget];
+        console.log('[RDPMAN] Delete requested for connection:', conn.name, 'at index:', contextMenuTarget);
         openDeleteModal(conn.name);
     }
     hideContextMenu();
@@ -848,8 +849,11 @@ async function handleSaveConnection() {
 }
 
 async function handleDeleteConnection(name) {
+    console.log('[RDPMAN] handleDeleteConnection called for:', name);
     try {
+        console.log('[RDPMAN] Calling deleteConnection backend function...');
         const success = await deleteConnection(name);
+        console.log('[RDPMAN] deleteConnection returned:', success);
         
         if (success) {
             showToast(`Connection "${name}" deleted`, 'info');
@@ -860,7 +864,7 @@ async function handleDeleteConnection(name) {
             showToast('Failed to delete connection', 'error');
         }
     } catch (error) {
-        console.error('Delete error:', error);
+        console.error('[RDPMAN] Delete error:', error);
         showToast('Failed to delete connection', 'error');
     }
 }
