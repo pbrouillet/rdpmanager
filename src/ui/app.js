@@ -546,12 +546,18 @@ function updateReconnectRetriesVisibility() {
 }
 
 function showAvdMetadata(rdpData) {
-    if (!elements.avdMetadata) return;
+    if (!elements.avdMetadata) {
+        console.log('[RDPMAN] AVD metadata element not found!');
+        return;
+    }
+    
+    console.log('[RDPMAN] Showing AVD metadata:', rdpData);
     
     let hasMetadata = false;
     
     // VM/Desktop Name
     if (rdpData.remote_desktop_name) {
+        console.log('[RDPMAN] Setting VM name:', rdpData.remote_desktop_name);
         elements.vmNameValue.textContent = rdpData.remote_desktop_name;
         elements.metadataVmName.style.display = 'flex';
         hasMetadata = true;
@@ -561,6 +567,7 @@ function showAvdMetadata(rdpData) {
     
     // Pool ID
     if (rdpData.wvd_endpoint_pool) {
+        console.log('[RDPMAN] Setting pool ID:', rdpData.wvd_endpoint_pool);
         elements.poolIdValue.textContent = rdpData.wvd_endpoint_pool;
         elements.metadataPoolId.style.display = 'flex';
         hasMetadata = true;
@@ -570,6 +577,7 @@ function showAvdMetadata(rdpData) {
     
     // Workspace ID
     if (rdpData.workspace_id) {
+        console.log('[RDPMAN] Setting workspace ID:', rdpData.workspace_id);
         elements.workspaceIdValue.textContent = rdpData.workspace_id;
         elements.metadataWorkspaceId.style.display = 'flex';
         hasMetadata = true;
@@ -579,6 +587,7 @@ function showAvdMetadata(rdpData) {
     
     // ARM Path
     if (rdpData.arm_path) {
+        console.log('[RDPMAN] Setting ARM path:', rdpData.arm_path);
         elements.armPathValue.textContent = rdpData.arm_path;
         elements.metadataArmPath.style.display = 'flex';
         hasMetadata = true;
@@ -587,6 +596,7 @@ function showAvdMetadata(rdpData) {
     }
     
     // Show/hide the entire metadata panel
+    console.log('[RDPMAN] Has AVD metadata:', hasMetadata);
     elements.avdMetadata.style.display = hasMetadata ? 'block' : 'none';
 }
 
