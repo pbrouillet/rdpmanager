@@ -520,6 +520,9 @@ body {
     border-radius: var(--radius-lg);
     width: 100%;
     max-width: 400px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
     box-shadow: var(--shadow-lg);
     animation: modalIn 200ms ease;
 }
@@ -541,6 +544,7 @@ body {
     justify-content: space-between;
     padding: var(--spacing-md) var(--spacing-lg);
     border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -564,6 +568,9 @@ body {
 
 .modal-body {
     padding: var(--spacing-lg);
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .modal-footer {
@@ -572,11 +579,13 @@ body {
     padding: var(--spacing-md) var(--spacing-lg);
     border-top: 1px solid var(--color-border);
     justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 /* Large modal variant */
 .modal-large {
     max-width: 550px;
+    max-height: 85vh;
 }
 
 /* Warning header variant */
