@@ -14,18 +14,28 @@ let importedRdpData = null;
 // DOM Elements
 // ============================================================================
 const elements = {
-    // Form
+    // Toolbar
+    newConnectionBtn: document.getElementById('newConnectionBtn'),
+    importBtn: document.getElementById('importBtn'),
+    rdpFileInput: document.getElementById('rdpFileInput'),
+    
+    // Connections Grid
+    connectionsGrid: document.getElementById('connectionsGrid'),
+    
+    // Connection Modal
+    connectionModal: document.getElementById('connectionModal'),
+    connectionModalTitle: document.getElementById('connectionModalTitle'),
+    connectionModalClose: document.getElementById('connectionModalClose'),
+    connectionModalCancel: document.getElementById('connectionModalCancel'),
+    connectionModalSave: document.getElementById('connectionModalSave'),
+    
+    // Form fields
     connectionForm: document.getElementById('connectionForm'),
+    connectionName: document.getElementById('connectionName'),
     hostname: document.getElementById('hostname'),
     port: document.getElementById('port'),
     username: document.getElementById('username'),
     domain: document.getElementById('domain'),
-    connectBtn: document.getElementById('connectBtn'),
-    saveBtn: document.getElementById('saveBtn'),
-    
-    // Import
-    importBtn: document.getElementById('importBtn'),
-    rdpFileInput: document.getElementById('rdpFileInput'),
     
     // Advanced Options
     advancedToggle: document.getElementById('advancedToggle'),
@@ -51,16 +61,6 @@ const elements = {
     optAadJoined: document.getElementById('optAadJoined'),
     optLoadBalanceInfo: document.getElementById('optLoadBalanceInfo'),
     loadBalanceInfoGroup: document.getElementById('loadBalanceInfoGroup'),
-    
-    // Connections list
-    connectionsList: document.getElementById('connectionsList'),
-    
-    // Save Modal
-    saveModal: document.getElementById('saveModal'),
-    connectionName: document.getElementById('connectionName'),
-    modalClose: document.getElementById('modalClose'),
-    modalCancel: document.getElementById('modalCancel'),
-    modalSave: document.getElementById('modalSave'),
     
     // Certificate Modal
     certModal: document.getElementById('certModal'),
@@ -98,6 +98,7 @@ const elements = {
     // Context Menu
     contextMenu: document.getElementById('contextMenu'),
     contextMenuConnect: document.getElementById('contextMenuConnect'),
+    contextMenuEdit: document.getElementById('contextMenuEdit'),
     contextMenuDelete: document.getElementById('contextMenuDelete'),
     
     // Other
@@ -112,6 +113,7 @@ const elements = {
 let connections = [];
 let selectedConnection = null;
 let contextMenuTarget = null; // Track which connection the context menu was opened for
+let editingConnection = null; // Track which connection is being edited (null = new connection)
 
 // ============================================================================
 // Toast Notifications
@@ -148,18 +150,42 @@ function updateStatus(text, isOnline = true) {
 // ============================================================================
 // Modal Management
 // ============================================================================
-function openSaveModal() {
-    // Pre-fill with hostname if empty
-    if (!elements.connectionName.value && elements.hostname.value) {
-        elements.connectionName.value = elements.hostname.value;
+function openConnectionModal(connectionIndex = null) {
+    editingConnection = connectionIndex;
+    
+    if (connectionIndex !== null) {
+        // Editing existing connection
+        const conn = connections[connectionIndex];
+        elements.connectionModalTitle.textContent = 'Edit Connection';
+        elements.connectionName.value = conn.name;
+        elements.hostname.value = conn.hostname;
+        elements.port.value = conn.port;
+        elements.username.value = conn.username || '';
+        elements.domain.value = conn.domain || '';
+        setAdvancedOptions(conn);
+    } else {
+        // New connection
+        elements.connectionModalTitle.textContent = 'New Connection';
+        clearConnectionForm();
     }
-    elements.saveModal.classList.add('active');
+    
+    elements.connectionModal.classList.add('active');
     elements.connectionName.focus();
 }
 
-function closeSaveModal() {
-    elements.saveModal.classList.remove('active');
+function closeConnectionModal() {
+    elements.connectionModal.classList.remove('active');
+    editingConnection = null;
+    clearConnectionForm();
+}
+
+function clearConnectionForm() {
     elements.connectionName.value = '';
+    elements.hostname.value = '';
+    elements.port.value = '3389';
+    elements.username.value = '';
+    elements.domain.value = '';
+    resetAdvancedOptions();
 }
 
 function openDeleteModal(connectionName) {
@@ -202,6 +228,13 @@ function handleContextMenuConnect() {
     if (contextMenuTarget !== null) {
         selectConnection(contextMenuTarget);
         handleConnect();
+    }
+    hideContextMenu();
+}
+
+function handleContextMenuEdit() {
+    if (contextMenuTarget !== null) {
+        openConnectionModal(contextMenuTarget);
     }
     hideContextMenu();
 }
@@ -329,11 +362,11 @@ function onAADAuthComplete(success) {
 // URL with the authorization code automatically.
 
 // ============================================================================
-// Connections List
+// Connections Grid (Icons View)
 // ============================================================================
 function renderConnections() {
     if (connections.length === 0) {
-        elements.connectionsList.innerHTML = `
+        elements.connectionsGrid.innerHTML = `
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"/>
@@ -342,31 +375,29 @@ function renderConnections() {
                     <line x1="15" y1="9" x2="15.01" y2="9"/>
                 </svg>
                 <p>No saved connections yet</p>
-                <p class="empty-hint">Fill in the form above and click Save</p>
+                <p class="empty-hint">Click "New Connection" to get started</p>
             </div>
         `;
         return;
     }
     
-    elements.connectionsList.innerHTML = connections.map((conn, index) => `
-        <div class="connection-item ${selectedConnection === index ? 'selected' : ''}" 
+    elements.connectionsGrid.innerHTML = connections.map((conn, index) => `
+        <div class="connection-icon-item ${selectedConnection === index ? 'selected' : ''}" 
              data-index="${index}">
-            <div class="connection-icon">
+            <div class="icon-wrapper">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                     <line x1="8" y1="21" x2="16" y2="21"/>
                     <line x1="12" y1="17" x2="12" y2="21"/>
                 </svg>
             </div>
-            <div class="connection-info">
-                <div class="connection-name">${escapeHtml(conn.name)}</div>
-                <div class="connection-host">${escapeHtml(conn.hostname)}:${conn.port}</div>
-            </div>
+            <div class="connection-name">${escapeHtml(conn.name)}</div>
+            <div class="connection-host">${escapeHtml(conn.hostname)}:${conn.port}</div>
         </div>
     `).join('');
     
     // Add event listeners
-    elements.connectionsList.querySelectorAll('.connection-item').forEach(item => {
+    elements.connectionsGrid.querySelectorAll('.connection-icon-item').forEach(item => {
         item.addEventListener('click', (e) => {
             const index = parseInt(item.dataset.index);
             selectConnection(index);
@@ -533,7 +564,14 @@ async function handleImportRdpFile(file) {
         
         // Store the full RDP data for later use (includes AVD-specific fields)
         importedRdpData = rdp;
-                // Fill in the form with parsed values
+        
+        // Open the connection modal with imported data
+        openConnectionModal();
+        
+        // Fill in the form with parsed values
+        if (rdp.display_name || rdp.full_address) {
+            elements.connectionName.value = rdp.display_name || rdp.full_address;
+        }
         if (elements.hostname) elements.hostname.value = rdp.full_address || '';
         if (elements.port) elements.port.value = rdp.server_port || 3389;
         if (elements.username) elements.username.value = rdp.username || '';
@@ -577,42 +615,6 @@ async function handleImportRdpFile(file) {
         console.error('[RDPMAN] Import error:', error);
         showToast('Failed to import RDP file', 'error');
     }
-}
-
-function setupDragAndDrop() {
-    const importSection = document.querySelector('.import-section');
-    if (!importSection) return;
-    
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        importSection.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-        });
-    });
-    
-    ['dragenter', 'dragover'].forEach(eventName => {
-        importSection.addEventListener(eventName, () => {
-            importSection.classList.add('drag-over');
-        });
-    });
-    
-    ['dragleave', 'drop'].forEach(eventName => {
-        importSection.addEventListener(eventName, () => {
-            importSection.classList.remove('drag-over');
-        });
-    });
-    
-    importSection.addEventListener('drop', (e) => {
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            const file = files[0];
-            if (file.name.endsWith('.rdp') || file.name.endsWith('.rdpw')) {
-                handleImportRdpFile(file);
-            } else {
-                showToast('Please drop an .rdp or .rdpw file', 'warning');
-            }
-        }
-    });
 }
 
 // ============================================================================
@@ -743,8 +745,7 @@ async function handleSaveConnection() {
     }
     
     if (!hostname) {
-        showToast('Please enter a hostname first', 'error');
-        closeSaveModal();
+        showToast('Please enter a hostname', 'error');
         elements.hostname.focus();
         return;
     }
@@ -777,8 +778,15 @@ async function handleSaveConnection() {
         
         if (success) {
             showToast(`Connection "${name}" saved`, 'success');
-            closeSaveModal();
+            closeConnectionModal();
             await loadConnections();
+            
+            // Auto-connect after saving
+            const connIndex = connections.findIndex(c => c.name === name);
+            if (connIndex !== -1) {
+                selectConnection(connIndex);
+                handleConnect();
+            }
         } else {
             showToast('Failed to save connection', 'error');
         }
@@ -819,15 +827,9 @@ function escapeHtml(text) {
 // Event Listeners
 // ============================================================================
 function initEventListeners() {
-    // Form submission
-    elements.connectionForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        handleConnect();
-    });
-    
-    // Save button
-    elements.saveBtn.addEventListener('click', () => {
-        openSaveModal();
+    // Toolbar buttons
+    elements.newConnectionBtn.addEventListener('click', () => {
+        openConnectionModal();
     });
     
     // Import button and file input
@@ -842,6 +844,18 @@ function initEventListeners() {
         }
     });
     
+    // Connection Modal controls
+    elements.connectionModalClose.addEventListener('click', closeConnectionModal);
+    elements.connectionModalCancel.addEventListener('click', closeConnectionModal);
+    elements.connectionModalSave.addEventListener('click', handleSaveConnection);
+    
+    // Connection Modal backdrop click
+    elements.connectionModal.addEventListener('click', (e) => {
+        if (e.target === elements.connectionModal) {
+            closeConnectionModal();
+        }
+    });
+    
     // Advanced options toggle
     elements.advancedToggle.addEventListener('click', toggleAdvancedOptions);
     
@@ -851,18 +865,6 @@ function initEventListeners() {
     // AAD checkboxes - show/hide AVD fields
     elements.optAadAuth.addEventListener('change', updateAvdFieldsVisibility);
     elements.optAadJoined.addEventListener('change', updateAvdFieldsVisibility);
-    
-    // Save Modal controls
-    elements.modalClose.addEventListener('click', closeSaveModal);
-    elements.modalCancel.addEventListener('click', closeSaveModal);
-    elements.modalSave.addEventListener('click', handleSaveConnection);
-    
-    // Save Modal backdrop click
-    elements.saveModal.addEventListener('click', (e) => {
-        if (e.target === elements.saveModal) {
-            closeSaveModal();
-        }
-    });
     
     // Certificate Modal controls
     elements.certReject.addEventListener('click', () => closeCertificateDialog(0));
@@ -915,6 +917,7 @@ function initEventListeners() {
     
     // Context Menu controls
     elements.contextMenuConnect.addEventListener('click', handleContextMenuConnect);
+    elements.contextMenuEdit.addEventListener('click', handleContextMenuEdit);
     elements.contextMenuDelete.addEventListener('click', handleContextMenuDelete);
     
     // Hide context menu when clicking outside
@@ -928,8 +931,8 @@ function initEventListeners() {
     document.addEventListener('keydown', (e) => {
         // Escape to close modals
         if (e.key === 'Escape') {
-            if (elements.saveModal.classList.contains('active')) {
-                closeSaveModal();
+            if (elements.connectionModal.classList.contains('active')) {
+                closeConnectionModal();
             }
             if (elements.certModal.classList.contains('active')) {
                 closeCertificateDialog(0);  // Reject on escape
@@ -943,24 +946,10 @@ function initEventListeners() {
             hideContextMenu();
         }
         
-        // Enter in save modal to save
-        if (e.key === 'Enter' && elements.saveModal.classList.contains('active')) {
+        // Ctrl+N to open new connection
+        if (e.ctrlKey && e.key === 'n') {
             e.preventDefault();
-            handleSaveConnection();
-        }
-        
-        // Ctrl+S to save
-        if (e.ctrlKey && e.key === 's') {
-            e.preventDefault();
-            if (elements.hostname.value.trim()) {
-                openSaveModal();
-            }
-        }
-        
-        // Ctrl+Enter to connect
-        if (e.ctrlKey && e.key === 'Enter') {
-            e.preventDefault();
-            handleConnect();
+            openConnectionModal();
         }
     });
 }
@@ -981,10 +970,6 @@ async function init() {
     console.log('[RDPMAN] Initializing interface...');
     
     initEventListeners();
-    setupDragAndDrop();
-    
-    // Focus hostname field
-    elements.hostname.focus();
     
     console.log('[RDPMAN] Interface ready, waiting for WebUI connection...');
 }

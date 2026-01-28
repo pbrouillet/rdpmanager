@@ -148,6 +148,28 @@ body {
     50% { opacity: 0.5; }
 }
 
+/* Toolbar */
+.toolbar {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+.toolbar .btn {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.toolbar .btn svg {
+    width: 18px;
+    height: 18px;
+}
+
 .status-text {
     color: var(--color-text-secondary);
     font-size: 0.85rem;
@@ -155,9 +177,6 @@ body {
 
 /* Main Content */
 .main-content {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--spacing-md);
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -305,6 +324,75 @@ body {
 .btn-danger:hover {
     background: rgba(248, 81, 73, 0.1);
     border-color: var(--color-error);
+}
+
+/* Connections Grid (Icons View) */
+.connections-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    min-height: 400px;
+}
+
+.connection-icon-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    background: var(--color-bg-tertiary);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+}
+
+.connection-icon-item:hover {
+    background: var(--color-bg-hover);
+    border-color: var(--color-accent-primary);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.connection-icon-item.selected {
+    border-color: var(--color-accent-primary);
+    box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+.connection-icon-item .icon-wrapper {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--color-bg-secondary), var(--color-bg-primary));
+    border-radius: var(--radius-lg);
+    color: var(--color-accent-primary);
+}
+
+.connection-icon-item .icon-wrapper svg {
+    width: 48px;
+    height: 48px;
+}
+
+.connection-icon-item .connection-name {
+    font-weight: 600;
+    color: var(--color-text-primary);
+    text-align: center;
+    word-break: break-word;
+    font-size: 0.95rem;
+}
+
+.connection-icon-item .connection-host {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    text-align: center;
+    word-break: break-word;
 }
 
 /* Connections List */
