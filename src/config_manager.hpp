@@ -41,6 +41,12 @@ struct ConnectionProfile {
     bool prevent_session_lock = false; // /prevent-session-lock
     bool auto_reconnect = false;       // /auto-reconnect
     int auto_reconnect_max_retries = 3; // /auto-reconnect-max-retries
+    
+    // AVD/Dev Box specific fields
+    std::string remote_desktop_name;   // Display name for the connection
+    std::string wvd_endpoint_pool;     // WVD endpoint pool ID
+    std::string workspace_id;          // Azure workspace ID
+    std::string arm_path;              // Azure Resource Manager path
 };
 
 /**

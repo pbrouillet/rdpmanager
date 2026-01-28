@@ -37,16 +37,12 @@ const elements = {
     username: document.getElementById('username'),
     domain: document.getElementById('domain'),
     
-    // AVD Metadata
-    avdMetadata: document.getElementById('avdMetadata'),
-    metadataVmName: document.getElementById('metadataVmName'),
-    vmNameValue: document.getElementById('vmNameValue'),
-    metadataPoolId: document.getElementById('metadataPoolId'),
-    poolIdValue: document.getElementById('poolIdValue'),
-    metadataWorkspaceId: document.getElementById('metadataWorkspaceId'),
-    workspaceIdValue: document.getElementById('workspaceIdValue'),
-    metadataArmPath: document.getElementById('metadataArmPath'),
-    armPathValue: document.getElementById('armPathValue'),
+    // AVD Settings
+    avdSettings: document.getElementById('avdSettings'),
+    vmName: document.getElementById('vmName'),
+    poolId: document.getElementById('poolId'),
+    workspaceId: document.getElementById('workspaceId'),
+    armPath: document.getElementById('armPath'),
     
     // Advanced Options
     advancedToggle: document.getElementById('advancedToggle'),
@@ -196,8 +192,11 @@ function clearConnectionForm() {
     elements.port.value = '3389';
     elements.username.value = '';
     elements.domain.value = '';
+    elements.vmName.value = '';
+    elements.poolId.value = '';
+    elements.workspaceId.value = '';
+    elements.armPath.value = '';
     resetAdvancedOptions();
-    hideAvdMetadata();
 }
 
 function openDeleteModal(connectionName) {
@@ -473,12 +472,13 @@ function getAdvancedOptions() {
         enable_rds_aad_auth: elements.optAadAuth?.checked || false,
         target_is_aad_joined: elements.optAadJoined?.checked || false,
         load_balance_info: elements.optLoadBalanceInfo?.value?.trim() || '',
-        // Additional AVD fields from imported RDP data
+        // AVD-specific fields (now editable)
         aad_tenant_id: importedRdpData?.aad_tenant_id || '',
-        wvd_endpoint_pool: importedRdpData?.wvd_endpoint_pool || '',
-        arm_path: importedRdpData?.arm_path || '',
-        workspace_id: importedRdpData?.workspace_id || '',
-        remote_application_program: importedRdpData?.remote_application_program || ''
+        wvd_endpoint_pool: elements.poolId?.value?.trim() || '',
+        arm_path: elements.armPath?.value?.trim() || '',
+        workspace_id: elements.workspaceId?.value?.trim() || '',
+        remote_application_program: importedRdpData?.remote_application_program || '',
+        remote_desktop_name: elements.vmName?.value?.trim() || ''
     };
 }
 
@@ -502,6 +502,12 @@ function setAdvancedOptions(conn) {
     elements.optAadAuth.checked = conn.enable_rds_aad_auth || false;
     elements.optAadJoined.checked = conn.target_is_aad_joined || false;
     elements.optLoadBalanceInfo.value = conn.load_balance_info || '';
+    
+    // AVD-specific settings
+    elements.vmName.value = conn.remote_desktop_name || '';
+    elements.poolId.value = conn.wvd_endpoint_pool || '';
+    elements.workspaceId.value = conn.workspace_id || '';
+    elements.armPath.value = conn.arm_path || '';
     
     // Show/hide conditional fields
     updateReconnectRetriesVisibility();
@@ -545,64 +551,21 @@ function updateReconnectRetriesVisibility() {
         elements.optAutoReconnect.checked ? 'flex' : 'none';
 }
 
-function showAvdMetadata(rdpData) {
-    if (!elements.avdMetadata) {
-        console.log('[RDPMAN] AVD metadata element not found!');
-        return;
-    }
+function populateAvdSettings(rdpData) {
+    console.log('[RDPMAN] Populating AVD settings:', rdpData);
     
-    console.log('[RDPMAN] Showing AVD metadata:', rdpData);
-    
-    let hasMetadata = false;
-    
-    // VM/Desktop Name
     if (rdpData.remote_desktop_name) {
-        console.log('[RDPMAN] Setting VM name:', rdpData.remote_desktop_name);
-        elements.vmNameValue.textContent = rdpData.remote_desktop_name;
-        elements.metadataVmName.style.display = 'flex';
-        hasMetadata = true;
-    } else {
-        elements.metadataVmName.style.display = 'none';
+        elements.vmName.value = rdpData.remote_desktop_name;
     }
-    
-    // Pool ID
     if (rdpData.wvd_endpoint_pool) {
-        console.log('[RDPMAN] Setting pool ID:', rdpData.wvd_endpoint_pool);
-        elements.poolIdValue.textContent = rdpData.wvd_endpoint_pool;
-        elements.metadataPoolId.style.display = 'flex';
-        hasMetadata = true;
-    } else {
-        elements.metadataPoolId.style.display = 'none';
+        elements.poolId.value = rdpData.wvd_endpoint_pool;
     }
-    
-    // Workspace ID
     if (rdpData.workspace_id) {
-        console.log('[RDPMAN] Setting workspace ID:', rdpData.workspace_id);
-        elements.workspaceIdValue.textContent = rdpData.workspace_id;
-        elements.metadataWorkspaceId.style.display = 'flex';
-        hasMetadata = true;
-    } else {
-        elements.metadataWorkspaceId.style.display = 'none';
+        elements.workspaceId.value = rdpData.workspace_id;
     }
-    
-    // ARM Path
     if (rdpData.arm_path) {
-        console.log('[RDPMAN] Setting ARM path:', rdpData.arm_path);
-        elements.armPathValue.textContent = rdpData.arm_path;
-        elements.metadataArmPath.style.display = 'flex';
-        hasMetadata = true;
-    } else {
-        elements.metadataArmPath.style.display = 'none';
+        elements.armPath.value = rdpData.arm_path;
     }
-    
-    // Show/hide the entire metadata panel
-    console.log('[RDPMAN] Has AVD metadata:', hasMetadata);
-    elements.avdMetadata.style.display = hasMetadata ? 'block' : 'none';
-}
-
-function hideAvdMetadata() {
-    if (!elements.avdMetadata) return;
-    elements.avdMetadata.style.display = 'none';
 }
 
 function toggleAdvancedOptions() {
@@ -675,11 +638,9 @@ async function handleImportRdpFile(file) {
         
         updateAvdFieldsVisibility();
         
-        // Show AVD metadata if this is an AVD connection
+        // Populate AVD settings if this is an AVD connection
         if (rdp.is_avd_connection) {
-            showAvdMetadata(rdp);
-        } else {
-            hideAvdMetadata();
+            populateAvdSettings(rdp);
         }
         
         // Show success message
@@ -850,7 +811,12 @@ async function handleSaveConnection() {
             audio_pulse: options.audio_pulse,
             prevent_session_lock: options.prevent_session_lock,
             auto_reconnect: options.auto_reconnect,
-            auto_reconnect_max_retries: options.auto_reconnect_max_retries
+            auto_reconnect_max_retries: options.auto_reconnect_max_retries,
+            // AVD/Dev Box fields
+            remote_desktop_name: options.remote_desktop_name,
+            wvd_endpoint_pool: options.wvd_endpoint_pool,
+            workspace_id: options.workspace_id,
+            arm_path: options.arm_path
         };
         
         const success = await saveConnection(JSON.stringify(connectionParams));

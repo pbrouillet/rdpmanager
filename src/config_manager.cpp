@@ -166,6 +166,12 @@ bool ConfigManager::load() {
         profile.auto_reconnect = extract_bool("auto_reconnect");
         profile.auto_reconnect_max_retries = extract_int("auto_reconnect_max_retries");
         
+        // AVD/Dev Box fields
+        profile.remote_desktop_name = extract_string("remote_desktop_name");
+        profile.wvd_endpoint_pool = extract_string("wvd_endpoint_pool");
+        profile.workspace_id = extract_string("workspace_id");
+        profile.arm_path = extract_string("arm_path");
+        
         if (profile.port == 0) profile.port = 3389;
         if (profile.width == 0) profile.width = 1920;
         if (profile.height == 0) profile.height = 1080;
@@ -214,7 +220,12 @@ bool ConfigManager::save() {
         json << "    \"audio_pulse\": " << (c.audio_pulse ? "true" : "false") << ",\n";
         json << "    \"prevent_session_lock\": " << (c.prevent_session_lock ? "true" : "false") << ",\n";
         json << "    \"auto_reconnect\": " << (c.auto_reconnect ? "true" : "false") << ",\n";
-        json << "    \"auto_reconnect_max_retries\": " << c.auto_reconnect_max_retries << "\n";
+        json << "    \"auto_reconnect_max_retries\": " << c.auto_reconnect_max_retries << ",\n";
+        // AVD/Dev Box fields
+        json << "    \"remote_desktop_name\": \"" << c.remote_desktop_name << "\",\n";
+        json << "    \"wvd_endpoint_pool\": \"" << c.wvd_endpoint_pool << "\",\n";
+        json << "    \"workspace_id\": \"" << c.workspace_id << "\",\n";
+        json << "    \"arm_path\": \"" << c.arm_path << "\"\n";
         json << "  }";
         
         if (i < m_connections.size() - 1) {
@@ -266,6 +277,10 @@ bool ConfigManager::save_connection(const ConnectionProfile& profile) {
         it->prevent_session_lock = profile.prevent_session_lock;
         it->auto_reconnect = profile.auto_reconnect;
         it->auto_reconnect_max_retries = profile.auto_reconnect_max_retries;
+        it->remote_desktop_name = profile.remote_desktop_name;
+        it->wvd_endpoint_pool = profile.wvd_endpoint_pool;
+        it->workspace_id = profile.workspace_id;
+        it->arm_path = profile.arm_path;
     } else {
         // Add new - copy the profile and fix port if needed
         ConnectionProfile new_profile = profile;
@@ -328,7 +343,12 @@ std::string ConfigManager::get_connections_json() const {
         json << "\"audio_pulse\":" << (c.audio_pulse ? "true" : "false") << ",";
         json << "\"prevent_session_lock\":" << (c.prevent_session_lock ? "true" : "false") << ",";
         json << "\"auto_reconnect\":" << (c.auto_reconnect ? "true" : "false") << ",";
-        json << "\"auto_reconnect_max_retries\":" << c.auto_reconnect_max_retries;
+        json << "\"auto_reconnect_max_retries\":" << c.auto_reconnect_max_retries << ",";
+        // AVD/Dev Box fields
+        json << "\"remote_desktop_name\":\"" << c.remote_desktop_name << "\",";
+        json << "\"wvd_endpoint_pool\":\"" << c.wvd_endpoint_pool << "\",";
+        json << "\"workspace_id\":\"" << c.workspace_id << "\",";
+        json << "\"arm_path\":\"" << c.arm_path << "\"";
         json << "}";
         
         if (i < m_connections.size() - 1) {

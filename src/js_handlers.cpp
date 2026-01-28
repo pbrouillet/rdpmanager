@@ -266,6 +266,12 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
             profile.auto_reconnect_max_retries = 3;
         }
         
+        // AVD/Dev Box fields
+        profile.remote_desktop_name = json_utils::get_string(root, "remote_desktop_name");
+        profile.wvd_endpoint_pool = json_utils::get_string(root, "wvd_endpoint_pool");
+        profile.workspace_id = json_utils::get_string(root, "workspace_id");
+        profile.arm_path = json_utils::get_string(root, "arm_path");
+        
         // Free the JSON object
         json_decref(root);
         
