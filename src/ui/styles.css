@@ -260,27 +260,58 @@ body {
 }
 
 /* AVD Settings Panel */
-.avd-settings {
-    margin: var(--spacing-md) 0;
+.avd-settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
     padding: var(--spacing-md);
     background: rgba(0, 212, 255, 0.05);
     border: 1px solid rgba(0, 212, 255, 0.2);
     border-radius: var(--radius-md);
-}
-
-.settings-header {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
+    cursor: pointer;
+    margin: var(--spacing-md) 0;
+    transition: all var(--transition-fast);
     font-weight: 600;
     color: var(--color-accent-secondary);
-    margin-bottom: var(--spacing-md);
-    font-size: 0.9rem;
 }
 
-.settings-header svg {
+.avd-settings-toggle:hover {
+    background: rgba(0, 212, 255, 0.1);
+    border-color: var(--color-accent-secondary);
+}
+
+.avd-settings-toggle .toggle-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform var(--transition-fast);
+}
+
+.avd-settings-toggle.expanded .toggle-icon {
+    transform: rotate(180deg);
+}
+
+.avd-settings-toggle .section-icon {
     width: 18px;
     height: 18px;
+}
+
+.avd-settings {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height var(--transition-normal);
+    padding: 0 var(--spacing-md);
+    background: rgba(0, 212, 255, 0.05);
+    border-left: 1px solid rgba(0, 212, 255, 0.2);
+    border-right: 1px solid rgba(0, 212, 255, 0.2);
+    margin: 0 0 var(--spacing-md) 0;
+}
+
+.avd-settings.visible {
+    max-height: 500px;
+    padding: var(--spacing-md);
+    border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    margin-top: calc(-1 * var(--spacing-md));
 }
 
 .form-actions {

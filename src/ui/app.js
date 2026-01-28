@@ -39,6 +39,7 @@ const elements = {
     
     // AVD Settings
     avdSettings: document.getElementById('avdSettings'),
+    avdSettingsToggle: document.getElementById('avdSettingsToggle'),
     vmName: document.getElementById('vmName'),
     poolId: document.getElementById('poolId'),
     workspaceId: document.getElementById('workspaceId'),
@@ -573,6 +574,11 @@ function toggleAdvancedOptions() {
     elements.advancedOptions.classList.toggle('visible');
 }
 
+function toggleAvdSettings() {
+    elements.avdSettingsToggle.classList.toggle('expanded');
+    elements.avdSettings.classList.toggle('visible');
+}
+
 // ============================================================================
 // RDP File Import
 // ============================================================================
@@ -903,6 +909,9 @@ function initEventListeners() {
     
     // Advanced options toggle
     elements.advancedToggle.addEventListener('click', toggleAdvancedOptions);
+    
+    // AVD settings toggle
+    elements.avdSettingsToggle.addEventListener('click', toggleAvdSettings);
     
     // Auto reconnect checkbox - show/hide retries field
     elements.optAutoReconnect.addEventListener('change', updateReconnectRetriesVisibility);
