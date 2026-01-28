@@ -959,23 +959,27 @@ function initEventListeners() {
     
     // Handle delete modal actions via event delegation on the footer
     const deleteModalFooter = elements.deleteModal.querySelector('.modal-footer');
-    deleteModalFooter.addEventListener('click', (e) => {
-        const action = e.target.closest('[data-action]')?.dataset.action;
-        console.log('[RDPMAN] Delete modal action clicked:', action);
-        
-        if (action === 'cancel-delete') {
-            closeDeleteModal();
-        } else if (action === 'confirm-delete') {
-            console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
-            if (contextMenuTarget !== null) {
-                const conn = connections[contextMenuTarget];
-                console.log('[RDPMAN] Deleting connection:', conn);
-                handleDeleteConnection(conn.name);
-            } else {
-                console.error('[RDPMAN] contextMenuTarget is null!');
+    if (deleteModalFooter) {
+        deleteModalFooter.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            console.log('[RDPMAN] Delete modal action clicked:', action, 'target:', e.target);
+            
+            if (action === 'cancel-delete') {
+                closeDeleteModal();
+            } else if (action === 'confirm-delete') {
+                console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
+                if (contextMenuTarget !== null) {
+                    const conn = connections[contextMenuTarget];
+                    console.log('[RDPMAN] Deleting connection:', conn);
+                    handleDeleteConnection(conn.name);
+                } else {
+                    console.error('[RDPMAN] contextMenuTarget is null!');
+                }
             }
-        }
-    });
+        });
+    } else {
+        console.error('[RDPMAN] Delete modal footer not found!');
+    }
     
     // Delete Modal backdrop click
     elements.deleteModal.addEventListener('click', (e) => {
