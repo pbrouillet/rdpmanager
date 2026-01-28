@@ -37,6 +37,17 @@ const elements = {
     username: document.getElementById('username'),
     domain: document.getElementById('domain'),
     
+    // AVD Metadata
+    avdMetadata: document.getElementById('avdMetadata'),
+    metadataVmName: document.getElementById('metadataVmName'),
+    vmNameValue: document.getElementById('vmNameValue'),
+    metadataPoolId: document.getElementById('metadataPoolId'),
+    poolIdValue: document.getElementById('poolIdValue'),
+    metadataWorkspaceId: document.getElementById('metadataWorkspaceId'),
+    workspaceIdValue: document.getElementById('workspaceIdValue'),
+    metadataArmPath: document.getElementById('metadataArmPath'),
+    armPathValue: document.getElementById('armPathValue'),
+    
     // Advanced Options
     advancedToggle: document.getElementById('advancedToggle'),
     advancedOptions: document.getElementById('advancedOptions'),
@@ -186,6 +197,7 @@ function clearConnectionForm() {
     elements.username.value = '';
     elements.domain.value = '';
     resetAdvancedOptions();
+    hideAvdMetadata();
 }
 
 function openDeleteModal(connectionName) {
@@ -533,6 +545,56 @@ function updateReconnectRetriesVisibility() {
         elements.optAutoReconnect.checked ? 'flex' : 'none';
 }
 
+function showAvdMetadata(rdpData) {
+    if (!elements.avdMetadata) return;
+    
+    let hasMetadata = false;
+    
+    // VM/Desktop Name
+    if (rdpData.remote_desktop_name) {
+        elements.vmNameValue.textContent = rdpData.remote_desktop_name;
+        elements.metadataVmName.style.display = 'flex';
+        hasMetadata = true;
+    } else {
+        elements.metadataVmName.style.display = 'none';
+    }
+    
+    // Pool ID
+    if (rdpData.wvd_endpoint_pool) {
+        elements.poolIdValue.textContent = rdpData.wvd_endpoint_pool;
+        elements.metadataPoolId.style.display = 'flex';
+        hasMetadata = true;
+    } else {
+        elements.metadataPoolId.style.display = 'none';
+    }
+    
+    // Workspace ID
+    if (rdpData.workspace_id) {
+        elements.workspaceIdValue.textContent = rdpData.workspace_id;
+        elements.metadataWorkspaceId.style.display = 'flex';
+        hasMetadata = true;
+    } else {
+        elements.metadataWorkspaceId.style.display = 'none';
+    }
+    
+    // ARM Path
+    if (rdpData.arm_path) {
+        elements.armPathValue.textContent = rdpData.arm_path;
+        elements.metadataArmPath.style.display = 'flex';
+        hasMetadata = true;
+    } else {
+        elements.metadataArmPath.style.display = 'none';
+    }
+    
+    // Show/hide the entire metadata panel
+    elements.avdMetadata.style.display = hasMetadata ? 'block' : 'none';
+}
+
+function hideAvdMetadata() {
+    if (!elements.avdMetadata) return;
+    elements.avdMetadata.style.display = 'none';
+}
+
 function toggleAdvancedOptions() {
     elements.advancedToggle.classList.toggle('expanded');
     elements.advancedOptions.classList.toggle('visible');
@@ -602,6 +664,13 @@ async function handleImportRdpFile(file) {
         }
         
         updateAvdFieldsVisibility();
+        
+        // Show AVD metadata if this is an AVD connection
+        if (rdp.is_avd_connection) {
+            showAvdMetadata(rdp);
+        } else {
+            hideAvdMetadata();
+        }
         
         // Show success message
         const displayName = rdp.display_name || rdp.full_address;
