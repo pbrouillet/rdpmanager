@@ -88,6 +88,18 @@ const elements = {
     authCancel: document.getElementById('authCancel'),
     authSubmit: document.getElementById('authSubmit'),
     
+    // Delete Confirmation Modal
+    deleteModal: document.getElementById('deleteModal'),
+    deleteModalClose: document.getElementById('deleteModalClose'),
+    deleteModalCancel: document.getElementById('deleteModalCancel'),
+    deleteModalConfirm: document.getElementById('deleteModalConfirm'),
+    deleteConnectionName: document.getElementById('deleteConnectionName'),
+    
+    // Context Menu
+    contextMenu: document.getElementById('contextMenu'),
+    contextMenuConnect: document.getElementById('contextMenuConnect'),
+    contextMenuDelete: document.getElementById('contextMenuDelete'),
+    
     // Other
     status: document.getElementById('status'),
     appInfo: document.getElementById('appInfo'),
@@ -99,6 +111,7 @@ const elements = {
 // ============================================================================
 let connections = [];
 let selectedConnection = null;
+let contextMenuTarget = null; // Track which connection the context menu was opened for
 
 // ============================================================================
 // Toast Notifications
@@ -147,6 +160,58 @@ function openSaveModal() {
 function closeSaveModal() {
     elements.saveModal.classList.remove('active');
     elements.connectionName.value = '';
+}
+
+function openDeleteModal(connectionName) {
+    elements.deleteConnectionName.textContent = connectionName;
+    elements.deleteModal.classList.add('active');
+}
+
+function closeDeleteModal() {
+    elements.deleteModal.classList.remove('active');
+    contextMenuTarget = null;
+}
+
+// ============================================================================
+// Context Menu Management
+// ============================================================================
+function showContextMenu(x, y, index) {
+    contextMenuTarget = index;
+    elements.contextMenu.style.left = x + 'px';
+    elements.contextMenu.style.top = y + 'px';
+    elements.contextMenu.classList.add('active');
+    
+    // Adjust position if menu goes off screen
+    setTimeout(() => {
+        const rect = elements.contextMenu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            elements.contextMenu.style.left = (window.innerWidth - rect.width - 10) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            elements.contextMenu.style.top = (window.innerHeight - rect.height - 10) + 'px';
+        }
+    }, 0);
+}
+
+function hideContextMenu() {
+    elements.contextMenu.classList.remove('active');
+    contextMenuTarget = null;
+}
+
+function handleContextMenuConnect() {
+    if (contextMenuTarget !== null) {
+        selectConnection(contextMenuTarget);
+        handleConnect();
+    }
+    hideContextMenu();
+}
+
+function handleContextMenuDelete() {
+    if (contextMenuTarget !== null) {
+        const conn = connections[contextMenuTarget];
+        openDeleteModal(conn.name);
+    }
+    hideContextMenu();
 }
 
 // ============================================================================
@@ -297,40 +362,27 @@ function renderConnections() {
                 <div class="connection-name">${escapeHtml(conn.name)}</div>
                 <div class="connection-host">${escapeHtml(conn.hostname)}:${conn.port}</div>
             </div>
-            <div class="connection-actions">
-                <button class="btn btn-danger delete-btn" data-name="${escapeHtml(conn.name)}" title="Delete">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                </button>
-            </div>
         </div>
     `).join('');
     
     // Add event listeners
     elements.connectionsList.querySelectorAll('.connection-item').forEach(item => {
         item.addEventListener('click', (e) => {
-            // Don't trigger if clicking delete button
-            if (e.target.closest('.delete-btn')) return;
-            
             const index = parseInt(item.dataset.index);
             selectConnection(index);
         });
         
         item.addEventListener('dblclick', (e) => {
-            if (e.target.closest('.delete-btn')) return;
             const index = parseInt(item.dataset.index);
             selectConnection(index);
             handleConnect();
         });
-    });
-    
-    elements.connectionsList.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const name = btn.dataset.name;
-            handleDeleteConnection(name);
+        
+        item.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const index = parseInt(item.dataset.index);
+            selectConnection(index);
+            showContextMenu(e.clientX, e.clientY, index);
         });
     });
 }
@@ -737,16 +789,13 @@ async function handleSaveConnection() {
 }
 
 async function handleDeleteConnection(name) {
-    if (!confirm(`Delete connection "${name}"?`)) {
-        return;
-    }
-    
     try {
         const success = await deleteConnection(name);
         
         if (success) {
             showToast(`Connection "${name}" deleted`, 'info');
             selectedConnection = null;
+            closeDeleteModal();
             await loadConnections();
         } else {
             showToast('Failed to delete connection', 'error');
@@ -847,6 +896,34 @@ function initEventListeners() {
         }
     });
     
+    // Delete Modal controls
+    elements.deleteModalClose.addEventListener('click', closeDeleteModal);
+    elements.deleteModalCancel.addEventListener('click', closeDeleteModal);
+    elements.deleteModalConfirm.addEventListener('click', () => {
+        if (contextMenuTarget !== null) {
+            const conn = connections[contextMenuTarget];
+            handleDeleteConnection(conn.name);
+        }
+    });
+    
+    // Delete Modal backdrop click
+    elements.deleteModal.addEventListener('click', (e) => {
+        if (e.target === elements.deleteModal) {
+            closeDeleteModal();
+        }
+    });
+    
+    // Context Menu controls
+    elements.contextMenuConnect.addEventListener('click', handleContextMenuConnect);
+    elements.contextMenuDelete.addEventListener('click', handleContextMenuDelete);
+    
+    // Hide context menu when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.context-menu')) {
+            hideContextMenu();
+        }
+    });
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         // Escape to close modals
@@ -860,6 +937,10 @@ function initEventListeners() {
             if (elements.authModal.classList.contains('active')) {
                 closeAuthDialog(false);  // Cancel on escape
             }
+            if (elements.deleteModal.classList.contains('active')) {
+                closeDeleteModal();
+            }
+            hideContextMenu();
         }
         
         // Enter in save modal to save
