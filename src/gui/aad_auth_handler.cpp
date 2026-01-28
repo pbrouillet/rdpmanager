@@ -207,8 +207,17 @@ void AADAuthHandler::s_handle_oauth_callback(webui::window::event* e) {
     if (!s_instance) return;
     
     std::string url = e->get_string(0);
-    std::cout << "[AAD] OAuth callback received via JS: " << url << "..." << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
+    std::cout << "[AAD] OAuth callback received via JavaScript" << std::endl;
+    std::cout << "[AAD] Callback URL: " << url << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
     s_instance->process_navigation(url);
+}
+
+// Static handler for browser console.log forwarding
+void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
+    std::string message = e->get_string(0);
+    std::cout << message << std::endl;
 }
 
 // ============================================================================
@@ -216,7 +225,11 @@ void AADAuthHandler::s_handle_oauth_callback(webui::window::event* e) {
 // ============================================================================
 
 void AADAuthHandler::process_navigation(const std::string& url) {
-    std::cout << "[AAD] Navigation: " << url << "..." << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
+    std::cout << "[AAD] NAVIGATION EVENT" << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
+    std::cout << "[AAD] URL: " << url << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
     
     // Check if this is the nativeclient redirect URL (contains both login.microsoftonline.com AND nativeclient)
     // This is the preferred redirect for AVD auth - it's a standard HTTPS URL
@@ -253,25 +266,34 @@ void AADAuthHandler::process_navigation(const std::string& url) {
         std::lock_guard<std::mutex> lock(m_mutex);
         
         if (url.find("code=") != std::string::npos) {
-            std::cout << "[AAD] Received authorization code" << std::endl;
+            std::cout << "[AAD] ============================================" << std::endl;
+            std::cout << "[AAD] AUTHORIZATION CODE RECEIVED" << std::endl;
+            std::cout << "[AAD] ============================================" << std::endl;
+            std::cout << "[AAD] Callback URL: " << url << std::endl;
             
             // For nativeclient redirect, the URL is already in the correct format
             // For localhost callback, reconstruct the original redirect URL for FreeRDP
             std::string result_url = url;
             if (is_localhost_callback && !m_original_redirect_uri.empty()) {
                 result_url = reconstruct_original_redirect(url, m_original_redirect_uri);
-                std::cout << "[AAD] Reconstructed redirect URL: " << result_url << "..." << std::endl;
+                std::cout << "[AAD] Reconstructed redirect URL: " << result_url << std::endl;
             } else if (is_nativeclient_callback) {
                 std::cout << "[AAD] Using nativeclient redirect URL directly" << std::endl;
             }
+            std::cout << "[AAD] ============================================" << std::endl;
             
             m_result = {true, result_url};
         } else if (url.find("error=") != std::string::npos) {
-            std::cout << "[AAD] Received error in URL" << std::endl;
+            std::cout << "[AAD] ============================================" << std::endl;
+            std::cout << "[AAD] AUTHENTICATION ERROR" << std::endl;
+            std::cout << "[AAD] ============================================" << std::endl;
+            std::cout << "[AAD] Error URL: " << url << std::endl;
+            std::cout << "[AAD] ============================================" << std::endl;
             m_result = {false, ""};
         } else {
             // Redirect URL without code - this shouldn't happen but handle it
-            std::cout << "[AAD] Redirect without code" << std::endl;
+            std::cout << "[AAD] WARNING: Redirect without code or error" << std::endl;
+            std::cout << "[AAD] URL: " << url << std::endl;
             m_result = {false, ""};
         }
         
@@ -319,12 +341,16 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     m_navigating_to_oauth = false;  // Reset navigation flag
     m_result = {false, ""};
     
-    std::cout << "[AAD] Authentication requested" << std::endl;
-    std::cout << "[AAD] Original Auth URL: " << request.auth_url << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
+    std::cout << "[AAD] AUTHENTICATION REQUESTED" << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
+    std::cout << "[AAD] Type: " << (request.type == AADAuthRequest::RDS_AAD ? "RDS_AAD" : "AVD") << std::endl;
+    std::cout << "[AAD] Auth URL: " << request.auth_url << std::endl;
     
     // Extract and store the original redirect URI for later reconstruction
     m_original_redirect_uri = extract_redirect_uri(request.auth_url);
     std::cout << "[AAD] Original redirect URI: " << m_original_redirect_uri << std::endl;
+    std::cout << "[AAD] ============================================" << std::endl;
     
     // If manual code flow is enabled, print URL to console and wait for user input
     if (s_manual_code_flow) {
@@ -361,6 +387,9 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         // Bind a function to handle the OAuth callback
         // This will be called from the callback page's JavaScript
         m_window->bind("oauthCallback", s_handle_oauth_callback);
+        
+        // Bind a function to forward browser console.log to backend
+        m_window->bind("logToBackend", s_handle_log_to_backend);
     }
     
     // Get the window's port for the localhost redirect
@@ -384,18 +413,35 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 "<title>Azure AD Authentication</title>"
                 "<script src=\"webui.js\"></script>"
                 "<script>"
+                "// Capture console.log and send to backend"
+                "(function() {"
+                "  var originalLog = console.log;"
+                "  console.log = function() {"
+                "    var msg = Array.prototype.slice.call(arguments).join(' ');"
+                "    originalLog.apply(console, arguments);"
+                "    if (typeof logToBackend !== 'undefined') {"
+                "      logToBackend('[AAD-Browser] ' + msg);"
+                "    }"
+                "  };"
+                "})();"
+                ""
                 "window.onload = function() {"
                 "  var url = window.location.href;"
-                "  console.log('Page loaded at: ' + url);"
+                "  console.log('AAD Auth window loaded');"
+                "  console.log('Current URL: ' + url);"
                 "  // Check if this is the OAuth callback (has code= or error=)"
                 "  if (url.indexOf('code=') !== -1 || url.indexOf('error=') !== -1) {"
                 "    console.log('OAuth callback detected!');"
+                "    console.log('Callback URL: ' + url);"
                 "    // Call the bound function to process the callback"
                 "    if (typeof oauthCallback !== 'undefined') {"
+                "      console.log('Calling oauthCallback...');"
                 "      oauthCallback(url);"
                 "    } else {"
                 "      console.error('oauthCallback not defined yet');"
                 "    }"
+                "  } else {"
+                "    console.log('No OAuth parameters in URL, waiting for redirect...');"
                 "  }"
                 "};"
                 "</script>"

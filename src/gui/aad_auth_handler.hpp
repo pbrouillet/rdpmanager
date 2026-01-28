@@ -95,6 +95,11 @@ private:
      * Static handler for OAuth callback from JavaScript
      */
     static void s_handle_oauth_callback(webui::window::event* e);
+    
+    /**
+     * Static handler for console.log forwarding from browser
+     */
+    static void s_handle_log_to_backend(webui::window::event* e);
 
     /**
      * Process navigation events to intercept OAuth redirects
