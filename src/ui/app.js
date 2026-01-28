@@ -960,9 +960,13 @@ function initEventListeners() {
     elements.deleteModalClose.addEventListener('click', closeDeleteModal);
     elements.deleteModalCancel.addEventListener('click', closeDeleteModal);
     elements.deleteModalConfirm.addEventListener('click', () => {
+        console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
         if (contextMenuTarget !== null) {
             const conn = connections[contextMenuTarget];
+            console.log('[RDPMAN] Deleting connection:', conn);
             handleDeleteConnection(conn.name);
+        } else {
+            console.error('[RDPMAN] contextMenuTarget is null!');
         }
     });
     
