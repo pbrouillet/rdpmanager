@@ -88,6 +88,12 @@ static ConnectionProfile profile_from_json(json_t* obj) {
     p.auto_reconnect       = json_utils::get_bool(obj, "auto_reconnect");
     p.auto_reconnect_max_retries = json_utils::get_int(obj, "auto_reconnect_max_retries", 3);
 
+    // Gateway / AAD fields
+    p.gateway_hostname     = json_utils::get_string(obj, "gateway_hostname");
+    p.enable_rds_aad_auth  = json_utils::get_bool(obj, "enable_rds_aad_auth");
+    p.target_is_aad_joined = json_utils::get_bool(obj, "target_is_aad_joined");
+    p.load_balance_info    = json_utils::get_string(obj, "load_balance_info");
+
     // AVD/Dev Box fields
     p.remote_desktop_name = json_utils::get_string(obj, "remote_desktop_name");
     p.wvd_endpoint_pool   = json_utils::get_string(obj, "wvd_endpoint_pool");
@@ -130,6 +136,11 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "prevent_session_lock", json_boolean(c.prevent_session_lock));
     json_object_set_new(obj, "auto_reconnect",       json_boolean(c.auto_reconnect));
     json_object_set_new(obj, "auto_reconnect_max_retries", json_integer(c.auto_reconnect_max_retries));
+    // Gateway / AAD fields
+    json_object_set_new(obj, "gateway_hostname",     json_string(c.gateway_hostname.c_str()));
+    json_object_set_new(obj, "enable_rds_aad_auth",  json_boolean(c.enable_rds_aad_auth));
+    json_object_set_new(obj, "target_is_aad_joined", json_boolean(c.target_is_aad_joined));
+    json_object_set_new(obj, "load_balance_info",    json_string(c.load_balance_info.c_str()));
     // AVD/Dev Box fields
     json_object_set_new(obj, "remote_desktop_name", json_string(c.remote_desktop_name.c_str()));
     json_object_set_new(obj, "wvd_endpoint_pool",   json_string(c.wvd_endpoint_pool.c_str()));
@@ -261,6 +272,10 @@ bool ConfigManager::save_connection(const ConnectionProfile& profile) {
         it->prevent_session_lock = profile.prevent_session_lock;
         it->auto_reconnect = profile.auto_reconnect;
         it->auto_reconnect_max_retries = profile.auto_reconnect_max_retries;
+        it->gateway_hostname = profile.gateway_hostname;
+        it->enable_rds_aad_auth = profile.enable_rds_aad_auth;
+        it->target_is_aad_joined = profile.target_is_aad_joined;
+        it->load_balance_info = profile.load_balance_info;
         it->remote_desktop_name = profile.remote_desktop_name;
         it->wvd_endpoint_pool = profile.wvd_endpoint_pool;
         it->workspace_id = profile.workspace_id;

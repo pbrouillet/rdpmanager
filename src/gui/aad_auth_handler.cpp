@@ -292,10 +292,7 @@ void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
 // ============================================================================
 
 void AADAuthHandler::process_navigation(const std::string& url) {
-    std::cout << "[AAD] ============================================" << std::endl;
-    std::cout << "[AAD] NAVIGATION EVENT" << std::endl;
-    std::cout << "[AAD] URL: " << url << std::endl;
-    std::cout << "[AAD] ============================================" << std::endl;
+    std::cerr << "[AAD] NAVIGATION: " << url << std::endl;
 
     // When --aad-dbg is active, parse and display URL components
     if (s_aad_debug) {
@@ -371,13 +368,9 @@ void AADAuthHandler::process_navigation(const std::string& url) {
         m_pending = false;
         m_cv.notify_all();
         
-        // Close the window
-        {
-            std::lock_guard<std::mutex> win_lock(m_window_mutex);
-            if (m_window) {
-                m_window->close();
-            }
-        }
+        // Don't close the window here — it will be cleaned up by
+        // handle_authenticate() after m_cv.wait_for() returns.
+        // Calling close() from the WebUI callback thread can crash GTK.
     }
 }
 
@@ -436,6 +429,12 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     
     std::cout << "[AAD] Opening native window..." << std::endl;
     
+    // Prevent WebUI from exiting the GTK main loop when the AAD window
+    // disconnects (navigating to login.microsoftonline.com drops the
+    // WebSocket).  With timeout 0 the server-thread exit path skips the
+    // "break main loop" signal, keeping the main window alive.
+    webui::set_timeout(0);
+    
     // Notify the main window about AAD auth (for UI feedback)
     if (m_main_window) {
         std::string type_str = (request.type == AADAuthRequest::RDS_AAD) ? "RDS_AAD" : "AVD";
@@ -444,18 +443,13 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     }
     
     // Create and configure the authentication window
-    // We use a browser window instead of WebView to avoid WebKitGTK threading issues
-    // (WebKitGTK crashes when called from non-main thread)
+    // Use WebView (native embedded browser) for a cleaner popup experience
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         m_window = std::make_unique<webui::window>();
         
-        // IMPORTANT: Enable multi-client mode BEFORE any other configuration
-        // This allows external browsers (without WebUI cookies) to connect
-        webui::set_config(multi_client, true);
-        
-        // Set public mode to allow access from any interface
-        m_window->set_public(true);
+        // Set a reasonable size for the login popup
+        m_window->set_size(800, 700);
         
         // Bind event handler to intercept the OAuth redirect
         // Using empty string "" captures ALL window events (NAVIGATION, DISCONNECTED, etc.)
@@ -539,114 +533,11 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 "</body>"
                 "</html>";
             
-            // Use show_browser() to open in external browser - avoids WebKitGTK threading issues
-            // When --aad-dbg is active, inject fetch/XHR interceptors for response logging
-            std::string debug_js_injection;
-            if (s_aad_debug) {
-                debug_js_injection =
-                    "// === AAD DEBUG: Network interceptors ==="
-                    "(function() {"
-                    "  function logDbg(msg) {"
-                    "    if (typeof logToBackend !== 'undefined') {"
-                    "      logToBackend('[AAD-DBG-NET] ' + msg);"
-                    "    }"
-                    "  }"
-                    ""
-                    "  // Intercept fetch()"
-                    "  var origFetch = window.fetch;"
-                    "  window.fetch = function() {"
-                    "    var url = (typeof arguments[0] === 'string') ? arguments[0] : (arguments[0] && arguments[0].url) || 'unknown';"
-                    "    var method = (arguments[1] && arguments[1].method) || 'GET';"
-                    "    logDbg('fetch ' + method + ' ' + url);"
-                    "    return origFetch.apply(this, arguments).then(function(resp) {"
-                    "      logDbg('fetch response: ' + resp.status + ' ' + resp.statusText + ' for ' + url);"
-                    "      resp.headers.forEach(function(val, key) {"
-                    "        logDbg('  header: ' + key + ': ' + val);"
-                    "      });"
-                    "      var cloned = resp.clone();"
-                    "      cloned.text().then(function(body) {"
-                    "        if (body.length > 2000) {"
-                    "          logDbg('  body (' + body.length + ' chars): ' + body.substring(0, 2000) + '...[truncated]');"
-                    "        } else {"
-                    "          logDbg('  body: ' + body);"
-                    "        }"
-                    "      }).catch(function() {});"
-                    "      return resp;"
-                    "    }).catch(function(err) {"
-                    "      logDbg('fetch error for ' + url + ': ' + err);"
-                    "      throw err;"
-                    "    });"
-                    "  };"
-                    ""
-                    "  // Intercept XMLHttpRequest"
-                    "  var origXHROpen = XMLHttpRequest.prototype.open;"
-                    "  var origXHRSend = XMLHttpRequest.prototype.send;"
-                    "  XMLHttpRequest.prototype.open = function(method, url) {"
-                    "    this._aadDbgMethod = method;"
-                    "    this._aadDbgUrl = url;"
-                    "    logDbg('XHR open ' + method + ' ' + url);"
-                    "    return origXHROpen.apply(this, arguments);"
-                    "  };"
-                    "  XMLHttpRequest.prototype.send = function(body) {"
-                    "    var self = this;"
-                    "    this.addEventListener('load', function() {"
-                    "      logDbg('XHR response: ' + self.status + ' ' + self.statusText + ' for ' + (self._aadDbgUrl || ''));"
-                    "      var hdrs = self.getAllResponseHeaders();"
-                    "      if (hdrs) {"
-                    "        hdrs.trim().split('\\r\\n').forEach(function(h) {"
-                    "          logDbg('  header: ' + h);"
-                    "        });"
-                    "      }"
-                    "      var respText = self.responseText || '';"
-                    "      if (respText.length > 2000) {"
-                    "        logDbg('  body (' + respText.length + ' chars): ' + respText.substring(0, 2000) + '...[truncated]');"
-                    "      } else {"
-                    "        logDbg('  body: ' + respText);"
-                    "      }"
-                    "    });"
-                    "    this.addEventListener('error', function() {"
-                    "      logDbg('XHR error for ' + (self._aadDbgUrl || ''));"
-                    "    });"
-                    "    return origXHRSend.apply(this, arguments);"
-                    "  };"
-                    ""
-                    "  // Log all resource timing entries"
-                    "  if (window.PerformanceObserver) {"
-                    "    var perfObs = new PerformanceObserver(function(list) {"
-                    "      list.getEntries().forEach(function(entry) {"
-                    "        logDbg('resource: ' + entry.initiatorType + ' ' + entry.name"
-                    "          + ' duration=' + Math.round(entry.duration) + 'ms'"
-                    "          + ' size=' + (entry.transferSize || 0));"
-                    "      });"
-                    "    });"
-                    "    perfObs.observe({entryTypes: ['resource', 'navigation']});"
-                    "  }"
-                    ""
-                    "  // Log navigation changes"
-                    "  window.addEventListener('beforeunload', function() {"
-                    "    logDbg('beforeunload: leaving ' + window.location.href);"
-                    "  });"
-                    "  window.addEventListener('hashchange', function(e) {"
-                    "    logDbg('hashchange: ' + e.oldURL + ' -> ' + e.newURL);"
-                    "  });"
-                    "})();";
-            }
-
-            // Insert debug JS right before the closing </script> of the console.log capture
-            std::string final_html = placeholder_html;
-            if (!debug_js_injection.empty()) {
-                // Insert before the window.onload block
-                std::string marker = "window.onload = function()";
-                size_t pos = final_html.find(marker);
-                if (pos != std::string::npos) {
-                    final_html.insert(pos, debug_js_injection + "\n");
-                }
-            }
-
-            bool shown = m_window->show_browser(final_html, AnyBrowser);
+            // Use native WebView for the auth popup
+            bool shown = m_window->show(placeholder_html);
             
             if (!shown) {
-                std::cerr << "[AAD] Failed to show auth window in browser" << std::endl;
+                std::cerr << "[AAD] Failed to show auth window" << std::endl;
                 m_result = {false, "", ""};
                 m_pending = false;
                 return m_result;
@@ -663,35 +554,36 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 return m_result;
             }
             
-            // Rewrite the auth URL with the actual port for the callback
-            modified_auth_url = rewrite_auth_url_with_localhost_redirect(
-                request.auth_url, static_cast<uint16_t>(port));
+            // Use the original auth URL as-is — don't rewrite the redirect URI.
+            // The OAuth provider will redirect to the original redirect_uri
+            // (e.g. nativeclient or ms-appx-web), and we intercept that via
+            // NAVIGATION events before the browser tries to load it.
+            modified_auth_url = request.auth_url;
+            m_actual_redirect_uri = m_original_redirect_uri;
             
-            // Store the actual localhost redirect URI for the token request
-            m_actual_redirect_uri = "http://localhost:" + std::to_string(port) + "/oauth/callback";
-            
-            std::cout << "[AAD] Modified Auth URL (localhost redirect on port " << port << "): " 
-                      << modified_auth_url << "..." << std::endl;
+            std::cout << "[AAD] Using original auth URL (redirect: " << m_original_redirect_uri << ")" << std::endl;
             if (s_aad_debug) {
-                log_url_details(modified_auth_url, "Modified auth URL (with localhost redirect)");
+                log_url_details(modified_auth_url, "Auth URL (original redirect)");
             }
         }
     }
     
-    // Wait a moment for the browser to connect
+    // Wait a moment for the webview to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
-    // Navigate the browser to the actual OAuth URL
+    // Navigate the webview to the actual OAuth URL
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            std::cout << "[AAD] Navigating browser to auth URL..." << std::endl;
+            std::cout << "[AAD] Navigating webview to auth URL..." << std::endl;
             if (s_aad_debug) {
-                std::cout << "[AAD-DBG] Executing JS redirect: window.location.href = '<auth_url>'" << std::endl;
+                std::cout << "[AAD-DBG] Calling navigate() with auth URL" << std::endl;
             }
-            // Use JavaScript to redirect instead of navigate() to avoid WebKitGTK issues
-            std::string redirect_js = "window.location.href = '" + modified_auth_url + "';";
-            m_window->run(redirect_js);
+            // Set flag BEFORE navigate() — the WebSocket will disconnect when the
+            // webview leaves localhost, and we must not treat that as user cancellation.
+            m_navigating_to_oauth = true;
+            // Use navigate() for reliable cross-origin navigation in WebView
+            m_window->navigate(modified_auth_url);
         } else {
             std::cerr << "[AAD] Window closed before navigation" << std::endl;
             m_result = {false, "", ""};
@@ -713,6 +605,9 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             m_window.reset();
         }
     }
+    
+    // Restore normal timeout so the app exits when the user closes the main window
+    webui::set_timeout(15);
     
     if (!status) {
         std::cerr << "[AAD] Auth timed out" << std::endl;

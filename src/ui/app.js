@@ -695,7 +695,7 @@ async function handleConnect() {
     }
     
     updateStatus('Connecting...', false);
-    elements.connectBtn.disabled = true;
+    if (elements.connectBtn) elements.connectBtn.disabled = true;
     
     try {
         // Build connection params as JSON object
@@ -758,7 +758,7 @@ async function handleConnect() {
         updateStatus('Error', false);
         setTimeout(() => updateStatus('Systems Online', true), 3000);
     } finally {
-        elements.connectBtn.disabled = false;
+        if (elements.connectBtn) elements.connectBtn.disabled = false;
     }
 }
 
@@ -810,7 +810,12 @@ async function handleSaveConnection() {
             remote_desktop_name: options.remote_desktop_name,
             wvd_endpoint_pool: options.wvd_endpoint_pool,
             workspace_id: options.workspace_id,
-            arm_path: options.arm_path
+            arm_path: options.arm_path,
+            // Gateway / AAD fields
+            gateway_hostname: options.gateway_hostname,
+            enable_rds_aad_auth: options.enable_rds_aad_auth,
+            target_is_aad_joined: options.target_is_aad_joined,
+            load_balance_info: options.load_balance_info
         };
         
         const success = await saveConnection(JSON.stringify(connectionParams));
@@ -960,13 +965,13 @@ function initEventListeners() {
             if (action === 'cancel-delete') {
                 closeDeleteModal();
             } else if (action === 'confirm-delete') {
-                console.log('[RDPMAN] Delete confirm button clicked, contextMenuTarget:', contextMenuTarget);
-                if (contextMenuTarget !== null) {
-                    const conn = connections[contextMenuTarget];
-                    console.log('[RDPMAN] Deleting connection:', conn);
-                    handleDeleteConnection(conn.name);
+                // Use the name stored in the modal (contextMenuTarget is cleared by hideContextMenu)
+                const nameToDelete = elements.deleteConnectionName.textContent;
+                console.log('[RDPMAN] Delete confirm button clicked, name:', nameToDelete);
+                if (nameToDelete) {
+                    handleDeleteConnection(nameToDelete);
                 } else {
-                    console.error('[RDPMAN] contextMenuTarget is null!');
+                    console.error('[RDPMAN] No connection name in delete modal!');
                 }
             }
         });

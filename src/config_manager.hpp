@@ -43,6 +43,12 @@ struct ConnectionProfile {
     bool auto_reconnect = false;       // /auto-reconnect
     int auto_reconnect_max_retries = 3; // /auto-reconnect-max-retries
     
+    // Gateway / AAD settings
+    std::string gateway_hostname;      // RD Gateway hostname
+    bool enable_rds_aad_auth = false;  // Enable RDS AAD authentication
+    bool target_is_aad_joined = false; // Target is Azure AD joined
+    std::string load_balance_info;     // Load balance info string
+    
     // AVD/Dev Box specific fields
     std::string remote_desktop_name;   // Display name for the connection
     std::string wvd_endpoint_pool;     // WVD endpoint pool ID
