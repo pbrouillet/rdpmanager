@@ -34,6 +34,7 @@
 
 // For UINT16, DWORD, BOOL types
 #include <winpr/wtypes.h>
+#include <winpr/ssl.h>
 
 // For storing session associations with freerdp instances
 #include <unordered_map>
@@ -557,6 +558,9 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     }
     
     std::cout << "[RDPSession] AAD authentication: exchanging code for token..." << std::endl;
+    
+    // Ensure OpenSSL is initialized before making HTTPS requests
+    winpr_InitializeSSL(WINPR_SSL_INIT_DEFAULT);
     
     // Verify the AAD well-known endpoint is reachable before token exchange
     const char* token_ep = freerdp_utils_aad_get_wellknown_string(
