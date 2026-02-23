@@ -6,6 +6,7 @@
  */
 
 #include "dialog_manager.hpp"
+#include "json_utils.hpp"
 
 void DialogManager::set_main_window(webui::window* window) {
     m_main_window = window;
@@ -62,14 +63,14 @@ CertificateAcceptance DialogManager::handle_certificate_verify(const Certificate
     if (m_main_window) {
         std::string js = "showCertificateDialog(" +
             std::string("{") +
-            "\"host\":\"" + info.host + "\"," +
+            "\"host\":\"" + json_utils::escape_string(info.host) + "\"," +
             "\"port\":" + std::to_string(info.port) + "," +
-            "\"commonName\":\"" + info.common_name + "\"," +
-            "\"subject\":\"" + info.subject + "\"," +
-            "\"issuer\":\"" + info.issuer + "\"," +
-            "\"fingerprint\":\"" + info.fingerprint + "\"," +
+            "\"commonName\":\"" + json_utils::escape_string(info.common_name) + "\"," +
+            "\"subject\":\"" + json_utils::escape_string(info.subject) + "\"," +
+            "\"issuer\":\"" + json_utils::escape_string(info.issuer) + "\"," +
+            "\"fingerprint\":\"" + json_utils::escape_string(info.fingerprint) + "\"," +
             "\"isChanged\":" + (info.is_changed ? "true" : "false") + "," +
-            "\"oldFingerprint\":\"" + info.old_fingerprint + "\"" +
+            "\"oldFingerprint\":\"" + json_utils::escape_string(info.old_fingerprint) + "\"" +
             "});";
         m_main_window->run(js);
     }
@@ -99,10 +100,10 @@ AuthResponse DialogManager::handle_authenticate(const AuthRequest& request) {
     if (m_main_window) {
         std::string js = "showAuthDialog(" +
             std::string("{") +
-            "\"hostname\":\"" + request.hostname + "\"," +
+            "\"hostname\":\"" + json_utils::escape_string(request.hostname) + "\"," +
             "\"isGateway\":" + (request.is_gateway ? "true" : "false") + "," +
-            "\"currentUsername\":\"" + request.current_username + "\"," +
-            "\"currentDomain\":\"" + request.current_domain + "\"" +
+            "\"currentUsername\":\"" + json_utils::escape_string(request.current_username) + "\"," +
+            "\"currentDomain\":\"" + json_utils::escape_string(request.current_domain) + "\"" +
             "});";
         m_main_window->run(js);
     }

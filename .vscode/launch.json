@@ -8,7 +8,8 @@
             "program": "${workspaceFolder}/build/webui-rdp-client",
             "args": [
                 //"--debug-port=9222"
-                "-USE_MANUAL_CODE_FLOW"
+                "-USE_MANUAL_CODE_FLOW",
+                "--aad-dbg"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -89,6 +90,7 @@
             "program": "${workspaceFolder}/build/webui-rdp-client",
             "args": [
                 //"--debug-port=9222"
+                "--aad-dbg"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -150,6 +152,7 @@
             "program": "${workspaceFolder}/build/webui-rdp-client",
             "args": [
                 //"--debug-port=9222"
+                "--aad-dbg"
             ],
             "cwd": "${workspaceFolder}",
             "env": {
@@ -191,6 +194,7 @@
             "program": "${workspaceFolder}/build/webui-rdp-client",
             "args": [
                 //"--debug-port=9222"
+                "--aad-dbg"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

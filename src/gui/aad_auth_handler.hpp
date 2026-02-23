@@ -49,6 +49,18 @@ public:
     static bool is_manual_code_flow_enabled();
 
     /**
+     * Enable verbose AAD debug logging.
+     * Logs every navigation URL with parsed query parameters, and
+     * captures HTTP request/response details on the callback server.
+     */
+    static void enable_debug();
+
+    /**
+     * Check if AAD debug logging is enabled
+     */
+    static bool is_debug_enabled();
+
+    /**
      * Set the main window for displaying toast notifications
      */
     void set_main_window(webui::window* window);
@@ -84,7 +96,8 @@ private:
      * Handle manual code flow - prints URL to console and waits for user input
      * Called when manual code flow mode is enabled
      */
-    AADAuthResponse handle_manual_code_flow(const AADAuthRequest& request);
+    AADAuthResponse handle_manual_code_flow(const AADAuthRequest& request,
+                                           std::unique_lock<std::mutex>& lock);
 
     /**
      * Static event handler for WebUI callbacks
@@ -128,6 +141,9 @@ private:
     
     // Original redirect URI for URL reconstruction (ms-appx-web:// or nativeclient)
     std::string m_original_redirect_uri;
+    
+    // The actual localhost redirect URI used in the auth request
+    std::string m_actual_redirect_uri;
 
     // OAuth window
     std::unique_ptr<webui::window> m_window;
@@ -141,6 +157,12 @@ private:
 
     // Static flag for manual code flow mode
     static bool s_manual_code_flow;
+
+    // Static flag for AAD debug logging
+    static bool s_aad_debug;
+
+    // Helper: parse and log URL query parameters
+    static void log_url_details(const std::string& url, const std::string& context);
 };
 
 #endif // AAD_AUTH_HANDLER_HPP

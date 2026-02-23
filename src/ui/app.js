@@ -235,6 +235,7 @@ function hideContextMenu() {
 }
 
 function handleContextMenuConnect() {
+    console.log('[RDPMAN] handleContextMenuConnect: contextMenuTarget=' + contextMenuTarget);
     if (contextMenuTarget !== null) {
         selectConnection(contextMenuTarget);
         handleConnect();
@@ -406,27 +407,6 @@ function renderConnections() {
             <div class="connection-host">${escapeHtml(conn.hostname)}:${conn.port}</div>
         </div>
     `).join('');
-    
-    // Add event listeners
-    elements.connectionsGrid.querySelectorAll('.connection-icon-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-            const index = parseInt(item.dataset.index);
-            selectConnection(index);
-        });
-        
-        item.addEventListener('dblclick', (e) => {
-            const index = parseInt(item.dataset.index);
-            selectConnection(index);
-            handleConnect();
-        });
-        
-        item.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            const index = parseInt(item.dataset.index);
-            selectConnection(index);
-            showContextMenu(e.clientX, e.clientY, index);
-        });
-    });
 }
 
 function selectConnection(index) {
@@ -445,7 +425,11 @@ function selectConnection(index) {
     // Fill advanced options
     setAdvancedOptions(conn);
     
-    renderConnections();
+    // Update selection visually without re-rendering (preserves DOM for dblclick)
+    elements.connectionsGrid.querySelectorAll('.connection-icon-item').forEach(item => {
+        const i = parseInt(item.dataset.index);
+        item.classList.toggle('selected', i === index);
+    });
 }
 
 // ============================================================================
@@ -693,10 +677,13 @@ async function loadAppInfo() {
 }
 
 async function handleConnect() {
+    console.log('[RDPMAN] handleConnect() called');
     const hostname = elements.hostname.value.trim();
     const port = parseInt(elements.port.value) || 3389;
     const username = elements.username.value.trim();
     const domain = elements.domain.value.trim();
+    
+    console.log('[RDPMAN] handleConnect: hostname=' + hostname + ' port=' + port);
     
     // Get advanced options
     const options = getAdvancedOptions();
@@ -744,7 +731,9 @@ async function handleConnect() {
             remote_application_program: options.remote_application_program
         };
         
+        console.log('[RDPMAN] Calling connectRDP with params:', JSON.stringify(connectionParams).substring(0, 200));
         const result = await connectRDP(JSON.stringify(connectionParams));
+        console.log('[RDPMAN] connectRDP result:', result);
         const response = JSON.parse(result);
         
         if (response.success) {
@@ -996,6 +985,34 @@ function initEventListeners() {
     elements.contextMenuConnect.addEventListener('click', handleContextMenuConnect);
     elements.contextMenuEdit.addEventListener('click', handleContextMenuEdit);
     elements.contextMenuDelete.addEventListener('click', handleContextMenuDelete);
+    
+    // Connection grid event delegation (survives innerHTML re-renders)
+    elements.connectionsGrid.addEventListener('click', (e) => {
+        const item = e.target.closest('.connection-icon-item');
+        if (item) {
+            const index = parseInt(item.dataset.index);
+            console.log('[RDPMAN] Grid click: selecting connection ' + index);
+            selectConnection(index);
+        }
+    });
+    elements.connectionsGrid.addEventListener('dblclick', (e) => {
+        const item = e.target.closest('.connection-icon-item');
+        if (item) {
+            const index = parseInt(item.dataset.index);
+            console.log('[RDPMAN] Grid dblclick: connecting to ' + index);
+            selectConnection(index);
+            handleConnect();
+        }
+    });
+    elements.connectionsGrid.addEventListener('contextmenu', (e) => {
+        const item = e.target.closest('.connection-icon-item');
+        if (item) {
+            e.preventDefault();
+            const index = parseInt(item.dataset.index);
+            selectConnection(index);
+            showContextMenu(e.clientX, e.clientY, index);
+        }
+    });
     
     // Hide context menu when clicking outside
     document.addEventListener('click', (e) => {

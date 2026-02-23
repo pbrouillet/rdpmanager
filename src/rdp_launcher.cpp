@@ -338,6 +338,49 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
     return result;
 }
 
+/**
+ * Replace the redirect_uri in a token request body with the actual URI used during auth.
+ * The token request is a form-encoded body (key=value&key=value).
+ */
+static std::string replace_redirect_uri_in_request(const std::string& request, const std::string& actual_uri) {
+    if (actual_uri.empty()) {
+        std::cout << "[RDPSession] replace_redirect_uri: no actual_redirect_uri, returning as-is" << std::endl;
+        return request;
+    }
+
+    size_t pos = request.find("redirect_uri=");
+    if (pos == std::string::npos) {
+        std::cout << "[RDPSession] replace_redirect_uri: no redirect_uri param found" << std::endl;
+        return request;
+    }
+
+    size_t value_start = pos + 13; // length of "redirect_uri="
+    size_t value_end = request.find('&', value_start);
+    if (value_end == std::string::npos) {
+        value_end = request.length();
+    }
+
+    // URL-encode the actual redirect URI for the form body
+    std::string encoded_uri;
+    for (unsigned char c : actual_uri) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded_uri += c;
+        } else {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", c);
+            encoded_uri += buf;
+        }
+    }
+
+    std::string result = request.substr(0, value_start) + encoded_uri;
+    if (value_end < request.length()) {
+        result += request.substr(value_end);
+    }
+
+    std::cout << "[RDPSession] replace_redirect_uri: replaced with " << actual_uri << std::endl;
+    return result;
+}
+
 int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char** token, size_t count, ...) {
     if (!instance || !token) return FALSE;
     
@@ -388,10 +431,10 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AUTH_REQUEST, 
                                                         scope.c_str());
             if (auth_url) {
-                std::cout << "[RDPSession] RDS_AAD auth_url (original): " << auth_url << std::endl;
-                // Replace ms-appx-web:// redirect URI with nativeclient for cross-platform support
-                request.auth_url = replace_msappx_redirect_uri(auth_url);
-                std::cout << "[RDPSession] RDS_AAD auth_url (modified): " << request.auth_url << std::endl;
+                std::cout << "[RDPSession] RDS_AAD auth_url: " << auth_url << std::endl;
+                // Pass the raw URL to the auth handler — it will rewrite the redirect_uri
+                // to localhost so it can intercept the callback
+                request.auth_url = auth_url;
                 free(auth_url);
             }
             break;
@@ -414,10 +457,10 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             // Get the AVD authorization URL
             char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_AUTH_REQUEST);
             if (auth_url) {
-                std::cout << "[RDPSession]   Generated auth_url (original): " << auth_url << std::endl;
-                // Replace ms-appx-web:// redirect URI with nativeclient for cross-platform support
-                request.auth_url = replace_msappx_redirect_uri(auth_url);
-                std::cout << "[RDPSession]   Generated auth_url (modified): " << request.auth_url << std::endl;
+                std::cout << "[RDPSession]   Generated auth_url: " << auth_url << std::endl;
+                // Pass the raw URL to the auth handler — it will rewrite the redirect_uri
+                // to localhost so it can intercept the callback
+                request.auth_url = auth_url;
                 free(auth_url);
             } else {
                 std::cerr << "[RDPSession]   Failed to generate auth URL - freerdp_client_get_aad_url returned NULL" << std::endl;
@@ -465,6 +508,8 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     }
     
     std::cout << "[RDPSession] AAD authentication: received redirect URL" << std::endl;
+    std::cout << "[RDPSession]   Redirect URL: " << response.redirect_url << std::endl;
+    std::cout << "[RDPSession]   Actual redirect_uri used: " << response.actual_redirect_uri << std::endl;
     
     // Extract authorization code from redirect URL
     std::string code = extract_code_from_url(response.redirect_url);
@@ -483,12 +528,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_TOKEN_REQUEST,
                                                        scope.c_str(), code.c_str(), req_cnf.c_str());
             if (token_request_raw) {
-                // IMPORTANT: The token request must use the same redirect_uri that was used
-                // when obtaining the authorization code. Since we replaced ms-appx-web with
-                // nativeclient in the auth URL, we must do the same here.
                 std::cout << "[RDPSession] RDS_AAD Token request (original): " << token_request_raw << std::endl;
-                token_request = replace_msappx_redirect_uri(token_request_raw);
-                std::cout << "[RDPSession] RDS_AAD Token request (modified): " << token_request << std::endl;
+                // The token request redirect_uri must match the one used in the auth request.
+                // FreeRDP builds it with the original URI (ms-appx-web), but we used localhost.
+                token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
+                std::cout << "[RDPSession] RDS_AAD Token request (final): " << token_request << std::endl;
                 free(token_request_raw);
             }
             break;
@@ -496,12 +540,9 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_TOKEN_REQUEST,
                                                        code.c_str());
             if (token_request_raw) {
-                // IMPORTANT: The token request must use the same redirect_uri that was used
-                // when obtaining the authorization code. Since we replaced ms-appx-web with
-                // nativeclient in the auth URL, we must do the same here.
                 std::cout << "[RDPSession] AVD Token request (original): " << token_request_raw << std::endl;
-                token_request = replace_msappx_redirect_uri(token_request_raw);
-                std::cout << "[RDPSession] AVD Token request (modified): " << token_request << std::endl;
+                token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
+                std::cout << "[RDPSession] AVD Token request (final): " << token_request << std::endl;
                 free(token_request_raw);
             }
             break;

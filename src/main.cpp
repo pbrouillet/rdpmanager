@@ -31,6 +31,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "-USE_MANUAL_CODE_FLOW") {
             // Enable manual AAD code flow mode
             AADAuthHandler::enable_manual_code_flow();
+        } else if (arg == "--aad-dbg") {
+            // Enable verbose AAD debug logging (navigations, headers, bodies)
+            AADAuthHandler::enable_debug();
         }
     }
     

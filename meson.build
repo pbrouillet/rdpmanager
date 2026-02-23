@@ -214,6 +214,12 @@ ui_files = files(
 )
 
 # ============================================================================
+# Transitive dependencies needed when statically linking FreeRDP
+# ============================================================================
+zstd_dep = dependency('libzstd', required: false)
+xcb_dep = dependency('xcb', required: false)
+
+# ============================================================================
 # Main executable
 # ============================================================================
 executable('webui-rdp-client',
@@ -228,6 +234,8 @@ executable('webui-rdp-client',
     freerdp_client_dep,
     winpr_dep,
     platform_deps,
+    zstd_dep,
+    xcb_dep,
   ],
   install: true,
   # Embed the UI path for runtime

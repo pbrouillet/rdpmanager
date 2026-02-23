@@ -1,10 +1,11 @@
 /**
  * Configuration Manager Implementation
  * 
- * Uses a simple JSON format for storing connection profiles.
+ * Uses jansson for JSON serialization/deserialization of connection profiles.
  */
 
 #include "config_manager.hpp"
+#include "json_utils.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -56,6 +57,91 @@ fs::path ConfigManager::get_config_file_path() const {
     return configFilePath;
 }
 
+// ============================================================================
+// Helper: populate a ConnectionProfile from a jansson object
+// ============================================================================
+static ConnectionProfile profile_from_json(json_t* obj) {
+    ConnectionProfile p;
+    p.name       = json_utils::get_string(obj, "name");
+    p.hostname   = json_utils::get_string(obj, "hostname");
+    p.port       = json_utils::get_int(obj, "port", 3389);
+    p.username   = json_utils::get_string(obj, "username");
+    p.domain     = json_utils::get_string(obj, "domain");
+    p.width      = json_utils::get_int(obj, "width", 1920);
+    p.height     = json_utils::get_int(obj, "height", 1080);
+    p.fullscreen = json_utils::get_bool(obj, "fullscreen");
+
+    // Advanced RDP Options
+    // Default clipboard to true when key is absent (older saved profiles)
+    p.home_drive           = json_utils::get_bool(obj, "home_drive");
+    p.clipboard            = json_utils::get_bool(obj, "clipboard",
+                                json_object_get(obj, "clipboard") ? false : true);
+    p.cert_tofu            = json_utils::get_bool(obj, "cert_tofu");
+    p.usb_auto             = json_utils::get_bool(obj, "usb_auto");
+    p.floatbar             = json_utils::get_bool(obj, "floatbar");
+    p.dynamic_resolution   = json_utils::get_bool(obj, "dynamic_resolution");
+    p.network_auto         = json_utils::get_bool(obj, "network_auto");
+    p.gfx_avc420           = json_utils::get_bool(obj, "gfx_avc420");
+    p.compression          = json_utils::get_bool(obj, "compression");
+    p.audio_pulse          = json_utils::get_bool(obj, "audio_pulse");
+    p.prevent_session_lock = json_utils::get_bool(obj, "prevent_session_lock");
+    p.auto_reconnect       = json_utils::get_bool(obj, "auto_reconnect");
+    p.auto_reconnect_max_retries = json_utils::get_int(obj, "auto_reconnect_max_retries", 3);
+
+    // AVD/Dev Box fields
+    p.remote_desktop_name = json_utils::get_string(obj, "remote_desktop_name");
+    p.wvd_endpoint_pool   = json_utils::get_string(obj, "wvd_endpoint_pool");
+    p.workspace_id        = json_utils::get_string(obj, "workspace_id");
+    p.arm_path            = json_utils::get_string(obj, "arm_path");
+
+    // Clamp defaults
+    if (p.port   <= 0) p.port   = 3389;
+    if (p.width  <= 0) p.width  = 1920;
+    if (p.height <= 0) p.height = 1080;
+    if (p.auto_reconnect_max_retries <= 0) p.auto_reconnect_max_retries = 3;
+
+    return p;
+}
+
+// ============================================================================
+// Helper: serialize a ConnectionProfile to a jansson object
+// ============================================================================
+static json_t* profile_to_json(const ConnectionProfile& c) {
+    json_t* obj = json_object();
+    json_object_set_new(obj, "name",       json_string(c.name.c_str()));
+    json_object_set_new(obj, "hostname",   json_string(c.hostname.c_str()));
+    json_object_set_new(obj, "port",       json_integer(c.port));
+    json_object_set_new(obj, "username",   json_string(c.username.c_str()));
+    json_object_set_new(obj, "domain",     json_string(c.domain.c_str()));
+    json_object_set_new(obj, "width",      json_integer(c.width));
+    json_object_set_new(obj, "height",     json_integer(c.height));
+    json_object_set_new(obj, "fullscreen", json_boolean(c.fullscreen));
+    // Advanced RDP Options
+    json_object_set_new(obj, "home_drive",           json_boolean(c.home_drive));
+    json_object_set_new(obj, "clipboard",            json_boolean(c.clipboard));
+    json_object_set_new(obj, "cert_tofu",            json_boolean(c.cert_tofu));
+    json_object_set_new(obj, "usb_auto",             json_boolean(c.usb_auto));
+    json_object_set_new(obj, "floatbar",             json_boolean(c.floatbar));
+    json_object_set_new(obj, "dynamic_resolution",   json_boolean(c.dynamic_resolution));
+    json_object_set_new(obj, "network_auto",         json_boolean(c.network_auto));
+    json_object_set_new(obj, "gfx_avc420",           json_boolean(c.gfx_avc420));
+    json_object_set_new(obj, "compression",          json_boolean(c.compression));
+    json_object_set_new(obj, "audio_pulse",          json_boolean(c.audio_pulse));
+    json_object_set_new(obj, "prevent_session_lock", json_boolean(c.prevent_session_lock));
+    json_object_set_new(obj, "auto_reconnect",       json_boolean(c.auto_reconnect));
+    json_object_set_new(obj, "auto_reconnect_max_retries", json_integer(c.auto_reconnect_max_retries));
+    // AVD/Dev Box fields
+    json_object_set_new(obj, "remote_desktop_name", json_string(c.remote_desktop_name.c_str()));
+    json_object_set_new(obj, "wvd_endpoint_pool",   json_string(c.wvd_endpoint_pool.c_str()));
+    json_object_set_new(obj, "workspace_id",        json_string(c.workspace_id.c_str()));
+    json_object_set_new(obj, "arm_path",            json_string(c.arm_path.c_str()));
+    return obj;
+}
+
+// ============================================================================
+// Load / Save
+// ============================================================================
+
 bool ConfigManager::load() {
     if (!fs::exists(m_config_path)) {
         std::cout << "[ConfigManager] No config file found at " << m_config_path << std::endl;
@@ -73,178 +159,76 @@ bool ConfigManager::load() {
     std::string content = buffer.str();
     file.close();
     
-    // Simple JSON parsing (no external dependency)
-    // Format: [{"name":"...", "hostname":"...", ...}, ...]
     m_connections.clear();
     
-    // Find array content
-    size_t array_start = content.find('[');
-    size_t array_end = content.rfind(']');
-    
-    if (array_start == std::string::npos || array_end == std::string::npos) {
-        return true;  // Empty or invalid, start fresh
+    json_error_t error;
+    json_t* root = json_loads(content.c_str(), 0, &error);
+    if (!root) {
+        std::cerr << "[ConfigManager] JSON parse error at line " << error.line
+                  << ": " << error.text << std::endl;
+        return false;
     }
     
-    // Parse each object
-    size_t pos = array_start;
-    while (pos < array_end) {
-        size_t obj_start = content.find('{', pos);
-        if (obj_start == std::string::npos || obj_start >= array_end) break;
+    if (!json_is_array(root)) {
+        std::cerr << "[ConfigManager] Config file root is not an array" << std::endl;
+        json_decref(root);
+        return false;
+    }
+    
+    size_t index;
+    json_t* value;
+    json_array_foreach(root, index, value) {
+        if (!json_is_object(value)) continue;
         
-        size_t obj_end = content.find('}', obj_start);
-        if (obj_end == std::string::npos) break;
-        
-        std::string obj = content.substr(obj_start, obj_end - obj_start + 1);
-        
-        ConnectionProfile profile;
-        
-        // Extract fields (simple string extraction)
-        // Helper to skip whitespace
-        auto skip_whitespace = [&obj](size_t pos) -> size_t {
-            while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t' || obj[pos] == '\n' || obj[pos] == '\r')) {
-                pos++;
-            }
-            return pos;
-        };
-        
-        auto extract_string = [&obj, &skip_whitespace](const std::string& key) -> std::string {
-            std::string search = "\"" + key + "\":";
-            size_t start = obj.find(search);
-            if (start == std::string::npos) return "";
-            start += search.length();
-            start = skip_whitespace(start);
-            if (start >= obj.size() || obj[start] != '"') return "";
-            start++; // skip opening quote
-            size_t end = obj.find('"', start);
-            if (end == std::string::npos) return "";
-            return obj.substr(start, end - start);
-        };
-        
-        auto extract_int = [&obj, &skip_whitespace](const std::string& key) -> int {
-            std::string search = "\"" + key + "\":";
-            size_t start = obj.find(search);
-            if (start == std::string::npos) return 0;
-            start += search.length();
-            start = skip_whitespace(start);
-            try {
-                return std::stoi(obj.substr(start));
-            } catch (...) {
-                return 0;
-            }
-        };
-        
-        auto extract_bool = [&obj, &skip_whitespace](const std::string& key) -> bool {
-            std::string search = "\"" + key + "\":";
-            size_t start = obj.find(search);
-            if (start == std::string::npos) return false;
-            start += search.length();
-            start = skip_whitespace(start);
-            return obj.substr(start, 4) == "true";
-        };
-        
-        profile.name = extract_string("name");
-        profile.hostname = extract_string("hostname");
-        profile.port = extract_int("port");
-        profile.username = extract_string("username");
-        profile.domain = extract_string("domain");
-        profile.width = extract_int("width");
-        profile.height = extract_int("height");
-        profile.fullscreen = extract_bool("fullscreen");
-        
-        // Advanced RDP Options
-        profile.home_drive = extract_bool("home_drive");
-        profile.clipboard = extract_bool("clipboard");
-        profile.cert_tofu = extract_bool("cert_tofu");
-        profile.usb_auto = extract_bool("usb_auto");
-        profile.floatbar = extract_bool("floatbar");
-        profile.dynamic_resolution = extract_bool("dynamic_resolution");
-        profile.network_auto = extract_bool("network_auto");
-        profile.gfx_avc420 = extract_bool("gfx_avc420");
-        profile.compression = extract_bool("compression");
-        profile.audio_pulse = extract_bool("audio_pulse");
-        profile.prevent_session_lock = extract_bool("prevent_session_lock");
-        profile.auto_reconnect = extract_bool("auto_reconnect");
-        profile.auto_reconnect_max_retries = extract_int("auto_reconnect_max_retries");
-        
-        // AVD/Dev Box fields
-        profile.remote_desktop_name = extract_string("remote_desktop_name");
-        profile.wvd_endpoint_pool = extract_string("wvd_endpoint_pool");
-        profile.workspace_id = extract_string("workspace_id");
-        profile.arm_path = extract_string("arm_path");
-        
-        if (profile.port == 0) profile.port = 3389;
-        if (profile.width == 0) profile.width = 1920;
-        if (profile.height == 0) profile.height = 1080;
-        if (profile.auto_reconnect_max_retries == 0) profile.auto_reconnect_max_retries = 3;
-        // Default clipboard to true for older saved connections
-        if (obj.find("\"clipboard\"") == std::string::npos) profile.clipboard = true;
-        
+        ConnectionProfile profile = profile_from_json(value);
         if (!profile.name.empty() && !profile.hostname.empty()) {
-            m_connections.push_back(profile);
+            m_connections.push_back(std::move(profile));
         }
-        
-        pos = obj_end + 1;
     }
     
+    json_decref(root);
     std::cout << "[ConfigManager] Loaded " << m_connections.size() << " connections" << std::endl;
     return true;
 }
 
 bool ConfigManager::save() {
-    // Build JSON string
-    std::stringstream json;
-    json << "[\n";
-    
-    for (size_t i = 0; i < m_connections.size(); ++i) {
-        const auto& c = m_connections[i];
-        
-        json << "  {\n";
-        json << "    \"name\": \"" << c.name << "\",\n";
-        json << "    \"hostname\": \"" << c.hostname << "\",\n";
-        json << "    \"port\": " << c.port << ",\n";
-        json << "    \"username\": \"" << c.username << "\",\n";
-        json << "    \"domain\": \"" << c.domain << "\",\n";
-        json << "    \"width\": " << c.width << ",\n";
-        json << "    \"height\": " << c.height << ",\n";
-        json << "    \"fullscreen\": " << (c.fullscreen ? "true" : "false") << ",\n";
-        // Advanced RDP Options
-        json << "    \"home_drive\": " << (c.home_drive ? "true" : "false") << ",\n";
-        json << "    \"clipboard\": " << (c.clipboard ? "true" : "false") << ",\n";
-        json << "    \"cert_tofu\": " << (c.cert_tofu ? "true" : "false") << ",\n";
-        json << "    \"usb_auto\": " << (c.usb_auto ? "true" : "false") << ",\n";
-        json << "    \"floatbar\": " << (c.floatbar ? "true" : "false") << ",\n";
-        json << "    \"dynamic_resolution\": " << (c.dynamic_resolution ? "true" : "false") << ",\n";
-        json << "    \"network_auto\": " << (c.network_auto ? "true" : "false") << ",\n";
-        json << "    \"gfx_avc420\": " << (c.gfx_avc420 ? "true" : "false") << ",\n";
-        json << "    \"compression\": " << (c.compression ? "true" : "false") << ",\n";
-        json << "    \"audio_pulse\": " << (c.audio_pulse ? "true" : "false") << ",\n";
-        json << "    \"prevent_session_lock\": " << (c.prevent_session_lock ? "true" : "false") << ",\n";
-        json << "    \"auto_reconnect\": " << (c.auto_reconnect ? "true" : "false") << ",\n";
-        json << "    \"auto_reconnect_max_retries\": " << c.auto_reconnect_max_retries << ",\n";
-        // AVD/Dev Box fields
-        json << "    \"remote_desktop_name\": \"" << c.remote_desktop_name << "\",\n";
-        json << "    \"wvd_endpoint_pool\": \"" << c.wvd_endpoint_pool << "\",\n";
-        json << "    \"workspace_id\": \"" << c.workspace_id << "\",\n";
-        json << "    \"arm_path\": \"" << c.arm_path << "\"\n";
-        json << "  }";
-        
-        if (i < m_connections.size() - 1) {
-            json << ",";
-        }
-        json << "\n";
+    // Build JSON array
+    json_t* root = json_array();
+    for (const auto& c : m_connections) {
+        json_array_append_new(root, profile_to_json(c));
     }
     
-    json << "]\n";
+    char* dump = json_dumps(root, JSON_INDENT(2) | JSON_SORT_KEYS);
+    json_decref(root);
     
-    // Write to file
-    std::ofstream file(m_config_path);
-    if (!file.is_open()) {
-        std::cerr << "[ConfigManager] Failed to write config file" << std::endl;
+    if (!dump) {
+        std::cerr << "[ConfigManager] Failed to serialize config to JSON" << std::endl;
         return false;
     }
     
-    file << json.str();
-    file.close();
+    std::string json_str(dump);
+    free(dump);
+    
+    // Atomic write: write to temp file, then rename over the target
+    fs::path tmp_path = m_config_path;
+    tmp_path += ".tmp";
+    
+    {
+        std::ofstream file(tmp_path);
+        if (!file.is_open()) {
+            std::cerr << "[ConfigManager] Failed to write temp config file" << std::endl;
+            return false;
+        }
+        file << json_str << "\n";
+    }
+    
+    std::error_code ec;
+    fs::rename(tmp_path, m_config_path, ec);
+    if (ec) {
+        std::cerr << "[ConfigManager] Failed to rename temp config: " << ec.message() << std::endl;
+        fs::remove(tmp_path, ec);
+        return false;
+    }
     
     std::cout << "[ConfigManager] Saved " << m_connections.size() << " connections to " << m_config_path << std::endl;
     return true;
@@ -307,56 +291,26 @@ bool ConfigManager::delete_connection(const std::string& name) {
     return saveResult;
 }
 
-ConnectionProfile* ConfigManager::get_connection(const std::string& name) {
+std::optional<ConnectionProfile> ConfigManager::get_connection(const std::string& name) const {
     auto it = std::find_if(m_connections.begin(), m_connections.end(),
         [&name](const ConnectionProfile& p) { return p.name == name; });
     
     if (it != m_connections.end()) {
-        return &(*it);
+        return *it;
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 std::string ConfigManager::get_connections_json() const {
-    std::stringstream json;
-    json << "[";
-    
-    for (size_t i = 0; i < m_connections.size(); ++i) {
-        const auto& c = m_connections[i];
-        
-        json << "{";
-        json << "\"name\":\"" << c.name << "\",";
-        json << "\"hostname\":\"" << c.hostname << "\",";
-        json << "\"port\":" << c.port << ",";
-        json << "\"username\":\"" << c.username << "\",";
-        json << "\"domain\":\"" << c.domain << "\",";
-        // Advanced RDP Options
-        json << "\"home_drive\":" << (c.home_drive ? "true" : "false") << ",";
-        json << "\"clipboard\":" << (c.clipboard ? "true" : "false") << ",";
-        json << "\"cert_tofu\":" << (c.cert_tofu ? "true" : "false") << ",";
-        json << "\"usb_auto\":" << (c.usb_auto ? "true" : "false") << ",";
-        json << "\"floatbar\":" << (c.floatbar ? "true" : "false") << ",";
-        json << "\"dynamic_resolution\":" << (c.dynamic_resolution ? "true" : "false") << ",";
-        json << "\"network_auto\":" << (c.network_auto ? "true" : "false") << ",";
-        json << "\"gfx_avc420\":" << (c.gfx_avc420 ? "true" : "false") << ",";
-        json << "\"compression\":" << (c.compression ? "true" : "false") << ",";
-        json << "\"audio_pulse\":" << (c.audio_pulse ? "true" : "false") << ",";
-        json << "\"prevent_session_lock\":" << (c.prevent_session_lock ? "true" : "false") << ",";
-        json << "\"auto_reconnect\":" << (c.auto_reconnect ? "true" : "false") << ",";
-        json << "\"auto_reconnect_max_retries\":" << c.auto_reconnect_max_retries << ",";
-        // AVD/Dev Box fields
-        json << "\"remote_desktop_name\":\"" << c.remote_desktop_name << "\",";
-        json << "\"wvd_endpoint_pool\":\"" << c.wvd_endpoint_pool << "\",";
-        json << "\"workspace_id\":\"" << c.workspace_id << "\",";
-        json << "\"arm_path\":\"" << c.arm_path << "\"";
-        json << "}";
-        
-        if (i < m_connections.size() - 1) {
-            json << ",";
-        }
+    json_t* root = json_array();
+    for (const auto& c : m_connections) {
+        json_array_append_new(root, profile_to_json(c));
     }
     
-    json << "]";
-    auto serializedJson = json.str();
-    return serializedJson;
+    char* dump = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    
+    std::string result(dump ? dump : "[]");
+    free(dump);
+    return result;
 }

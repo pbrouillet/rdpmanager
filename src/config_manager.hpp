@@ -8,6 +8,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -80,7 +81,7 @@ public:
     /**
      * Get connection by name
      */
-    ConnectionProfile* get_connection(const std::string& name);
+    std::optional<ConnectionProfile> get_connection(const std::string& name) const;
     
     /**
      * Get all connections as JSON string (for frontend)

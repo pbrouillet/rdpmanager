@@ -87,6 +87,7 @@ struct AADAuthRequest {
 struct AADAuthResponse {
     bool success;
     std::string redirect_url;  // The redirect URL containing the authorization code
+    std::string actual_redirect_uri;  // The redirect_uri actually used in the auth request (localhost)
 };
 
 /**

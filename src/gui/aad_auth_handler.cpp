@@ -15,6 +15,9 @@ AADAuthHandler* AADAuthHandler::s_instance = nullptr;
 // Static flag for manual code flow mode
 bool AADAuthHandler::s_manual_code_flow = false;
 
+// Static flag for AAD debug logging
+bool AADAuthHandler::s_aad_debug = false;
+
 // ============================================================================
 // URL encoding/decoding helpers
 // ============================================================================
@@ -70,25 +73,15 @@ static std::string extract_redirect_uri(const std::string& auth_url) {
 }
 
 /**
- * Check if a redirect URI is the Microsoft nativeclient URI.
- * This is a standard HTTPS URL that doesn't require rewriting.
- */
-static bool is_nativeclient_redirect(const std::string& redirect_uri) {
-    return redirect_uri.find("login.microsoftonline.com") != std::string::npos &&
-           redirect_uri.find("nativeclient") != std::string::npos;
-}
-
-/**
- * Rewrite the OAuth URL to use a localhost redirect URI instead of ms-appx-web://
- * This is necessary because WebKitGTK doesn't support custom URI schemes like ms-appx-web://
- * and will crash when trying to navigate to them.
- * 
- * Note: nativeclient redirect URIs (https://login.microsoftonline.com/common/oauth2/nativeclient)
- * are standard HTTPS URLs and don't need rewriting.
- * 
- * @param auth_url The original OAuth URL with ms-appx-web:// redirect URI
+ * Rewrite the OAuth URL to use a localhost redirect URI.
+ * ALL non-localhost redirect URIs are rewritten — both ms-appx-web:// and nativeclient —
+ * because once the browser navigates away from our WebUI page, we lose the connection
+ * and cannot intercept the redirect. Microsoft's OAuth allows http://localhost with
+ * any port as a redirect URI for native/public clients.
+ *
+ * @param auth_url The original OAuth URL
  * @param port The local port to use for the redirect
- * @return The modified OAuth URL with http://localhost redirect URI, or original if nativeclient
+ * @return The modified OAuth URL with http://localhost redirect URI
  */
 static std::string rewrite_auth_url_with_localhost_redirect(const std::string& auth_url, uint16_t port) {
     std::string original_redirect = extract_redirect_uri(auth_url);
@@ -96,17 +89,19 @@ static std::string rewrite_auth_url_with_localhost_redirect(const std::string& a
         return auth_url;  // No redirect_uri found, return as-is
     }
     
-    // nativeclient redirect is a standard HTTPS URL, no rewriting needed
-    if (is_nativeclient_redirect(original_redirect)) {
-        return auth_url;  // nativeclient URL, return as-is
+    // Already using localhost? No rewrite needed.
+    if (original_redirect.find("http://localhost") == 0 ||
+        original_redirect.find("http://127.0.0.1") == 0) {
+        return auth_url;
     }
     
-    // Only rewrite if it's an ms-appx-web:// URL
-    if (original_redirect.find("ms-appx-web://") != 0) {
-        return auth_url;  // Not an ms-appx-web URL, return as-is
-    }
-    
-    // Create localhost redirect URI
+    // Rewrite ANY non-localhost redirect_uri to our local callback server.
+    // This is necessary because:
+    // - ms-appx-web:// is Windows-only and crashes WebKitGTK
+    // - nativeclient redirects go to an external MS page we can't intercept
+    //   (the WebUI connection is lost once the browser navigates away)
+    // We need the redirect to come back to our local server to capture the auth code.
+    // Microsoft's OAuth allows http://localhost with any port for native/public clients.
     std::string new_redirect = "http://localhost:" + std::to_string(port) + "/oauth/callback";
     std::string new_redirect_encoded = url_encode(new_redirect);
     
@@ -154,6 +149,74 @@ bool AADAuthHandler::is_manual_code_flow_enabled() {
     return s_manual_code_flow;
 }
 
+void AADAuthHandler::enable_debug() {
+    s_aad_debug = true;
+    std::cout << "[AAD] Debug logging enabled (--aad-dbg)" << std::endl;
+}
+
+bool AADAuthHandler::is_debug_enabled() {
+    return s_aad_debug;
+}
+
+void AADAuthHandler::log_url_details(const std::string& url, const std::string& context) {
+    std::cout << "[AAD-DBG] --- " << context << " ---" << std::endl;
+    std::cout << "[AAD-DBG] Full URL: " << url << std::endl;
+
+    // Parse scheme and host
+    size_t scheme_end = url.find("://");
+    if (scheme_end != std::string::npos) {
+        std::cout << "[AAD-DBG] Scheme: " << url.substr(0, scheme_end) << std::endl;
+        size_t host_start = scheme_end + 3;
+        size_t path_start = url.find('/', host_start);
+        size_t query_start = url.find('?', host_start);
+        size_t host_end = std::min(path_start, query_start);
+        if (host_end != std::string::npos) {
+            std::cout << "[AAD-DBG] Host: " << url.substr(host_start, host_end - host_start) << std::endl;
+            if (path_start != std::string::npos && path_start < query_start) {
+                size_t pend = (query_start != std::string::npos) ? query_start : url.size();
+                std::cout << "[AAD-DBG] Path: " << url.substr(path_start, pend - path_start) << std::endl;
+            }
+        } else {
+            std::cout << "[AAD-DBG] Host: " << url.substr(host_start) << std::endl;
+        }
+    }
+
+    // Parse query parameters
+    size_t qpos = url.find('?');
+    if (qpos != std::string::npos) {
+        std::string query = url.substr(qpos + 1);
+        // Strip fragment
+        size_t frag = query.find('#');
+        if (frag != std::string::npos) query = query.substr(0, frag);
+
+        std::cout << "[AAD-DBG] Query parameters:" << std::endl;
+        std::istringstream qs(query);
+        std::string param;
+        while (std::getline(qs, param, '&')) {
+            size_t eq = param.find('=');
+            if (eq != std::string::npos) {
+                std::string key = param.substr(0, eq);
+                std::string val = url_decode(param.substr(eq + 1));
+                // Mask sensitive values
+                if (key == "code" || key == "client_secret") {
+                    std::cout << "[AAD-DBG]   " << key << " = " << val.substr(0, 8) << "..." << std::endl;
+                } else {
+                    std::cout << "[AAD-DBG]   " << key << " = " << val << std::endl;
+                }
+            } else {
+                std::cout << "[AAD-DBG]   " << param << std::endl;
+            }
+        }
+    }
+
+    // Parse fragment
+    size_t fpos = url.find('#');
+    if (fpos != std::string::npos) {
+        std::cout << "[AAD-DBG] Fragment: " << url.substr(fpos + 1) << std::endl;
+    }
+    std::cout << "[AAD-DBG] --- end " << context << " ---" << std::endl;
+}
+
 AADAuthHandler::~AADAuthHandler() {
     // Clean up any pending window
     {
@@ -180,7 +243,7 @@ AADAuthCallback AADAuthHandler::get_callback() {
 
 void AADAuthHandler::on_response(bool success, const std::string& redirect_url) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_result = {success, redirect_url};
+    m_result = {success, redirect_url, m_actual_redirect_uri};
     m_pending = false;
     m_cv.notify_all();
     
@@ -211,12 +274,16 @@ void AADAuthHandler::s_handle_oauth_callback(webui::window::event* e) {
     std::cout << "[AAD] OAuth callback received via JavaScript" << std::endl;
     std::cout << "[AAD] Callback URL: " << url << std::endl;
     std::cout << "[AAD] ============================================" << std::endl;
+    if (s_aad_debug) {
+        log_url_details(url, "OAuth callback (JS)");
+    }
     s_instance->process_navigation(url);
 }
 
 // Static handler for browser console.log forwarding
 void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
     std::string message = e->get_string(0);
+    // Always print JS-forwarded messages (they carry [AAD-Browser] prefix from the injected script)
     std::cout << message << std::endl;
 }
 
@@ -227,9 +294,13 @@ void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
 void AADAuthHandler::process_navigation(const std::string& url) {
     std::cout << "[AAD] ============================================" << std::endl;
     std::cout << "[AAD] NAVIGATION EVENT" << std::endl;
-    std::cout << "[AAD] ============================================" << std::endl;
     std::cout << "[AAD] URL: " << url << std::endl;
     std::cout << "[AAD] ============================================" << std::endl;
+
+    // When --aad-dbg is active, parse and display URL components
+    if (s_aad_debug) {
+        log_url_details(url, "Navigation");
+    }
     
     // Check if this is the nativeclient redirect URL (contains both login.microsoftonline.com AND nativeclient)
     // This is the preferred redirect for AVD auth - it's a standard HTTPS URL
@@ -282,19 +353,19 @@ void AADAuthHandler::process_navigation(const std::string& url) {
             }
             std::cout << "[AAD] ============================================" << std::endl;
             
-            m_result = {true, result_url};
+            m_result = {true, result_url, m_actual_redirect_uri};
         } else if (url.find("error=") != std::string::npos) {
             std::cout << "[AAD] ============================================" << std::endl;
             std::cout << "[AAD] AUTHENTICATION ERROR" << std::endl;
             std::cout << "[AAD] ============================================" << std::endl;
             std::cout << "[AAD] Error URL: " << url << std::endl;
             std::cout << "[AAD] ============================================" << std::endl;
-            m_result = {false, ""};
+            m_result = {false, "", ""};
         } else {
             // Redirect URL without code - this shouldn't happen but handle it
             std::cout << "[AAD] WARNING: Redirect without code or error" << std::endl;
             std::cout << "[AAD] URL: " << url << std::endl;
-            m_result = {false, ""};
+            m_result = {false, "", ""};
         }
         
         m_pending = false;
@@ -311,6 +382,7 @@ void AADAuthHandler::process_navigation(const std::string& url) {
 }
 
 void AADAuthHandler::handle_disconnected() {
+    std::cout << "[AAD] DISCONNECTED event received" << std::endl;
     // Check if we're navigating to OAuth - disconnect is expected in that case
     if (m_navigating_to_oauth) {
         std::cout << "[AAD] Expected disconnect during OAuth flow - waiting for callback" << std::endl;
@@ -322,7 +394,7 @@ void AADAuthHandler::handle_disconnected() {
     
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_pending) {
-        m_result = {false, ""};
+        m_result = {false, "", ""};
         m_pending = false;
         m_cv.notify_all();
     }
@@ -339,7 +411,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     m_request = request;
     m_pending = true;
     m_navigating_to_oauth = false;  // Reset navigation flag
-    m_result = {false, ""};
+    m_result = {false, "", ""};
     
     std::cout << "[AAD] ============================================" << std::endl;
     std::cout << "[AAD] AUTHENTICATION REQUESTED" << std::endl;
@@ -351,10 +423,15 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     m_original_redirect_uri = extract_redirect_uri(request.auth_url);
     std::cout << "[AAD] Original redirect URI: " << m_original_redirect_uri << std::endl;
     std::cout << "[AAD] ============================================" << std::endl;
+
+    // Verbose debug: parse and display all auth URL parameters
+    if (s_aad_debug) {
+        log_url_details(request.auth_url, "Auth request URL");
+    }
     
     // If manual code flow is enabled, print URL to console and wait for user input
     if (s_manual_code_flow) {
-        return handle_manual_code_flow(request);
+        return handle_manual_code_flow(request, lock);
     }
     
     std::cout << "[AAD] Opening native window..." << std::endl;
@@ -463,11 +540,114 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 "</html>";
             
             // Use show_browser() to open in external browser - avoids WebKitGTK threading issues
-            bool shown = m_window->show_browser(placeholder_html, AnyBrowser);
+            // When --aad-dbg is active, inject fetch/XHR interceptors for response logging
+            std::string debug_js_injection;
+            if (s_aad_debug) {
+                debug_js_injection =
+                    "// === AAD DEBUG: Network interceptors ==="
+                    "(function() {"
+                    "  function logDbg(msg) {"
+                    "    if (typeof logToBackend !== 'undefined') {"
+                    "      logToBackend('[AAD-DBG-NET] ' + msg);"
+                    "    }"
+                    "  }"
+                    ""
+                    "  // Intercept fetch()"
+                    "  var origFetch = window.fetch;"
+                    "  window.fetch = function() {"
+                    "    var url = (typeof arguments[0] === 'string') ? arguments[0] : (arguments[0] && arguments[0].url) || 'unknown';"
+                    "    var method = (arguments[1] && arguments[1].method) || 'GET';"
+                    "    logDbg('fetch ' + method + ' ' + url);"
+                    "    return origFetch.apply(this, arguments).then(function(resp) {"
+                    "      logDbg('fetch response: ' + resp.status + ' ' + resp.statusText + ' for ' + url);"
+                    "      resp.headers.forEach(function(val, key) {"
+                    "        logDbg('  header: ' + key + ': ' + val);"
+                    "      });"
+                    "      var cloned = resp.clone();"
+                    "      cloned.text().then(function(body) {"
+                    "        if (body.length > 2000) {"
+                    "          logDbg('  body (' + body.length + ' chars): ' + body.substring(0, 2000) + '...[truncated]');"
+                    "        } else {"
+                    "          logDbg('  body: ' + body);"
+                    "        }"
+                    "      }).catch(function() {});"
+                    "      return resp;"
+                    "    }).catch(function(err) {"
+                    "      logDbg('fetch error for ' + url + ': ' + err);"
+                    "      throw err;"
+                    "    });"
+                    "  };"
+                    ""
+                    "  // Intercept XMLHttpRequest"
+                    "  var origXHROpen = XMLHttpRequest.prototype.open;"
+                    "  var origXHRSend = XMLHttpRequest.prototype.send;"
+                    "  XMLHttpRequest.prototype.open = function(method, url) {"
+                    "    this._aadDbgMethod = method;"
+                    "    this._aadDbgUrl = url;"
+                    "    logDbg('XHR open ' + method + ' ' + url);"
+                    "    return origXHROpen.apply(this, arguments);"
+                    "  };"
+                    "  XMLHttpRequest.prototype.send = function(body) {"
+                    "    var self = this;"
+                    "    this.addEventListener('load', function() {"
+                    "      logDbg('XHR response: ' + self.status + ' ' + self.statusText + ' for ' + (self._aadDbgUrl || ''));"
+                    "      var hdrs = self.getAllResponseHeaders();"
+                    "      if (hdrs) {"
+                    "        hdrs.trim().split('\\r\\n').forEach(function(h) {"
+                    "          logDbg('  header: ' + h);"
+                    "        });"
+                    "      }"
+                    "      var respText = self.responseText || '';"
+                    "      if (respText.length > 2000) {"
+                    "        logDbg('  body (' + respText.length + ' chars): ' + respText.substring(0, 2000) + '...[truncated]');"
+                    "      } else {"
+                    "        logDbg('  body: ' + respText);"
+                    "      }"
+                    "    });"
+                    "    this.addEventListener('error', function() {"
+                    "      logDbg('XHR error for ' + (self._aadDbgUrl || ''));"
+                    "    });"
+                    "    return origXHRSend.apply(this, arguments);"
+                    "  };"
+                    ""
+                    "  // Log all resource timing entries"
+                    "  if (window.PerformanceObserver) {"
+                    "    var perfObs = new PerformanceObserver(function(list) {"
+                    "      list.getEntries().forEach(function(entry) {"
+                    "        logDbg('resource: ' + entry.initiatorType + ' ' + entry.name"
+                    "          + ' duration=' + Math.round(entry.duration) + 'ms'"
+                    "          + ' size=' + (entry.transferSize || 0));"
+                    "      });"
+                    "    });"
+                    "    perfObs.observe({entryTypes: ['resource', 'navigation']});"
+                    "  }"
+                    ""
+                    "  // Log navigation changes"
+                    "  window.addEventListener('beforeunload', function() {"
+                    "    logDbg('beforeunload: leaving ' + window.location.href);"
+                    "  });"
+                    "  window.addEventListener('hashchange', function(e) {"
+                    "    logDbg('hashchange: ' + e.oldURL + ' -> ' + e.newURL);"
+                    "  });"
+                    "})();";
+            }
+
+            // Insert debug JS right before the closing </script> of the console.log capture
+            std::string final_html = placeholder_html;
+            if (!debug_js_injection.empty()) {
+                // Insert before the window.onload block
+                std::string marker = "window.onload = function()";
+                size_t pos = final_html.find(marker);
+                if (pos != std::string::npos) {
+                    final_html.insert(pos, debug_js_injection + "\n");
+                }
+            }
+
+            bool shown = m_window->show_browser(final_html, AnyBrowser);
             
             if (!shown) {
                 std::cerr << "[AAD] Failed to show auth window in browser" << std::endl;
-                m_result = {false, ""};
+                m_result = {false, "", ""};
                 m_pending = false;
                 return m_result;
             }
@@ -478,7 +658,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             
             if (port == 0) {
                 std::cerr << "[AAD] Failed to get server port" << std::endl;
-                m_result = {false, ""};
+                m_result = {false, "", ""};
                 m_pending = false;
                 return m_result;
             }
@@ -487,8 +667,14 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             modified_auth_url = rewrite_auth_url_with_localhost_redirect(
                 request.auth_url, static_cast<uint16_t>(port));
             
+            // Store the actual localhost redirect URI for the token request
+            m_actual_redirect_uri = "http://localhost:" + std::to_string(port) + "/oauth/callback";
+            
             std::cout << "[AAD] Modified Auth URL (localhost redirect on port " << port << "): " 
                       << modified_auth_url << "..." << std::endl;
+            if (s_aad_debug) {
+                log_url_details(modified_auth_url, "Modified auth URL (with localhost redirect)");
+            }
         }
     }
     
@@ -500,12 +686,15 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
             std::cout << "[AAD] Navigating browser to auth URL..." << std::endl;
+            if (s_aad_debug) {
+                std::cout << "[AAD-DBG] Executing JS redirect: window.location.href = '<auth_url>'" << std::endl;
+            }
             // Use JavaScript to redirect instead of navigate() to avoid WebKitGTK issues
             std::string redirect_js = "window.location.href = '" + modified_auth_url + "';";
             m_window->run(redirect_js);
         } else {
             std::cerr << "[AAD] Window closed before navigation" << std::endl;
-            m_result = {false, ""};
+            m_result = {false, "", ""};
             m_pending = false;
             return m_result;
         }
@@ -531,7 +720,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         if (m_main_window) {
             m_main_window->run("onAADAuthComplete(false);");
         }
-        return {false, ""};
+        return {false, "", ""};
     }
     
     // Notify main window about the result
@@ -547,8 +736,9 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
 // Manual code flow handler
 // ============================================================================
 
-AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& request) {
-    // This method is called with m_mutex already locked
+AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& request,
+                                                        std::unique_lock<std::mutex>& lock) {
+    // This method is called with lock already held
     
     std::string type_str = (request.type == AADAuthRequest::RDS_AAD) ? "RDS_AAD" : "AVD";
     
@@ -577,15 +767,15 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
         m_main_window->run(js);
     }
     
-    // Release the lock while waiting for user input
-    m_mutex.unlock();
+    // Release the lock while waiting for user input (RAII-safe)
+    lock.unlock();
     
     // Read the redirect URL from stdin
     std::string redirect_url;
     std::getline(std::cin, redirect_url);
     
-    // Re-acquire the lock
-    m_mutex.lock();
+    // Re-acquire the lock (RAII-safe — will be released by unique_lock dtor)
+    lock.lock();
     
     // Trim whitespace
     size_t start = redirect_url.find_first_not_of(" \t\n\r");
@@ -596,7 +786,7 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
     
     if (redirect_url.empty()) {
         std::cout << "[AAD] No URL provided, authentication cancelled" << std::endl;
-        m_result = {false, ""};
+        m_result = {false, "", ""};
         m_pending = false;
         return m_result;
     }
@@ -604,13 +794,20 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
     // Process the redirect URL
     if (redirect_url.find("code=") != std::string::npos) {
         std::cout << "[AAD] Authorization code received" << std::endl;
-        m_result = {true, redirect_url};
+        if (s_aad_debug) {
+            log_url_details(redirect_url, "Manual code flow redirect");
+        }
+        // In manual mode, the user navigated with the original redirect_uri
+        m_result = {true, redirect_url, m_original_redirect_uri};
     } else if (redirect_url.find("error=") != std::string::npos) {
         std::cout << "[AAD] Error in redirect URL" << std::endl;
-        m_result = {false, ""};
+        if (s_aad_debug) {
+            log_url_details(redirect_url, "Manual code flow error redirect");
+        }
+        m_result = {false, "", ""};
     } else {
         std::cout << "[AAD] Invalid redirect URL (no code= or error= parameter)" << std::endl;
-        m_result = {false, ""};
+        m_result = {false, "", ""};
     }
     
     m_pending = false;
