@@ -30,6 +30,7 @@
 #include <freerdp/client.h>
 #include <freerdp/settings.h>
 #include <freerdp/version.h>
+#include <freerdp/utils/aad.h>
 
 // For UINT16, DWORD, BOOL types
 #include <winpr/wtypes.h>
@@ -557,9 +558,18 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     
     std::cout << "[RDPSession] AAD authentication: exchanging code for token..." << std::endl;
     
+    // Verify the AAD well-known endpoint is reachable before token exchange
+    const char* token_ep = freerdp_utils_aad_get_wellknown_string(
+        instance->context, AAD_WELLKNOWN_token_endpoint);
+    if (!token_ep) {
+        std::cerr << "[RDPSession] AAD: well-known token_endpoint is NULL — AAD module may not be initialized" << std::endl;
+        std::cerr << "[RDPSession] AAD: context=" << (void*)instance->context
+                  << " rdp=" << (void*)instance->context->rdp << std::endl;
+        return FALSE;
+    }
+    std::cout << "[RDPSession] AAD: token_endpoint = " << token_ep << std::endl;
+    
     // Exchange code for token using FreeRDP's HTTP client
-    // Need to pass a char* to the function, so we use c_str() but the function
-    // expects a non-const char*, so we need to make a copy
     char* token_request_cstr = strdup(token_request.c_str());
     BOOL result = client_common_get_access_token(instance, token_request_cstr, token);
     free(token_request_cstr);
