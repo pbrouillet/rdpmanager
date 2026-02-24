@@ -1027,10 +1027,21 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     }
     
     // /auto-reconnect - Enable automatic reconnection
-    if (m_params.auto_reconnect) {
+    // For AVD connections, always enable auto-reconnect since the VM may need
+    // to boot from a deallocated state (ARM transport returns HTTP 400 with a
+    // "retry after 5 minutes" message). Without this, FreeRDP will abort
+    // immediately on ERRCONNECT_TARGET_BOOTING.
+    if (m_params.auto_reconnect || m_params.is_avd_connection()) {
         freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, true);
+        int max_retries = m_params.auto_reconnect_max_retries;
+        // AVD VM boot can take up to 5 minutes; use at least 20 retries
+        // (each retry delays by TcpConnectTimeout, default ~15s)
+        if (m_params.is_avd_connection() && max_retries < 20) {
+            max_retries = 20;
+        }
         freerdp_settings_set_uint32(settings, FreeRDP_AutoReconnectMaxRetries, 
-                                    static_cast<uint32_t>(m_params.auto_reconnect_max_retries));
+                                    static_cast<uint32_t>(max_retries));
+        std::cout << "[RDPSession] Auto-reconnect enabled (max retries: " << max_retries << ")" << std::endl;
     }
     
     return true;

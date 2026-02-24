@@ -71,6 +71,25 @@ else
     exit 1
 fi
 
+# Step 6b: Apply local WebUI patches
+echo ""
+echo "Step 6b: Applying local WebUI patches..."
+WEBUI_NAV_PATCH="$SCRIPT_DIR/patches/webui/navigate-passthrough.patch"
+if [ -f "$WEBUI_NAV_PATCH" ]; then
+    if git -C subprojects/webui apply --check "$WEBUI_NAV_PATCH" 2>/dev/null; then
+        git -C subprojects/webui apply --3way "$WEBUI_NAV_PATCH"
+        echo "✓ Applied WebUI patch: navigate-passthrough.patch"
+    elif git -C subprojects/webui apply --reverse --check "$WEBUI_NAV_PATCH" 2>/dev/null; then
+        echo "✓ WebUI patch already applied: navigate-passthrough.patch"
+    else
+        echo "✗ Error: Failed to apply WebUI patch: navigate-passthrough.patch"
+        exit 1
+    fi
+else
+    echo "✗ Error: Required patch not found: $WEBUI_NAV_PATCH"
+    exit 1
+fi
+
 # Step 7: Install React UI npm dependencies
 echo ""
 echo "Step 7: Installing React UI dependencies..."

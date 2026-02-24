@@ -478,6 +478,12 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         // Set a reasonable size for the login popup
         m_window->set_size(800, 700);
         
+        // Enable navigate passthrough so the WebView can freely follow
+        // Microsoft's multi-step login redirects without blocking.
+        // Navigation events are still fired to our callback so we can
+        // detect the final OAuth redirect with the authorization code.
+        m_window->set_navigate_passthrough(true);
+        
         // Bind event handler to intercept the OAuth redirect
         // Using empty string "" captures ALL window events (NAVIGATION, DISCONNECTED, etc.)
         m_window->bind("", s_handle_window_events);
@@ -600,9 +606,8 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
     // Navigate the webview to the OAuth URL.
-    // We use navigate() which now calls webkit_web_view_load_uri()
-    // directly on Linux, so it works for external HTTPS URLs without
-    // restarting the civetweb server.
+    // With navigate_passthrough enabled, the WebView follows all redirects
+    // natively (like a regular browser) while our callback observes URLs.
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
