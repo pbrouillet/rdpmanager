@@ -3,8 +3,10 @@ import {
   tokens,
   Badge,
   Text,
+  Switch,
 } from '@fluentui/react-components';
 import { DesktopPulse24Regular } from '@fluentui/react-icons';
+import type { ThemeMode } from '../theme';
 
 const useStyles = makeStyles({
   header: {
@@ -46,14 +48,24 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground3,
     borderRadius: tokens.borderRadiusMedium,
   },
+  themeSwitch: {
+    marginLeft: tokens.spacingHorizontalM,
+  },
 });
 
 interface AppHeaderProps {
   statusText: string;
   statusOnline: boolean;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
 }
 
-export function AppHeader({ statusText, statusOnline }: AppHeaderProps) {
+export function AppHeader({
+  statusText,
+  statusOnline,
+  themeMode,
+  onThemeModeChange,
+}: AppHeaderProps) {
   const styles = useStyles();
 
   return (
@@ -63,6 +75,12 @@ export function AppHeader({ statusText, statusOnline }: AppHeaderProps) {
         <span className={styles.logoText}>RDP</span>
       </div>
       <span className={styles.subtitle}>Remote Desktop Interface</span>
+      <Switch
+        className={styles.themeSwitch}
+        label="Dark mode"
+        checked={themeMode === 'dark'}
+        onChange={(_, data) => onThemeModeChange(data.checked ? 'dark' : 'light')}
+      />
       <div className={styles.status}>
         <Badge
           size="tiny"

@@ -7,6 +7,7 @@ import type {
   ConnectResult,
   AppInfo,
   ImportResult,
+  DatabaseStatus,
 } from './types';
 
 export async function apiGetConnections(): Promise<ConnectionProfile[]> {
@@ -61,6 +62,83 @@ export async function apiImportRdpFile(content: string): Promise<ImportResult> {
     return JSON.parse(result) as ImportResult;
   } catch {
     return { success: false, error: 'Failed to parse RDP file' };
+  }
+}
+
+export async function apiCreateDatabase(path: string): Promise<boolean> {
+  try {
+    return await createDatabase(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiOpenDatabase(path: string): Promise<boolean> {
+  try {
+    return await openDatabase(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiCloseDatabase(): Promise<boolean> {
+  try {
+    return await closeDatabase();
+  } catch {
+    return false;
+  }
+}
+
+export async function apiGetDatabaseStatus(): Promise<DatabaseStatus> {
+  try {
+    const result = await getDatabaseStatus();
+    return JSON.parse(result) as DatabaseStatus;
+  } catch {
+    return { isOpen: false, path: '' };
+  }
+}
+
+export async function apiCreateFolder(path: string): Promise<boolean> {
+  try {
+    return await createFolder(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiMoveFolder(sourcePath: string, targetParentPath: string): Promise<boolean> {
+  try {
+    return await moveFolder(sourcePath, targetParentPath);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiRenameFolder(sourcePath: string, newName: string): Promise<boolean> {
+  try {
+    return await renameFolder(sourcePath, newName);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiDeleteFolder(path: string): Promise<boolean> {
+  try {
+    return await deleteFolder(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiGetFolders(): Promise<string[]> {
+  try {
+    const result = await getFolders();
+    if (!result) {
+      return [];
+    }
+    return JSON.parse(result) as string[];
+  } catch {
+    return [];
   }
 }
 

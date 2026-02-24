@@ -137,6 +137,16 @@ export function ConnectionEditorDialog({
                 />
               </div>
 
+              <div className={styles.field}>
+                <Label htmlFor="conn-folder">Folder</Label>
+                <Input
+                  id="conn-folder"
+                  placeholder="Example: Work/Production"
+                  value={form.folder}
+                  onChange={(_, d) => update('folder', d.value)}
+                />
+              </div>
+
               <div className={styles.row}>
                 <div className={styles.field}>
                   <Label required htmlFor="conn-host">Hostname / IP</Label>
@@ -384,7 +394,7 @@ export function ConnectionEditorDialog({
               Cancel
             </Button>
             <Button appearance="primary" onClick={handleSave}>
-              Save & Connect
+              Save
             </Button>
           </DialogActions>
         </DialogBody>

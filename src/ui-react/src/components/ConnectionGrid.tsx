@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, type DragEvent } from 'react';
 import {
   makeStyles,
   tokens,
@@ -96,6 +96,7 @@ interface ConnectionGridProps {
   onConnect: (index: number) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
+  onDragStartConnection: (name: string) => void;
 }
 
 export function ConnectionGrid({
@@ -106,6 +107,7 @@ export function ConnectionGrid({
   onConnect,
   onEdit,
   onDelete,
+  onDragStartConnection,
 }: ConnectionGridProps) {
   const styles = useStyles();
 
@@ -134,6 +136,7 @@ export function ConnectionGrid({
           onConnect={onConnect}
           onEdit={onEdit}
           onDelete={onDelete}
+          onDragStartConnection={onDragStartConnection}
         />
       ))}
     </div>
@@ -149,6 +152,7 @@ interface ConnectionCardProps {
   onConnect: (index: number) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
+  onDragStartConnection: (name: string) => void;
 }
 
 function ConnectionCard({
@@ -160,11 +164,21 @@ function ConnectionCard({
   onConnect,
   onEdit,
   onDelete,
+  onDragStartConnection,
 }: ConnectionCardProps) {
   const styles = useStyles();
 
   const handleClick = useCallback(() => onSelect(index), [onSelect, index]);
   const handleDblClick = useCallback(() => onDoubleClick(index), [onDoubleClick, index]);
+  const handleDragStart = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/x-rdp-connection', conn.name);
+      event.dataTransfer.setData('text/plain', conn.name);
+      onDragStartConnection(conn.name);
+    },
+    [conn.name, onDragStartConnection]
+  );
 
   return (
     <Menu openOnContext>
@@ -173,6 +187,8 @@ function ConnectionCard({
           className={`${styles.card} ${isSelected ? styles.cardSelected : ''}`}
           onClick={handleClick}
           onDoubleClick={handleDblClick}
+          draggable
+          onDragStart={handleDragStart}
         >
           <div className={styles.iconWrapper}>
             <DesktopMac24Regular />

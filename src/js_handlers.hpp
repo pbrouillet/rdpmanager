@@ -56,6 +56,15 @@ private:
     static void s_delete_connection(webui::window::event* e);
     static void s_get_app_info(webui::window::event* e);
     static void s_import_rdp_file(webui::window::event* e);
+    static void s_create_database(webui::window::event* e);
+    static void s_open_database(webui::window::event* e);
+    static void s_close_database(webui::window::event* e);
+    static void s_get_database_status(webui::window::event* e);
+    static void s_create_folder(webui::window::event* e);
+    static void s_move_folder(webui::window::event* e);
+    static void s_rename_folder(webui::window::event* e);
+    static void s_delete_folder(webui::window::event* e);
+    static void s_get_folders(webui::window::event* e);
     static void s_certificate_response(webui::window::event* e);
     static void s_auth_response(webui::window::event* e);
     static void s_aad_auth_response(webui::window::event* e);

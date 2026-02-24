@@ -17,6 +17,15 @@ declare function saveConnection(jsonParams: string): Promise<boolean>;
 declare function deleteConnection(name: string): Promise<boolean>;
 declare function getAppInfo(): Promise<string>;
 declare function importRdpFile(content: string): Promise<string>;
+declare function createDatabase(path: string): Promise<boolean>;
+declare function openDatabase(path: string): Promise<boolean>;
+declare function closeDatabase(): Promise<boolean>;
+declare function getDatabaseStatus(): Promise<string>;
+declare function createFolder(path: string): Promise<boolean>;
+declare function moveFolder(sourcePath: string, targetParentPath: string): Promise<boolean>;
+declare function renameFolder(sourcePath: string, newName: string): Promise<boolean>;
+declare function deleteFolder(path: string): Promise<boolean>;
+declare function getFolders(): Promise<string>;
 declare function certificateResponse(choice: number): Promise<void>;
 declare function authResponse(
   success: boolean,

@@ -120,6 +120,7 @@ platform_deps = []
 
 # JSON parsing library (jansson)
 jansson_dep = dependency('jansson', required: true)
+sqlite_dep = dependency('sqlite3', required: true)
 
 if is_linux
   # X11 for window management
@@ -261,6 +262,7 @@ executable('webui-rdp-client',
     thread_dep,
     webui_dep,
     jansson_dep,
+    sqlite_dep,
     xfreerdp_client_dep,  # X11 FreeRDP client for popup windows
     freerdp_dep,
     freerdp_client_dep,

@@ -3,8 +3,13 @@ import {
   makeStyles,
   tokens,
   Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
 } from '@fluentui/react-components';
-import { Add24Regular, ArrowUpload24Regular } from '@fluentui/react-icons';
+import { Add24Regular, ArrowUpload24Regular, Database24Regular } from '@fluentui/react-icons';
 
 const useStyles = makeStyles({
   toolbar: {
@@ -20,9 +25,20 @@ const useStyles = makeStyles({
 interface ToolbarProps {
   onNewConnection: () => void;
   onImportFile: (file: File) => void;
+  onCreateDatabase: () => void;
+  onOpenDatabase: () => void;
+  onCloseDatabase: () => void;
+  databaseOpen: boolean;
 }
 
-export function Toolbar({ onNewConnection, onImportFile }: ToolbarProps) {
+export function Toolbar({
+  onNewConnection,
+  onImportFile,
+  onCreateDatabase,
+  onOpenDatabase,
+  onCloseDatabase,
+  databaseOpen,
+}: ToolbarProps) {
   const styles = useStyles();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,6 +77,20 @@ export function Toolbar({ onNewConnection, onImportFile }: ToolbarProps) {
       >
         Import
       </Button>
+      <Menu>
+        <MenuTrigger disableButtonEnhancement>
+          <Button appearance="secondary" icon={<Database24Regular />}>
+            Database
+          </Button>
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList>
+            <MenuItem onClick={onCreateDatabase}>Create Database</MenuItem>
+            <MenuItem onClick={onOpenDatabase}>Open Database</MenuItem>
+            <MenuItem disabled={!databaseOpen} onClick={onCloseDatabase}>Close Database</MenuItem>
+          </MenuList>
+        </MenuPopover>
+      </Menu>
     </div>
   );
 }

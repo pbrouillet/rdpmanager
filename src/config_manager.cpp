@@ -12,6 +12,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdlib>
+#include <sqlite3.h>
+#include <set>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -20,15 +22,42 @@
 
 ConfigManager::ConfigManager() {
     m_config_path = get_config_file_path();
+    m_settings_path = get_config_directory() / "settings.json";
     
     // Ensure config directory exists
     fs::path config_dir = get_config_directory();
     if (!fs::exists(config_dir)) {
         fs::create_directories(config_dir);
     }
-    
-    // Load existing connections
-    load();
+
+    load_settings();
+
+    std::string startup_db_path = get_last_database_path();
+    if (startup_db_path.empty()) {
+        startup_db_path = (config_dir / "connections.db").string();
+    }
+
+    if (!open_database_internal(startup_db_path)) {
+        std::cerr << "[ConfigManager] Failed to open startup database: " << startup_db_path << std::endl;
+        return;
+    }
+
+    set_last_database_path(startup_db_path);
+    save_settings();
+
+    // One-time migration path for legacy JSON store.
+    if (m_connections.empty() && fs::exists(m_config_path)) {
+        if (load_legacy_json()) {
+            save();
+        }
+    }
+}
+
+ConfigManager::~ConfigManager() {
+    if (m_db) {
+        sqlite3_close(m_db);
+        m_db = nullptr;
+    }
 }
 
 fs::path ConfigManager::get_config_directory() const {
@@ -63,6 +92,7 @@ fs::path ConfigManager::get_config_file_path() const {
 static ConnectionProfile profile_from_json(json_t* obj) {
     ConnectionProfile p;
     p.name       = json_utils::get_string(obj, "name");
+    p.folder     = json_utils::get_string(obj, "folder");
     p.hostname   = json_utils::get_string(obj, "hostname");
     p.port       = json_utils::get_int(obj, "port", 3389);
     p.username   = json_utils::get_string(obj, "username");
@@ -117,6 +147,7 @@ static ConnectionProfile profile_from_json(json_t* obj) {
 static json_t* profile_to_json(const ConnectionProfile& c) {
     json_t* obj = json_object();
     json_object_set_new(obj, "name",       json_string(c.name.c_str()));
+    json_object_set_new(obj, "folder",     json_string(c.folder.c_str()));
     json_object_set_new(obj, "hostname",   json_string(c.hostname.c_str()));
     json_object_set_new(obj, "port",       json_integer(c.port));
     json_object_set_new(obj, "username",   json_string(c.username.c_str()));
@@ -158,104 +189,130 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
 // ============================================================================
 
 bool ConfigManager::load() {
-    if (!fs::exists(m_config_path)) {
-        std::cout << "[ConfigManager] No config file found at " << m_config_path << std::endl;
-        return true;  // Not an error, just no saved connections
-    }
-    
-    std::ifstream file(m_config_path);
-    if (!file.is_open()) {
-        std::cerr << "[ConfigManager] Failed to open config file" << std::endl;
-        return false;
-    }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
-    
     m_connections.clear();
-    
-    json_error_t error;
-    json_t* root = json_loads(content.c_str(), 0, &error);
-    if (!root) {
-        std::cerr << "[ConfigManager] JSON parse error at line " << error.line
-                  << ": " << error.text << std::endl;
+
+    if (!m_db) {
+        return true;
+    }
+
+    const char* sql = "SELECT profile_json FROM connections ORDER BY name COLLATE NOCASE";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare SELECT statement: "
+                  << sqlite3_errmsg(m_db) << std::endl;
         return false;
     }
-    
-    if (!json_is_array(root)) {
-        std::cerr << "[ConfigManager] Config file root is not an array" << std::endl;
-        json_decref(root);
-        return false;
-    }
-    
-    size_t index;
-    json_t* value;
-    json_array_foreach(root, index, value) {
-        if (!json_is_object(value)) continue;
-        
-        ConnectionProfile profile = profile_from_json(value);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto* profile_json = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (!profile_json) {
+            continue;
+        }
+
+        json_error_t error;
+        json_t* obj = json_loads(profile_json, 0, &error);
+        if (!obj || !json_is_object(obj)) {
+            if (obj) {
+                json_decref(obj);
+            }
+            continue;
+        }
+
+        ConnectionProfile profile = profile_from_json(obj);
+        json_decref(obj);
         if (!profile.name.empty() && !profile.hostname.empty()) {
             m_connections.push_back(std::move(profile));
         }
     }
-    
-    json_decref(root);
+
+    sqlite3_finalize(stmt);
     std::cout << "[ConfigManager] Loaded " << m_connections.size() << " connections" << std::endl;
     return true;
 }
 
 bool ConfigManager::save() {
-    // Build JSON array
-    json_t* root = json_array();
-    for (const auto& c : m_connections) {
-        json_array_append_new(root, profile_to_json(c));
-    }
-    
-    char* dump = json_dumps(root, JSON_INDENT(2) | JSON_SORT_KEYS);
-    json_decref(root);
-    
-    if (!dump) {
-        std::cerr << "[ConfigManager] Failed to serialize config to JSON" << std::endl;
+    if (!m_db) {
         return false;
     }
-    
-    std::string json_str(dump);
-    free(dump);
-    
-    // Atomic write: write to temp file, then rename over the target
-    fs::path tmp_path = m_config_path;
-    tmp_path += ".tmp";
-    
-    {
-        std::ofstream file(tmp_path);
-        if (!file.is_open()) {
-            std::cerr << "[ConfigManager] Failed to write temp config file" << std::endl;
+
+    if (sqlite3_exec(m_db, "BEGIN TRANSACTION", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to begin transaction: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bool success = true;
+    if (sqlite3_exec(m_db, "DELETE FROM connections", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to clear connections table: " << sqlite3_errmsg(m_db) << std::endl;
+        success = false;
+    }
+
+    const char* upsert_sql =
+        "INSERT INTO connections(name, profile_json) VALUES(?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET profile_json=excluded.profile_json";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (success && sqlite3_prepare_v2(m_db, upsert_sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        for (const auto& c : m_connections) {
+            json_t* obj = profile_to_json(c);
+            char* dump = json_dumps(obj, JSON_COMPACT);
+            json_decref(obj);
+            if (!dump) {
+                success = false;
+                break;
+            }
+
+            sqlite3_bind_text(stmt, 1, c.name.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, dump, -1, SQLITE_TRANSIENT);
+
+            if (sqlite3_step(stmt) != SQLITE_DONE) {
+                std::cerr << "[ConfigManager] Upsert failed for " << c.name << ": "
+                          << sqlite3_errmsg(m_db) << std::endl;
+                free(dump);
+                success = false;
+                break;
+            }
+
+            free(dump);
+            sqlite3_reset(stmt);
+            sqlite3_clear_bindings(stmt);
+        }
+        sqlite3_finalize(stmt);
+    } else if (success) {
+        std::cerr << "[ConfigManager] Failed to prepare UPSERT statement: " << sqlite3_errmsg(m_db) << std::endl;
+        success = false;
+    }
+
+    if (success) {
+        if (sqlite3_exec(m_db, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            std::cerr << "[ConfigManager] Failed to commit transaction: " << sqlite3_errmsg(m_db) << std::endl;
+            sqlite3_exec(m_db, "ROLLBACK", nullptr, nullptr, nullptr);
             return false;
         }
-        file << json_str << "\n";
-    }
-    
-    std::error_code ec;
-    fs::rename(tmp_path, m_config_path, ec);
-    if (ec) {
-        std::cerr << "[ConfigManager] Failed to rename temp config: " << ec.message() << std::endl;
-        fs::remove(tmp_path, ec);
+    } else {
+        sqlite3_exec(m_db, "ROLLBACK", nullptr, nullptr, nullptr);
         return false;
     }
-    
-    std::cout << "[ConfigManager] Saved " << m_connections.size() << " connections to " << m_config_path << std::endl;
+
+    std::cout << "[ConfigManager] Saved " << m_connections.size() << " connections to " << m_database_path << std::endl;
     return true;
 }
 
 bool ConfigManager::save_connection(const ConnectionProfile& profile) {
+    if (!m_db) {
+        return false;
+    }
+
+    if (profile.name.empty() || profile.hostname.empty()) {
+        return false;
+    }
+
     // Check if connection with this name exists
     auto it = std::find_if(m_connections.begin(), m_connections.end(),
         [&profile](const ConnectionProfile& p) { return p.name == profile.name; });
     
     if (it != m_connections.end()) {
         // Update existing - preserve name, update everything else
+        it->folder = profile.folder;
         it->hostname = profile.hostname;
         it->port = (profile.port > 0) ? profile.port : 3389;
         it->username = profile.username;
@@ -294,9 +351,46 @@ bool ConfigManager::save_connection(const ConnectionProfile& profile) {
         }
         m_connections.push_back(new_profile);
     }
-    
-    auto saveResult = save();
-    return saveResult;
+
+    const auto fresh = get_connection(profile.name);
+    if (!fresh.has_value()) {
+        return false;
+    }
+
+    json_t* obj = profile_to_json(fresh.value());
+    char* dump = json_dumps(obj, JSON_COMPACT);
+    json_decref(obj);
+    if (!dump) {
+        return false;
+    }
+
+    const char* upsert_sql =
+        "INSERT INTO connections(name, profile_json) VALUES(?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET profile_json=excluded.profile_json";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, upsert_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        free(dump);
+        std::cerr << "[ConfigManager] Failed to prepare UPSERT statement: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, fresh->name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, dump, -1, SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to save connection " << fresh->name << ": "
+                  << sqlite3_errmsg(m_db) << std::endl;
+    }
+
+    sqlite3_finalize(stmt);
+    free(dump);
+
+    if (ok && !fresh->folder.empty()) {
+        create_folder(fresh->folder);
+    }
+
+    return ok;
 }
 
 bool ConfigManager::delete_connection(const std::string& name) {
@@ -308,8 +402,27 @@ bool ConfigManager::delete_connection(const std::string& name) {
     }
     
     m_connections.erase(it);
-    auto saveResult = save();
-    return saveResult;
+
+    if (!m_db) {
+        return false;
+    }
+
+    const char* sql = "DELETE FROM connections WHERE name = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare DELETE statement: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to delete connection " << name << ": "
+                  << sqlite3_errmsg(m_db) << std::endl;
+    }
+
+    sqlite3_finalize(stmt);
+    return ok;
 }
 
 std::optional<ConnectionProfile> ConfigManager::get_connection(const std::string& name) const {
@@ -331,6 +444,479 @@ std::string ConfigManager::get_connections_json() const {
     char* dump = json_dumps(root, JSON_COMPACT);
     json_decref(root);
     
+    std::string result(dump ? dump : "[]");
+    free(dump);
+    return result;
+}
+
+bool ConfigManager::create_database(const std::string& path) {
+    if (path.empty()) {
+        return false;
+    }
+
+    if (!open_database_internal(path)) {
+        return false;
+    }
+
+    set_last_database_path(path);
+    return save_settings();
+}
+
+bool ConfigManager::open_database(const std::string& path) {
+    if (path.empty()) {
+        return false;
+    }
+
+    if (!open_database_internal(path)) {
+        return false;
+    }
+
+    set_last_database_path(path);
+    return save_settings();
+}
+
+bool ConfigManager::close_database() {
+    if (m_db) {
+        sqlite3_close(m_db);
+        m_db = nullptr;
+    }
+
+    m_database_path.clear();
+    m_connections.clear();
+    set_last_database_path("");
+    return save_settings();
+}
+
+bool ConfigManager::has_open_database() const {
+    return m_db != nullptr;
+}
+
+std::string ConfigManager::get_database_path() const {
+    return m_database_path.string();
+}
+
+bool ConfigManager::open_database_internal(const fs::path& path) {
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code ec;
+    const fs::path parent = path.parent_path();
+    if (!parent.empty() && !fs::exists(parent)) {
+        fs::create_directories(parent, ec);
+        if (ec) {
+            std::cerr << "[ConfigManager] Failed to create database directory: " << ec.message() << std::endl;
+            return false;
+        }
+    }
+
+    sqlite3* new_db = nullptr;
+    if (sqlite3_open(path.string().c_str(), &new_db) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] sqlite open failed for " << path << ": "
+                  << sqlite3_errmsg(new_db) << std::endl;
+        if (new_db) {
+            sqlite3_close(new_db);
+        }
+        return false;
+    }
+
+    if (m_db) {
+        sqlite3_close(m_db);
+        m_db = nullptr;
+    }
+
+    m_db = new_db;
+    m_database_path = path;
+
+    if (!ensure_schema()) {
+        sqlite3_close(m_db);
+        m_db = nullptr;
+        m_database_path.clear();
+        return false;
+    }
+
+    if (!load()) {
+        return false;
+    }
+
+    return load_folders();
+}
+
+bool ConfigManager::ensure_schema() {
+    if (!m_db) {
+        return false;
+    }
+
+    const char* sql = R"SQL(
+        CREATE TABLE IF NOT EXISTS connections (
+            name TEXT PRIMARY KEY NOT NULL,
+            profile_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS folders (
+            path TEXT PRIMARY KEY NOT NULL
+        )
+    )SQL";
+
+    if (sqlite3_exec(m_db, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to ensure schema: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool ConfigManager::load_folders() {
+    m_folders.clear();
+
+    if (!m_db) {
+        return true;
+    }
+
+    const char* sql = "SELECT path FROM folders ORDER BY path COLLATE NOCASE";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare folder SELECT statement: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (path && path[0] != '\0') {
+            m_folders.push_back(path);
+        }
+    }
+
+    sqlite3_finalize(stmt);
+
+    std::set<std::string> seen(m_folders.begin(), m_folders.end());
+    for (const auto& conn : m_connections) {
+        if (!conn.folder.empty() && seen.insert(conn.folder).second) {
+            m_folders.push_back(conn.folder);
+        }
+    }
+
+    std::sort(m_folders.begin(), m_folders.end());
+    return true;
+}
+
+bool ConfigManager::save_folders() {
+    if (!m_db) {
+        return false;
+    }
+
+    if (sqlite3_exec(m_db, "DELETE FROM folders", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to clear folders table: " << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    const char* sql = "INSERT OR IGNORE INTO folders(path) VALUES(?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare folder INSERT statement: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& folder : m_folders) {
+        if (folder.empty()) {
+            continue;
+        }
+
+        sqlite3_bind_text(stmt, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            std::cerr << "[ConfigManager] Failed to persist folder " << folder << ": "
+                      << sqlite3_errmsg(m_db) << std::endl;
+            ok = false;
+            break;
+        }
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+    }
+
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool ConfigManager::load_legacy_json() {
+    if (!fs::exists(m_config_path)) {
+        return true;
+    }
+
+    std::ifstream file(m_config_path);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string content = buffer.str();
+    file.close();
+
+    json_error_t error;
+    json_t* root = json_loads(content.c_str(), 0, &error);
+    if (!root || !json_is_array(root)) {
+        if (root) {
+            json_decref(root);
+        }
+        return false;
+    }
+
+    std::vector<ConnectionProfile> migrated;
+    size_t index;
+    json_t* value;
+    json_array_foreach(root, index, value) {
+        if (!json_is_object(value)) {
+            continue;
+        }
+
+        ConnectionProfile profile = profile_from_json(value);
+        if (!profile.name.empty() && !profile.hostname.empty()) {
+            migrated.push_back(std::move(profile));
+        }
+    }
+    json_decref(root);
+
+    if (!migrated.empty()) {
+        m_connections = std::move(migrated);
+        std::cout << "[ConfigManager] Migrated " << m_connections.size()
+                  << " legacy connections from " << m_config_path << std::endl;
+    }
+
+    return true;
+}
+
+bool ConfigManager::load_settings() {
+    if (!fs::exists(m_settings_path)) {
+        return true;
+    }
+
+    std::ifstream file(m_settings_path);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string content = buffer.str();
+    file.close();
+
+    json_error_t error;
+    json_t* root = json_loads(content.c_str(), 0, &error);
+    if (!root || !json_is_object(root)) {
+        if (root) {
+            json_decref(root);
+        }
+        return false;
+    }
+
+    m_last_database_path = json_utils::get_string(root, "last_database_path");
+    json_decref(root);
+    return true;
+}
+
+bool ConfigManager::save_settings() const {
+    json_t* root = json_object();
+    json_object_set_new(root, "last_database_path", json_string(m_last_database_path.c_str()));
+
+    char* dump = json_dumps(root, JSON_INDENT(2) | JSON_SORT_KEYS);
+    json_decref(root);
+    if (!dump) {
+        return false;
+    }
+
+    std::ofstream file(m_settings_path);
+    if (!file.is_open()) {
+        free(dump);
+        return false;
+    }
+
+    file << dump << "\n";
+    free(dump);
+    return true;
+}
+
+void ConfigManager::set_last_database_path(const std::string& path) {
+    m_last_database_path = path;
+}
+
+std::string ConfigManager::get_last_database_path() const {
+    return m_last_database_path;
+}
+
+bool ConfigManager::create_folder(const std::string& folder) {
+    if (!m_db || folder.empty()) {
+        return false;
+    }
+
+    const char* sql = "INSERT OR IGNORE INTO folders(path) VALUES(?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare folder INSERT statement: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to create folder " << folder << ": "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    if (std::find(m_folders.begin(), m_folders.end(), folder) == m_folders.end()) {
+        m_folders.push_back(folder);
+        std::sort(m_folders.begin(), m_folders.end());
+    }
+
+    return true;
+}
+
+bool ConfigManager::move_folder(const std::string& source_folder, const std::string& target_parent_folder) {
+    if (!m_db || source_folder.empty()) {
+        return false;
+    }
+
+    const auto source_it = std::find(m_folders.begin(), m_folders.end(), source_folder);
+    if (source_it == m_folders.end()) {
+        return false;
+    }
+
+    const std::size_t source_pos = source_folder.find_last_of('/');
+    const std::string source_name =
+        (source_pos == std::string::npos) ? source_folder : source_folder.substr(source_pos + 1);
+    const std::string target_prefix = target_parent_folder.empty()
+        ? source_name
+        : (target_parent_folder + "/" + source_name);
+
+    if (target_prefix == source_folder) {
+        return true;
+    }
+
+    if (target_parent_folder == source_folder ||
+        target_parent_folder.rfind(source_folder + "/", 0) == 0) {
+        return false;
+    }
+
+    auto rewrite = [&](const std::string& path) -> std::string {
+        if (path == source_folder) {
+            return target_prefix;
+        }
+        if (path.rfind(source_folder + "/", 0) == 0) {
+            return target_prefix + path.substr(source_folder.size());
+        }
+        return path;
+    };
+
+    for (auto& folder : m_folders) {
+        folder = rewrite(folder);
+    }
+
+    std::sort(m_folders.begin(), m_folders.end());
+    m_folders.erase(std::unique(m_folders.begin(), m_folders.end()), m_folders.end());
+
+    for (auto& conn : m_connections) {
+        conn.folder = rewrite(conn.folder);
+    }
+
+    if (!save()) {
+        return false;
+    }
+
+    return save_folders();
+}
+
+bool ConfigManager::rename_folder(const std::string& source_folder, const std::string& new_name) {
+    if (!m_db || source_folder.empty() || new_name.empty() || new_name.find('/') != std::string::npos) {
+        return false;
+    }
+
+    const auto source_it = std::find(m_folders.begin(), m_folders.end(), source_folder);
+    if (source_it == m_folders.end()) {
+        return false;
+    }
+
+    const std::size_t source_pos = source_folder.find_last_of('/');
+    const std::string parent =
+        (source_pos == std::string::npos) ? "" : source_folder.substr(0, source_pos);
+    const std::string target_prefix = parent.empty() ? new_name : (parent + "/" + new_name);
+
+    if (target_prefix == source_folder) {
+        return true;
+    }
+
+    for (const auto& existing : m_folders) {
+        if (existing == target_prefix || existing.rfind(target_prefix + "/", 0) == 0) {
+            return false;
+        }
+    }
+
+    auto rewrite = [&](const std::string& path) -> std::string {
+        if (path == source_folder) {
+            return target_prefix;
+        }
+        if (path.rfind(source_folder + "/", 0) == 0) {
+            return target_prefix + path.substr(source_folder.size());
+        }
+        return path;
+    };
+
+    for (auto& folder : m_folders) {
+        folder = rewrite(folder);
+    }
+
+    std::sort(m_folders.begin(), m_folders.end());
+    m_folders.erase(std::unique(m_folders.begin(), m_folders.end()), m_folders.end());
+
+    for (auto& conn : m_connections) {
+        conn.folder = rewrite(conn.folder);
+    }
+
+    if (!save()) {
+        return false;
+    }
+
+    return save_folders();
+}
+
+bool ConfigManager::delete_folder(const std::string& folder) {
+    if (!m_db || folder.empty()) {
+        return false;
+    }
+
+    auto in_deleted_tree = [&](const std::string& path) -> bool {
+        return path == folder || path.rfind(folder + "/", 0) == 0;
+    };
+
+    m_folders.erase(
+        std::remove_if(m_folders.begin(), m_folders.end(),
+            [&](const std::string& path) { return in_deleted_tree(path); }),
+        m_folders.end());
+
+    m_connections.erase(
+        std::remove_if(m_connections.begin(), m_connections.end(),
+            [&](const ConnectionProfile& conn) { return in_deleted_tree(conn.folder); }),
+        m_connections.end());
+
+    if (!save()) {
+        return false;
+    }
+
+    return save_folders();
+}
+
+std::string ConfigManager::get_folders_json() const {
+    json_t* root = json_array();
+    for (const auto& folder : m_folders) {
+        json_array_append_new(root, json_string(folder.c_str()));
+    }
+
+    char* dump = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
     std::string result(dump ? dump : "[]");
     free(dump);
     return result;

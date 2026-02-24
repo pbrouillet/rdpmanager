@@ -41,6 +41,15 @@ void JSHandlers::bind_all(webui::window& window) {
     window.bind("deleteConnection", s_delete_connection);
     window.bind("getAppInfo", s_get_app_info);
     window.bind("importRdpFile", s_import_rdp_file);
+    window.bind("createDatabase", s_create_database);
+    window.bind("openDatabase", s_open_database);
+    window.bind("closeDatabase", s_close_database);
+    window.bind("getDatabaseStatus", s_get_database_status);
+    window.bind("createFolder", s_create_folder);
+    window.bind("moveFolder", s_move_folder);
+    window.bind("renameFolder", s_rename_folder);
+    window.bind("deleteFolder", s_delete_folder);
+    window.bind("getFolders", s_get_folders);
     
     // Dialog response handlers
     window.bind("certificateResponse", s_certificate_response);
@@ -241,6 +250,7 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
         // Build ConnectionProfile from JSON
         ConnectionProfile profile;
         profile.name = json_utils::get_string(root, "name");
+        profile.folder = json_utils::get_string(root, "folder");
         profile.hostname = json_utils::get_string(root, "hostname");
         profile.port = json_utils::get_int(root, "port", 3389);
         profile.username = json_utils::get_string(root, "username");
@@ -336,6 +346,79 @@ void JSHandlers::s_import_rdp_file(webui::window::event* e) {
     
     std::string json = "{\"success\": true, \"data\": " + RDPFileParser::to_json(result.value()) + "}";
     e->return_string(json);
+}
+
+void JSHandlers::s_create_database(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string path = e->get_string(0);
+    bool success = s_instance->m_config_manager.create_database(path);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_open_database(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string path = e->get_string(0);
+    bool success = s_instance->m_config_manager.open_database(path);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_close_database(webui::window::event* e) {
+    if (!s_instance) return;
+
+    bool success = s_instance->m_config_manager.close_database();
+    e->return_bool(success);
+}
+
+void JSHandlers::s_get_database_status(webui::window::event* e) {
+    if (!s_instance) return;
+
+    const bool is_open = s_instance->m_config_manager.has_open_database();
+    const std::string path = json_utils::escape_string(s_instance->m_config_manager.get_database_path());
+    std::string result = "{\"isOpen\":" + std::string(is_open ? "true" : "false") +
+                        ",\"path\":\"" + path + "\"}";
+    e->return_string(result);
+}
+
+void JSHandlers::s_create_folder(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string folder = e->get_string(0);
+    bool success = s_instance->m_config_manager.create_folder(folder);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_move_folder(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string source_folder = e->get_string(0);
+    std::string target_parent_folder = e->get_string(1);
+    bool success = s_instance->m_config_manager.move_folder(source_folder, target_parent_folder);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_rename_folder(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string source_folder = e->get_string(0);
+    std::string new_name = e->get_string(1);
+    bool success = s_instance->m_config_manager.rename_folder(source_folder, new_name);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_delete_folder(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string folder = e->get_string(0);
+    bool success = s_instance->m_config_manager.delete_folder(folder);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_get_folders(webui::window::event* e) {
+    if (!s_instance) return;
+
+    e->return_string(s_instance->m_config_manager.get_folders_json());
 }
 
 void JSHandlers::s_certificate_response(webui::window::event* e) {

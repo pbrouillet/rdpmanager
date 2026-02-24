@@ -18,6 +18,9 @@ const elements = {
     newConnectionBtn: document.getElementById('newConnectionBtn'),
     importBtn: document.getElementById('importBtn'),
     rdpFileInput: document.getElementById('rdpFileInput'),
+    databaseBtn: document.getElementById('databaseBtn'),
+    databaseMenu: document.getElementById('databaseMenu'),
+    closeDatabaseItem: document.getElementById('closeDatabaseItem'),
     
     // Connections Grid
     connectionsGrid: document.getElementById('connectionsGrid'),
@@ -120,6 +123,8 @@ let connections = [];
 let selectedConnection = null;
 let contextMenuTarget = null; // Track which connection the context menu was opened for
 let editingConnection = null; // Track which connection is being edited (null = new connection)
+let appInfo = null;
+let databaseStatus = { isOpen: false, path: '' };
 
 // ============================================================================
 // Toast Notifications
@@ -232,6 +237,30 @@ function showContextMenu(x, y, index) {
 function hideContextMenu() {
     elements.contextMenu.classList.remove('active');
     contextMenuTarget = null;
+}
+
+function showDatabaseMenu() {
+    elements.databaseMenu.classList.add('active');
+}
+
+function hideDatabaseMenu() {
+    elements.databaseMenu.classList.remove('active');
+}
+
+function toggleDatabaseMenu() {
+    if (elements.databaseMenu.classList.contains('active')) {
+        hideDatabaseMenu();
+    } else {
+        showDatabaseMenu();
+    }
+}
+
+function updateDatabaseMenuState() {
+    if (databaseStatus.isOpen) {
+        elements.closeDatabaseItem.classList.remove('disabled');
+    } else {
+        elements.closeDatabaseItem.classList.add('disabled');
+    }
 }
 
 function handleContextMenuConnect() {
@@ -669,10 +698,106 @@ async function loadConnections() {
 async function loadAppInfo() {
     try {
         const result = await getAppInfo();
-        const info = JSON.parse(result);
-        elements.appInfo.textContent = `${info.name} v${info.version} | FreeRDP ${info.freerdp_version}`;
+        appInfo = JSON.parse(result);
+        updateFooterInfo();
     } catch (error) {
         console.error('Failed to load app info:', error);
+    }
+}
+
+async function loadDatabaseStatus() {
+    try {
+        const result = await getDatabaseStatus();
+        const status = JSON.parse(result);
+        databaseStatus = {
+            isOpen: !!status.isOpen,
+            path: status.path || ''
+        };
+    } catch (error) {
+        console.error('Failed to load database status:', error);
+        databaseStatus = { isOpen: false, path: '' };
+    }
+
+    updateDatabaseMenuState();
+    updateFooterInfo();
+}
+
+function updateFooterInfo() {
+    const appText = appInfo
+        ? `${appInfo.name} v${appInfo.version} | FreeRDP ${appInfo.freerdp_version}`
+        : 'WebUI RDP Client v0.1.0';
+    const dbText = databaseStatus.isOpen
+        ? `Database: ${databaseStatus.path}`
+        : 'Database: (closed)';
+    elements.appInfo.textContent = `${appText} | ${dbText}`;
+}
+
+async function handleCreateDatabase() {
+    const suggested = databaseStatus.path || 'connections.db';
+    const path = window.prompt('Create database at path:', suggested);
+    if (!path || !path.trim()) {
+        return;
+    }
+
+    try {
+        const success = await createDatabase(path.trim());
+        if (!success) {
+            showToast('Failed to create database', 'error');
+            return;
+        }
+
+        await loadDatabaseStatus();
+        await loadConnections();
+        showToast('Database created and opened', 'success');
+    } catch (error) {
+        console.error('Create database error:', error);
+        showToast('Failed to create database', 'error');
+    }
+}
+
+async function handleOpenDatabase() {
+    const suggested = databaseStatus.path || 'connections.db';
+    const path = window.prompt('Open database path:', suggested);
+    if (!path || !path.trim()) {
+        return;
+    }
+
+    try {
+        const success = await openDatabase(path.trim());
+        if (!success) {
+            showToast('Failed to open database', 'error');
+            return;
+        }
+
+        await loadDatabaseStatus();
+        await loadConnections();
+        selectedConnection = null;
+        showToast('Database opened', 'success');
+    } catch (error) {
+        console.error('Open database error:', error);
+        showToast('Failed to open database', 'error');
+    }
+}
+
+async function handleCloseDatabase() {
+    if (!databaseStatus.isOpen) {
+        return;
+    }
+
+    try {
+        const success = await closeDatabase();
+        if (!success) {
+            showToast('Failed to close database', 'error');
+            return;
+        }
+
+        await loadDatabaseStatus();
+        await loadConnections();
+        selectedConnection = null;
+        showToast('Database closed', 'info');
+    } catch (error) {
+        console.error('Close database error:', error);
+        showToast('Failed to close database', 'error');
     }
 }
 
@@ -883,6 +1008,28 @@ function initEventListeners() {
     elements.importBtn.addEventListener('click', () => {
         elements.rdpFileInput.click();
     });
+
+    elements.databaseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleDatabaseMenu();
+    });
+
+    elements.databaseMenu.addEventListener('click', async (e) => {
+        const action = e.target.closest('[data-action]')?.dataset.action;
+        if (!action) {
+            return;
+        }
+
+        hideDatabaseMenu();
+
+        if (action === 'create-db') {
+            await handleCreateDatabase();
+        } else if (action === 'open-db') {
+            await handleOpenDatabase();
+        } else if (action === 'close-db') {
+            await handleCloseDatabase();
+        }
+    });
     
     elements.rdpFileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
@@ -1024,6 +1171,9 @@ function initEventListeners() {
         if (!e.target.closest('.context-menu')) {
             hideContextMenu();
         }
+        if (!e.target.closest('.db-menu-container')) {
+            hideDatabaseMenu();
+        }
     });
     
     // Keyboard shortcuts
@@ -1043,6 +1193,7 @@ function initEventListeners() {
                 closeDeleteModal();
             }
             hideContextMenu();
+            hideDatabaseMenu();
         }
         
         // Ctrl+N to open new connection
@@ -1061,6 +1212,7 @@ function initEventListeners() {
 async function onWebuiReady() {
     console.log('[RDPMAN] WebUI connection ready, loading data...');
     await loadAppInfo();
+    await loadDatabaseStatus();
     await loadConnections();
     console.log('[RDPMAN] Initial data loaded.');
 }

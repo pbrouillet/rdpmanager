@@ -157,6 +157,7 @@ body {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     margin-bottom: var(--spacing-md);
+    position: relative;
 }
 
 .toolbar .btn {
@@ -168,6 +169,54 @@ body {
 .toolbar .btn svg {
     width: 18px;
     height: 18px;
+}
+
+.db-menu-container {
+    position: relative;
+}
+
+.db-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 1000;
+    min-width: 180px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: var(--spacing-xs) 0;
+}
+
+.db-menu.active {
+    display: block;
+}
+
+.db-menu-item {
+    display: block;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--color-text-primary);
+    text-align: left;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.db-menu-item:hover {
+    background: var(--color-bg-hover);
+}
+
+.db-menu-item.disabled {
+    color: var(--color-text-muted);
+    cursor: default;
+}
+
+.db-menu-item.disabled:hover {
+    background: transparent;
 }
 
 .status-text {

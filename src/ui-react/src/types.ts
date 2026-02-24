@@ -1,5 +1,6 @@
 export interface ConnectionProfile {
   name: string;
+  folder: string;
   hostname: string;
   port: number;
   username: string;
@@ -59,6 +60,11 @@ export interface AppInfo {
   freerdp_version: string;
 }
 
+export interface DatabaseStatus {
+  isOpen: boolean;
+  path: string;
+}
+
 export interface ConnectResult {
   success: boolean;
   error?: string;
@@ -95,6 +101,7 @@ export interface RdpFileData {
 export function defaultConnectionProfile(): ConnectionProfile {
   return {
     name: '',
+    folder: '',
     hostname: '',
     port: 3389,
     username: '',

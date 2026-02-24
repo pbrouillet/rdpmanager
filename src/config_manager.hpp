@@ -11,6 +11,8 @@
 #include <optional>
 #include <filesystem>
 
+struct sqlite3;
+
 namespace fs = std::filesystem;
 
 /**
@@ -18,6 +20,7 @@ namespace fs = std::filesystem;
  */
 struct ConnectionProfile {
     std::string name;
+    std::string folder;
     std::string hostname;
     int port = 3389;
     std::string username;
@@ -64,7 +67,7 @@ struct ConnectionProfile {
 class ConfigManager {
 public:
     ConfigManager();
-    ~ConfigManager() = default;
+    ~ConfigManager();
     
     /**
      * Load connections from config file
@@ -85,6 +88,56 @@ public:
      * Delete a connection by name
      */
     bool delete_connection(const std::string& name);
+
+    /**
+     * Create a new database file (or open if it already exists)
+     */
+    bool create_database(const std::string& path);
+
+    /**
+     * Open an existing database file
+     */
+    bool open_database(const std::string& path);
+
+    /**
+     * Close the current database
+     */
+    bool close_database();
+
+    /**
+     * Get whether a database is currently open
+     */
+    bool has_open_database() const;
+
+    /**
+     * Get current database path (empty string if none)
+     */
+    std::string get_database_path() const;
+
+    /**
+     * Create/register a folder path
+     */
+    bool create_folder(const std::string& folder);
+
+    /**
+     * Move folder under a new parent folder (empty parent means root)
+     */
+    bool move_folder(const std::string& source_folder, const std::string& target_parent_folder);
+
+    /**
+     * Rename a folder (renames all nested paths too)
+     */
+    bool rename_folder(const std::string& source_folder, const std::string& new_name);
+
+    /**
+     * Delete a folder, all subfolders, and all contained connections
+     */
+    bool delete_folder(const std::string& folder);
+
+    /**
+     * Get folders as JSON array
+     */
+    std::string get_folders_json() const;
     
     /**
      * Get connection by name
@@ -103,8 +156,23 @@ public:
     
 private:
     std::vector<ConnectionProfile> m_connections;
+    std::vector<std::string> m_folders;
     fs::path m_config_path;
+    fs::path m_settings_path;
+    fs::path m_database_path;
+    sqlite3* m_db = nullptr;
+    std::string m_last_database_path;
     
     fs::path get_config_directory() const;
     fs::path get_config_file_path() const;
+
+    bool open_database_internal(const fs::path& path);
+    bool ensure_schema();
+    bool load_folders();
+    bool save_folders();
+    bool load_legacy_json();
+    bool load_settings();
+    bool save_settings() const;
+    void set_last_database_path(const std::string& path);
+    std::string get_last_database_path() const;
 };
