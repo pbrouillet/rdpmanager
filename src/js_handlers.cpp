@@ -271,12 +271,14 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
         profile.wvd_endpoint_pool = json_utils::get_string(root, "wvd_endpoint_pool");
         profile.workspace_id = json_utils::get_string(root, "workspace_id");
         profile.arm_path = json_utils::get_string(root, "arm_path");
+        profile.remote_application_program = json_utils::get_string(root, "remote_application_program");
         
         // Gateway / AAD fields
         profile.gateway_hostname = json_utils::get_string(root, "gateway_hostname");
         profile.enable_rds_aad_auth = json_utils::get_bool(root, "enable_rds_aad_auth");
         profile.target_is_aad_joined = json_utils::get_bool(root, "target_is_aad_joined");
         profile.load_balance_info = json_utils::get_string(root, "load_balance_info");
+        profile.aad_tenant_id = json_utils::get_string(root, "aad_tenant_id");
         
         // Free the JSON object
         json_decref(root);

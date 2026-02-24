@@ -127,9 +127,9 @@ export function App() {
 
       const params: ConnectionParams = {
         ...conn,
-        aad_tenant_id: (importedRdpDataRef.current?.aad_tenant_id as string) || '',
+        aad_tenant_id: (importedRdpDataRef.current?.aad_tenant_id as string) || conn.aad_tenant_id || '',
         remote_application_program:
-          (importedRdpDataRef.current?.remote_application_program as string) || '',
+          (importedRdpDataRef.current?.remote_application_program as string) || conn.remote_application_program || '',
       };
 
       const result = await apiConnect(params);
@@ -220,6 +220,8 @@ export function App() {
         wvd_endpoint_pool: rdp.wvd_endpoint_pool || '',
         workspace_id: rdp.workspace_id || '',
         arm_path: rdp.arm_path || '',
+        aad_tenant_id: rdp.aad_tenant_id || '',
+        remote_application_program: rdp.remote_application_program || '',
       };
       setEditorProfile(profile);
       setEditorIsNew(true);

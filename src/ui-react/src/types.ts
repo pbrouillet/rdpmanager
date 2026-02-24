@@ -28,11 +28,11 @@ export interface ConnectionProfile {
   wvd_endpoint_pool: string;
   workspace_id: string;
   arm_path: string;
+  aad_tenant_id: string;
+  remote_application_program: string;
 }
 
 export interface ConnectionParams extends ConnectionProfile {
-  aad_tenant_id: string;
-  remote_application_program: string;
 }
 
 export interface CertificateInfo {
@@ -120,5 +120,7 @@ export function defaultConnectionProfile(): ConnectionProfile {
     wvd_endpoint_pool: '',
     workspace_id: '',
     arm_path: '',
+    aad_tenant_id: '',
+    remote_application_program: '',
   };
 }

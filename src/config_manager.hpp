@@ -54,6 +54,8 @@ struct ConnectionProfile {
     std::string wvd_endpoint_pool;     // WVD endpoint pool ID
     std::string workspace_id;          // Azure workspace ID
     std::string arm_path;              // Azure Resource Manager path
+    std::string remote_application_program; // Remote application program (e.g. ||<GUID>)
+    std::string aad_tenant_id;             // AAD tenant ID for Azure authentication
 };
 
 /**

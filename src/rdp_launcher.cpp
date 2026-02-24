@@ -741,17 +741,11 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     }
     
     // Remote application program (for RemoteApp connections or AVD ARM transport)
-    // For AVD connections with load_balance_info, FreeRDP ARM transport requires
-    // RemoteApplicationProgram to be set (even if empty for desktop sessions)
+    // AVD/DevBox RDP files have remoteapplicationprogram:s:||<GUID> even for desktop sessions
+    // RemoteApplicationMode should NOT be set for desktop sessions (remoteapplicationmode:i:0)
     if (!m_params.remote_application_program.empty()) {
-        freerdp_settings_set_bool(settings, FreeRDP_RemoteApplicationMode, true);
         freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationProgram, m_params.remote_application_program.c_str());
         std::cout << "[RDPSession] RemoteApplicationProgram set: " << m_params.remote_application_program << std::endl;
-    } else if (!m_params.load_balance_info.empty()) {
-        // AVD ARM transport requires RemoteApplicationProgram to be non-NULL
-        // For desktop sessions (not RemoteApp), we set it to an empty string
-        freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationProgram, "");
-        std::cout << "[RDPSession] RemoteApplicationProgram set to empty (AVD desktop session)" << std::endl;
     }
     
     // ========================================================================
@@ -979,17 +973,13 @@ void RDPSession::session_thread_func() {
 }
 
 void RDPSession::stop() {
-    if (!m_running) {
-        return;
-    }
-    
-    // Stop the FreeRDP client if context is valid
-    if (m_context) {
+    // Stop the FreeRDP client if context is valid and still running
+    if (m_running && m_context) {
         std::cout << "[RDPSession] Stopping FreeRDP client session" << std::endl;
         freerdp_client_stop(static_cast<rdpContext*>(m_context));
     }
     
-    // Wait for thread to finish
+    // Always join the thread if it's joinable (even if m_running is false)
     if (m_session_thread.joinable()) {
         m_session_thread.join();
     }

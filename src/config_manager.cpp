@@ -99,6 +99,8 @@ static ConnectionProfile profile_from_json(json_t* obj) {
     p.wvd_endpoint_pool   = json_utils::get_string(obj, "wvd_endpoint_pool");
     p.workspace_id        = json_utils::get_string(obj, "workspace_id");
     p.arm_path            = json_utils::get_string(obj, "arm_path");
+    p.remote_application_program = json_utils::get_string(obj, "remote_application_program");
+    p.aad_tenant_id   = json_utils::get_string(obj, "aad_tenant_id");
 
     // Clamp defaults
     if (p.port   <= 0) p.port   = 3389;
@@ -146,6 +148,8 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "wvd_endpoint_pool",   json_string(c.wvd_endpoint_pool.c_str()));
     json_object_set_new(obj, "workspace_id",        json_string(c.workspace_id.c_str()));
     json_object_set_new(obj, "arm_path",            json_string(c.arm_path.c_str()));
+    json_object_set_new(obj, "remote_application_program", json_string(c.remote_application_program.c_str()));
+    json_object_set_new(obj, "aad_tenant_id",     json_string(c.aad_tenant_id.c_str()));
     return obj;
 }
 
@@ -280,6 +284,8 @@ bool ConfigManager::save_connection(const ConnectionProfile& profile) {
         it->wvd_endpoint_pool = profile.wvd_endpoint_pool;
         it->workspace_id = profile.workspace_id;
         it->arm_path = profile.arm_path;
+        it->remote_application_program = profile.remote_application_program;
+        it->aad_tenant_id = profile.aad_tenant_id;
     } else {
         // Add new - copy the profile and fix port if needed
         ConnectionProfile new_profile = profile;

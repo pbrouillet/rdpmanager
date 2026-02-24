@@ -635,22 +635,17 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         lock.lock();
     }
 
-    // Clean up the window asynchronously.
-    // webui_destroy() frees window memory after a short timeout even if the
-    // server thread hasn't fully stopped, causing a use-after-free SEGFAULT
-    // on the server thread. Instead, close() the window and defer destruction
-    // to a detached thread that waits long enough for the server to stop.
+    // Clean up the window: close it but do NOT call destroy().
+    // webui_destroy() frees window memory while the server thread may still be
+    // running, causing a use-after-free SEGFAULT on pthread_mutex_lock.
+    // The small memory leak from not destroying is acceptable for auth windows.
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            std::cerr << "[AAD-DIAG] Closing window and deferring destroy..." << std::endl;
+            std::cerr << "[AAD-DIAG] Closing auth window (no destroy to avoid SEGFAULT)..." << std::endl;
             m_window->close();
-            auto old_window = std::move(m_window);
-            std::thread([w = std::move(old_window)]() mutable {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-                w->destroy();
-                std::cerr << "[AAD-DIAG] Deferred window destroy complete" << std::endl;
-            }).detach();
+            // Intentionally leak the window object — destroy() is unsafe
+            m_window.release();
         }
     }
     
