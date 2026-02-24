@@ -202,16 +202,47 @@ sources = files(
 inc_dirs = include_directories('src', 'src/gui')
 
 # ============================================================================
+# Build React UI (auto-builds the TypeScript/Fluent UI frontend)
+# ============================================================================
+npm = find_program('npm', required: false)
+node = find_program('node', required: false)
+bash_prog = find_program('bash')
+
+ui_react_src = meson.current_source_dir() / 'src' / 'ui-react'
+ui_react_dist = meson.current_build_dir() / 'ui-dist'
+
+if npm.found() and node.found()
+  ui_build = custom_target('react-ui',
+    output: 'ui-dist',
+    command: [
+      bash_prog,
+      meson.current_source_dir() / 'src' / 'ui-react' / 'build-ui.sh',
+      ui_react_src,
+      ui_react_dist,
+    ],
+    console: true,
+    build_always_stale: true,
+  )
+  ui_path = ui_react_dist
+  message('React UI will be built from src/ui-react/')
+else
+  ui_build = []
+  ui_path = meson.current_source_dir() / 'src' / 'ui'
+  message('npm/node not found — using plain HTML UI from src/ui/')
+endif
+
+# ============================================================================
 # Install UI assets
 # ============================================================================
-install_subdir('src/ui', install_dir: get_option('datadir') / meson.project_name())
-
-# For development, copy UI files to build directory
-ui_files = files(
-  'src/ui/index.html',
-  'src/ui/styles.css',
-  'src/ui/app.js',
-)
+if npm.found() and node.found()
+  # React UI dist is installed after build via install_subdir pointing at build output.
+  # meson install_subdir only works with source-tree dirs, so we use install_data with a
+  # script instead. For now, the compiled UI_PATH points to the build dir for dev runs.
+  # For proper install, run: cp -r builddir/ui-dist $PREFIX/share/webui-rdp-client/ui
+  message('Install the React UI manually: cp -r ' + ui_react_dist + ' to your prefix')
+else
+  install_subdir('src/ui', install_dir: get_option('datadir') / meson.project_name())
+endif
 
 # ============================================================================
 # Transitive dependencies needed when statically linking FreeRDP
@@ -237,10 +268,11 @@ executable('webui-rdp-client',
     zstd_dep,
     xcb_dep,
   ],
+  link_depends: ui_build,
   install: true,
-  # Embed the UI path for runtime
+  # Embed the UI path for runtime (React build output or plain HTML fallback)
   cpp_args: [
-    '-DUI_PATH="' + meson.current_source_dir() / 'src/ui"',
+    '-DUI_PATH="' + ui_path + '"',
   ],
 )
 

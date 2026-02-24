@@ -52,19 +52,29 @@ else
     exit 1
 fi
 
-# Step 6: Meson setup
+# Step 6: Install React UI npm dependencies
 echo ""
-echo "Step 6: Running Meson setup (debug)..."
+echo "Step 6: Installing React UI dependencies..."
+if command -v npm &>/dev/null; then
+    (cd src/ui-react && npm install --no-audit --no-fund --loglevel=error)
+    echo "✓ React UI npm dependencies installed"
+else
+    echo "⚠ npm not found — React UI will not be built (falling back to plain HTML UI)"
+fi
+
+# Step 7: Meson setup
+echo ""
+echo "Step 7: Running Meson setup (debug)..."
 meson setup build --buildtype=debug --wipe
 echo "✓ Meson setup complete"
 
-# Step 7: Build with Ninja
+# Step 8: Build with Ninja
 echo ""
-echo "Step 7: Building project..."
+echo "Step 8: Building project..."
 ninja -C build
 echo "✓ Build complete"
 
-# Step 8: Verify executable
+# Step 9: Verify executable
 echo ""
 echo "=========================================="
 if [ -f "build/webui-rdp-client" ]; then

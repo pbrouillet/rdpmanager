@@ -39,6 +39,9 @@ A native C++ Remote Desktop client featuring a modern web-based UI powered by [W
 sudo apt update
 sudo apt install -y build-essential meson ninja-build cmake pkg-config git
 
+# Node.js (for React UI build)
+sudo apt install -y nodejs npm
+
 # FreeRDP dependencies
 sudo apt install -y libssl-dev libx11-dev libxext-dev libxinerama-dev \
     libxcursor-dev libxkbfile-dev libxv-dev libxi-dev libxdamage-dev \
@@ -153,10 +156,22 @@ webui-rdp-client/
 │   ├── rdp_launcher.hpp
 │   ├── config_manager.cpp  # Connection persistence
 │   ├── config_manager.hpp
-│   └── ui/
-│       ├── index.html      # Main UI
-│       ├── styles.css      # Stark Industries theme
-│       └── app.js          # Frontend logic
+│   ├── ui/                 # Legacy plain HTML UI (fallback)
+│   │   ├── index.html
+│   │   ├── styles.css
+│   │   └── app.js
+│   └── ui-react/           # React/TypeScript/Fluent UI frontend
+│       ├── package.json
+│       ├── tsconfig.json
+│       ├── vite.config.ts
+│       ├── build-ui.sh     # Build script (called by Meson)
+│       └── src/
+│           ├── main.tsx
+│           ├── App.tsx
+│           ├── types.ts
+│           ├── api.ts
+│           ├── theme.ts
+│           └── components/
 ├── subprojects/
 │   ├── freerdp/            # FreeRDP git submodule
 │   ├── webui.wrap          # WebUI wrap file

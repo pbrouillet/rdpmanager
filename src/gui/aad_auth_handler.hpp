@@ -136,6 +136,7 @@ private:
     // Authentication state
     std::atomic<bool> m_pending{false};
     std::atomic<bool> m_navigating_to_oauth{false};  // True when we've redirected to OAuth URL
+    std::atomic<bool> m_callback_complete{false};     // True when WebUI callback has fully returned
     AADAuthRequest m_request;
     AADAuthResponse m_result;
     

@@ -294,7 +294,34 @@ export_local_env() {
 }
 
 # ============================================================================
-# 4. Git submodules
+# 4. Node.js / npm (for React UI build)
+# ============================================================================
+install_node() {
+    log "Checking Node.js and npm..."
+
+    if has node && has npm; then
+        ok "node $(node --version), npm $(npm --version)"
+        return 0
+    fi
+
+    # Try system package manager
+    if sudo -n true 2>/dev/null; then
+        log "Installing Node.js via apt..."
+        if ! dpkg -s nodejs &>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nodejs npm
+        fi
+    fi
+
+    if has node && has npm; then
+        ok "node $(node --version), npm $(npm --version)"
+    else
+        warn "Node.js/npm not found — React UI will not be built (plain HTML fallback)"
+    fi
+}
+
+# ============================================================================
+# 5. Git submodules
 # ============================================================================
 init_submodules() {
     log "Checking git submodules..."
@@ -322,6 +349,8 @@ main() {
     install_python_tools
     echo ""
     install_dev_packages
+    echo ""
+    install_node
     echo ""
     export_local_env
     echo ""

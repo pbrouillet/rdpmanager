@@ -26,8 +26,12 @@ inline fs::path find_ui_path() {
     }
     #endif
     
-    // Check relative paths
+    // Check relative paths (React build output takes priority)
     std::vector<fs::path> search_paths = {
+        "ui-dist",          // Meson build dir (when running from builddir)
+        "src/ui-react/dist",
+        "../src/ui-react/dist",
+        "../../src/ui-react/dist",
         "src/ui",
         "../src/ui",
         "../../src/ui",

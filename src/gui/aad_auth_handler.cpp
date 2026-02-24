@@ -222,6 +222,9 @@ AADAuthHandler::~AADAuthHandler() {
     {
         std::lock_guard<std::mutex> lock(m_window_mutex);
         if (m_window) {
+            m_window->close();
+            // In destructor we can afford to wait synchronously
+            std::this_thread::sleep_for(std::chrono::seconds(3));
             m_window->destroy();
             m_window.reset();
         }
@@ -261,8 +264,17 @@ void AADAuthHandler::s_handle_window_events(webui::window::event* e) {
     if (event_type == webui::NAVIGATION) {
         std::string url = e->get_string(0);
         s_instance->process_navigation(url);
+        // If process_navigation() completed the auth flow, signal that the
+        // callback has fully returned so handle_authenticate() can safely
+        // destroy the window without a use-after-free on this call stack.
+        if (!s_instance->m_pending.load()) {
+            s_instance->m_callback_complete.store(true);
+        }
     } else if (event_type == webui::DISCONNECTED) {
         s_instance->handle_disconnected();
+        if (!s_instance->m_pending.load()) {
+            s_instance->m_callback_complete.store(true);
+        }
     }
 }
 
@@ -331,7 +343,9 @@ void AADAuthHandler::process_navigation(const std::string& url) {
     if (is_localhost_callback || is_nativeclient_callback || is_msappx_redirect || 
         url.find("code=") != std::string::npos || url.find("error=") != std::string::npos) {
         
+        std::cerr << "[AAD-DIAG] Auth code/error URL detected, acquiring m_mutex..." << std::endl;
         std::lock_guard<std::mutex> lock(m_mutex);
+        std::cerr << "[AAD-DIAG] m_mutex acquired in process_navigation" << std::endl;
         
         if (url.find("code=") != std::string::npos) {
             std::cout << "[AAD] ============================================" << std::endl;
@@ -367,6 +381,7 @@ void AADAuthHandler::process_navigation(const std::string& url) {
         
         m_pending = false;
         m_cv.notify_all();
+        std::cerr << "[AAD-DIAG] process_navigation: cv.notify_all() called, m_pending=false" << std::endl;
         
         // Don't close the window here — it will be cleaned up by
         // handle_authenticate() after m_cv.wait_for() returns.
@@ -404,6 +419,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     m_request = request;
     m_pending = true;
     m_navigating_to_oauth = false;  // Reset navigation flag
+    m_callback_complete = false;     // Reset completion barrier
     m_result = {false, "", ""};
     
     std::cout << "[AAD] ============================================" << std::endl;
@@ -593,16 +609,48 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     }
         
     // Wait for the window to complete (with timeout for OAuth flow)
+    std::cerr << "[AAD-DIAG] Entering cv.wait_for (releasing m_mutex)..." << std::endl;
     auto status = m_cv.wait_for(lock, AUTH_TIMEOUT, [this] {
         return !m_pending.load();
     });
+    std::cerr << "[AAD-DIAG] cv.wait_for returned, status=" << status << std::endl;
     
-    // Clean up the window
+    // Wait for the WebUI callback (s_handle_window_events) to fully return
+    // before destroying the window. Without this, handle_authenticate() can
+    // destroy the window while process_navigation() is still on the WebUI
+    // callback thread's call stack, causing a use-after-free SEGFAULT.
+    {
+        int wait_count = 0;
+        while (!m_callback_complete.load() && wait_count < 100) {
+            lock.unlock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            lock.lock();
+            wait_count++;
+        }
+        std::cerr << "[AAD-DIAG] Completion barrier done after " << wait_count << " iterations" << std::endl;
+        // Brief grace period for WebUI's internal event loop to finish
+        // processing after the callback returned
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        lock.lock();
+    }
+
+    // Clean up the window asynchronously.
+    // webui_destroy() frees window memory after a short timeout even if the
+    // server thread hasn't fully stopped, causing a use-after-free SEGFAULT
+    // on the server thread. Instead, close() the window and defer destruction
+    // to a detached thread that waits long enough for the server to stop.
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            m_window->destroy();
-            m_window.reset();
+            std::cerr << "[AAD-DIAG] Closing window and deferring destroy..." << std::endl;
+            m_window->close();
+            auto old_window = std::move(m_window);
+            std::thread([w = std::move(old_window)]() mutable {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                w->destroy();
+                std::cerr << "[AAD-DIAG] Deferred window destroy complete" << std::endl;
+            }).detach();
         }
     }
     
@@ -624,6 +672,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         m_main_window->run(js);
     }
     
+    std::cerr << "[AAD-DIAG] handle_authenticate returning, success=" << m_result.success << std::endl;
     return m_result;
 }
 
