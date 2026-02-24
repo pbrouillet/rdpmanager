@@ -31,6 +31,7 @@ const useStyles = makeStyles({
   },
   row: {
     display: 'flex',
+    flexWrap: 'wrap',
     gap: tokens.spacingHorizontalM,
   },
   field: {
@@ -41,13 +42,14 @@ const useStyles = makeStyles({
   },
   fieldSmall: {
     flex: '0 0 120px',
+    minWidth: '120px',
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXS,
   },
   checkboxGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
     gap: tokens.spacingVerticalXS,
   },
   groupTitle: {
@@ -59,11 +61,19 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalXS,
   },
   group: {
-    marginBottom: tokens.spacingVerticalM,
+    marginBottom: tokens.spacingVerticalS,
   },
   surface: {
-    maxWidth: '600px',
-    maxHeight: '85vh',
+    width: 'min(680px, calc(100vw - 24px))',
+    maxWidth: '680px',
+    maxHeight: 'calc(100vh - 24px)',
+  },
+  content: {
+    overflowY: 'auto',
+    maxHeight: 'calc(100vh - 220px)',
+    minHeight: '220px',
+    paddingRight: tokens.spacingHorizontalXS,
+    paddingBottom: tokens.spacingVerticalS,
   },
 });
 
@@ -114,7 +124,7 @@ export function ConnectionEditorDialog({
           >
             {isNew ? 'New Connection' : 'Edit Connection'}
           </DialogTitle>
-          <DialogContent>
+          <DialogContent className={styles.content}>
             <div className={styles.form}>
               {/* Basic fields */}
               <div className={styles.field}>
