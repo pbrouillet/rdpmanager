@@ -143,7 +143,8 @@ private:
     // Original redirect URI for URL reconstruction (ms-appx-web:// or nativeclient)
     std::string m_original_redirect_uri;
     
-    // The actual localhost redirect URI used in the auth request
+    // The redirect URI actually used in the auth request
+    // (either original nativeclient or rewritten localhost callback)
     std::string m_actual_redirect_uri;
 
     // OAuth window

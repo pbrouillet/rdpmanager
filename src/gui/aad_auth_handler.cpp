@@ -73,15 +73,16 @@ static std::string extract_redirect_uri(const std::string& auth_url) {
 }
 
 /**
- * Rewrite the OAuth URL to use a localhost redirect URI.
- * ALL non-localhost redirect URIs are rewritten — both ms-appx-web:// and nativeclient —
- * because once the browser navigates away from our WebUI page, we lose the connection
- * and cannot intercept the redirect. Microsoft's OAuth allows http://localhost with
- * any port as a redirect URI for native/public clients.
+ * Rewrite the OAuth URL redirect URI only when needed.
+ *
+ * - Keep nativeclient redirects as-is (must match app registration and can be
+ *   observed in navigation callbacks before the final wrongplace redirect).
+ * - Keep existing localhost redirects as-is.
+ * - Rewrite unsupported schemes like ms-appx-web:// to localhost callback.
  *
  * @param auth_url The original OAuth URL
- * @param port The local port to use for the redirect
- * @return The modified OAuth URL with http://localhost redirect URI
+ * @param port The local port to use for localhost callback rewrites
+ * @return The modified OAuth URL
  */
 static std::string rewrite_auth_url_with_localhost_redirect(const std::string& auth_url, uint16_t port) {
     std::string original_redirect = extract_redirect_uri(auth_url);
@@ -95,14 +96,18 @@ static std::string rewrite_auth_url_with_localhost_redirect(const std::string& a
         return auth_url;
     }
     
-    // Rewrite ANY non-localhost redirect_uri to our local callback server.
-    // This is necessary because:
-    // - ms-appx-web:// is Windows-only and crashes WebKitGTK
-    // - nativeclient redirects go to an external MS page we can't intercept
-    //   (the WebUI connection is lost once the browser navigates away)
-    // We need the redirect to come back to our local server to capture the auth code.
-    // Microsoft's OAuth allows http://localhost with any port for native/public clients.
+    // Keep nativeclient redirect as-is to avoid AADSTS50011 redirect URI mismatch.
+    if (original_redirect.find("/oauth2/nativeclient") != std::string::npos) {
+        return auth_url;
+    }
+
+    // Rewrite unsupported redirect schemes (e.g. ms-appx-web://) to localhost callback.
+    // This allows us to capture the OAuth code on Linux where ms-appx-web is unsupported.
+#ifdef WEBUI_TLS
+    std::string new_redirect = "https://localhost:" + std::to_string(port) + "/oauth/callback";
+#else
     std::string new_redirect = "http://localhost:" + std::to_string(port) + "/oauth/callback";
+#endif
     std::string new_redirect_encoded = url_encode(new_redirect);
     
     // Replace the redirect_uri in the URL
@@ -311,11 +316,17 @@ void AADAuthHandler::process_navigation(const std::string& url) {
         log_url_details(url, "Navigation");
     }
     
-    // Check if this is the nativeclient redirect URL (contains both login.microsoftonline.com AND nativeclient)
-    // This is the preferred redirect for AVD auth - it's a standard HTTPS URL
-    // IMPORTANT: Check this BEFORE the OAuth provider check since nativeclient URLs also contain login.microsoftonline.com
-    bool is_nativeclient_callback = (url.find("login.microsoftonline.com") != std::string::npos &&
-                                      url.find("nativeclient") != std::string::npos);
+    // Check if this is the nativeclient redirect callback URL.
+    // IMPORTANT: don't just search for "nativeclient" anywhere in the URL,
+    // because authorize URLs include it inside the redirect_uri query parameter.
+    // We only treat it as callback when the navigation path itself is /oauth2/nativeclient.
+    bool is_nativeclient_callback = (
+        (url.rfind("https://login.microsoftonline.com/", 0) == 0 ||
+         url.rfind("http://login.microsoftonline.com/", 0) == 0) &&
+        url.find("/oauth2/nativeclient") != std::string::npos);
+
+    const bool has_auth_code = (url.find("code=") != std::string::npos);
+    const bool has_auth_error = (url.find("error=") != std::string::npos);
     
     // Check if this is navigation TO the OAuth provider (Microsoft login)
     // We need to track this so we don't treat the disconnect as user cancellation
@@ -340,14 +351,13 @@ void AADAuthHandler::process_navigation(const std::string& url) {
                                url.find("ms-appx-web%3A") != std::string::npos);
     
     // Also check for code= or error= in any URL (for compatibility)
-    if (is_localhost_callback || is_nativeclient_callback || is_msappx_redirect || 
-        url.find("code=") != std::string::npos || url.find("error=") != std::string::npos) {
+    if (is_localhost_callback || is_nativeclient_callback || is_msappx_redirect || has_auth_code || has_auth_error) {
         
         std::cerr << "[AAD-DIAG] Auth code/error URL detected, acquiring m_mutex..." << std::endl;
         std::lock_guard<std::mutex> lock(m_mutex);
         std::cerr << "[AAD-DIAG] m_mutex acquired in process_navigation" << std::endl;
         
-        if (url.find("code=") != std::string::npos) {
+        if (has_auth_code) {
             std::cout << "[AAD] ============================================" << std::endl;
             std::cout << "[AAD] AUTHORIZATION CODE RECEIVED" << std::endl;
             std::cout << "[AAD] ============================================" << std::endl;
@@ -365,7 +375,7 @@ void AADAuthHandler::process_navigation(const std::string& url) {
             std::cout << "[AAD] ============================================" << std::endl;
             
             m_result = {true, result_url, m_actual_redirect_uri};
-        } else if (url.find("error=") != std::string::npos) {
+        } else if (has_auth_error) {
             std::cout << "[AAD] ============================================" << std::endl;
             std::cout << "[AAD] AUTHENTICATION ERROR" << std::endl;
             std::cout << "[AAD] ============================================" << std::endl;
@@ -373,10 +383,11 @@ void AADAuthHandler::process_navigation(const std::string& url) {
             std::cout << "[AAD] ============================================" << std::endl;
             m_result = {false, "", ""};
         } else {
-            // Redirect URL without code - this shouldn't happen but handle it
-            std::cout << "[AAD] WARNING: Redirect without code or error" << std::endl;
+            // Intermediate redirect without code/error yet.
+            // Do not fail/cancel here; continue waiting for the actual callback.
+            std::cout << "[AAD] Redirect/navigation without code or error yet, continuing flow" << std::endl;
             std::cout << "[AAD] URL: " << url << std::endl;
-            m_result = {false, "", ""};
+            return;
         }
         
         m_pending = false;
@@ -570,16 +581,17 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 return m_result;
             }
             
-            // Use the original auth URL as-is — don't rewrite the redirect URI.
-            // The OAuth provider will redirect to the original redirect_uri
-            // (e.g. nativeclient or ms-appx-web), and we intercept that via
-            // NAVIGATION events before the browser tries to load it.
-            modified_auth_url = request.auth_url;
-            m_actual_redirect_uri = m_original_redirect_uri;
+            // Rewrite redirect_uri only when required (e.g. ms-appx-web://).
+            modified_auth_url = rewrite_auth_url_with_localhost_redirect(
+                request.auth_url, static_cast<uint16_t>(port));
+            m_actual_redirect_uri = extract_redirect_uri(modified_auth_url);
+            if (m_actual_redirect_uri.empty()) {
+                m_actual_redirect_uri = m_original_redirect_uri;
+            }
             
-            std::cout << "[AAD] Using original auth URL (redirect: " << m_original_redirect_uri << ")" << std::endl;
+            std::cout << "[AAD] Using redirect URI: " << m_actual_redirect_uri << std::endl;
             if (s_aad_debug) {
-                log_url_details(modified_auth_url, "Auth URL (original redirect)");
+                log_url_details(modified_auth_url, "Auth URL (effective redirect)");
             }
         }
     }
@@ -587,18 +599,20 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     // Wait a moment for the webview to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
-    // Navigate the webview to the actual OAuth URL
+    // Navigate the webview to the OAuth URL.
+    // We use navigate() which now calls webkit_web_view_load_uri()
+    // directly on Linux, so it works for external HTTPS URLs without
+    // restarting the civetweb server.
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
             std::cout << "[AAD] Navigating webview to auth URL..." << std::endl;
             if (s_aad_debug) {
-                std::cout << "[AAD-DBG] Calling navigate() with auth URL" << std::endl;
+                std::cout << "[AAD-DBG] Using navigate() for auth URL" << std::endl;
             }
-            // Set flag BEFORE navigate() — the WebSocket will disconnect when the
+            // Set flag BEFORE navigation — the WebSocket will disconnect when the
             // webview leaves localhost, and we must not treat that as user cancellation.
             m_navigating_to_oauth = true;
-            // Use navigate() for reliable cross-origin navigation in WebView
             m_window->navigate(modified_auth_url);
         } else {
             std::cerr << "[AAD] Window closed before navigation" << std::endl;

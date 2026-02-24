@@ -580,6 +580,13 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     
     if (result) {
         std::cout << "[RDPSession] AAD authentication: successfully obtained access token" << std::endl;
+        if (*token) {
+            size_t tlen = strlen(*token);
+            std::cerr << "[AAD-TOKEN] type=" << tokenType
+                      << " len=" << tlen
+                      << " first80=" << std::string(*token, std::min(tlen, (size_t)80))
+                      << "..." << std::endl;
+        }
     } else {
         std::cerr << "[RDPSession] AAD authentication: failed to exchange code for token" << std::endl;
     }
@@ -709,6 +716,11 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     // AAD Tenant ID for Azure authentication
     if (!m_params.aad_tenant_id.empty()) {
         freerdp_settings_set_string(settings, FreeRDP_GatewayAvdAadtenantid, m_params.aad_tenant_id.c_str());
+        // Tell FreeRDP to use the specific tenant ID instead of "common"
+        // This affects wellknown endpoint resolution and token URLs
+        if (m_params.aad_tenant_id != "common") {
+            freerdp_settings_set_bool(settings, FreeRDP_GatewayAvdUseTenantid, true);
+        }
         std::cout << "[RDPSession] AAD Tenant ID set: " << m_params.aad_tenant_id << std::endl;
     }
     
@@ -737,7 +749,9 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         freerdp_settings_set_string(settings, FreeRDP_GatewayAvdWvdEndpointPool, m_params.wvd_endpoint_pool.c_str());
     }
     if (!m_params.workspace_id.empty()) {
-        freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationWorkingDir, m_params.workspace_id.c_str());
+        // workspace_id is an AVD-specific field not directly consumed by FreeRDP core.
+        // It's used for hub discovery and diagnostics, not for connection setup.
+        std::cout << "[RDPSession] Workspace ID: " << m_params.workspace_id << std::endl;
     }
     
     // Remote application program (for RemoteApp connections or AVD ARM transport)

@@ -121,6 +121,9 @@ APT_DEV_PACKAGES=(
     libicu-dev
     # Compression
     libzstd-dev
+    # WebKit/GIO TLS backend for embedded WebView HTTPS navigation
+    glib-networking
+    ca-certificates
     # XCB extras
     libxcb-shm0-dev
     libxcb-xfixes0-dev

@@ -43,6 +43,7 @@ freerdp_opts.add_cmake_defines({
   'WITH_SHADOW': false,
   'WITH_MANPAGES': false,
   'WITH_GSSAPI': false,
+  'WITH_KRB5': false,
   'WITH_PKCS11': false,
   'WITH_CLIENT_SDL': false,
   'WITH_CLIENT_WAYLAND': false,

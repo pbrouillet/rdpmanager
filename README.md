@@ -39,6 +39,9 @@ A native C++ Remote Desktop client featuring a modern web-based UI powered by [W
 sudo apt update
 sudo apt install -y build-essential meson ninja-build cmake pkg-config git
 
+# Runtime TLS backend for embedded WebView (AAD auth popup)
+sudo apt install -y glib-networking ca-certificates
+
 # Node.js (for React UI build)
 sudo apt install -y nodejs npm
 

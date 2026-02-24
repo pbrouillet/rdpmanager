@@ -127,9 +127,6 @@ export function App() {
 
       const params: ConnectionParams = {
         ...conn,
-        aad_tenant_id: (importedRdpDataRef.current?.aad_tenant_id as string) || conn.aad_tenant_id || '',
-        remote_application_program:
-          (importedRdpDataRef.current?.remote_application_program as string) || conn.remote_application_program || '',
       };
 
       const result = await apiConnect(params);
