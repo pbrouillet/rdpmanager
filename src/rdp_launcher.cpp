@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
+#include <cctype>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -51,6 +53,107 @@ namespace fs = std::filesystem;
 static std::mutex g_session_map_mutex;
 static std::unordered_map<freerdp*, RDPSession*> g_session_map;
 
+namespace {
+
+std::string normalize_host_key(std::string host) {
+    if (host.empty()) {
+        return host;
+    }
+
+    const size_t scheme_pos = host.find("://");
+    if (scheme_pos != std::string::npos) {
+        host = host.substr(scheme_pos + 3);
+    }
+
+    const size_t slash_pos = host.find('/');
+    if (slash_pos != std::string::npos) {
+        host = host.substr(0, slash_pos);
+    }
+
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return host;
+}
+
+std::string base64url_decode(const std::string& input) {
+    std::string converted = input;
+    std::replace(converted.begin(), converted.end(), '-', '+');
+    std::replace(converted.begin(), converted.end(), '_', '/');
+    while ((converted.size() % 4) != 0) {
+        converted.push_back('=');
+    }
+
+    static const std::string kAlphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string output;
+    int val = 0;
+    int valb = -8;
+    for (unsigned char c : converted) {
+        if (std::isspace(c)) {
+            continue;
+        }
+        if (c == '=') {
+            break;
+        }
+        const int idx = static_cast<int>(kAlphabet.find(static_cast<char>(c)));
+        if (idx < 0) {
+            return "";
+        }
+        val = (val << 6) + idx;
+        valb += 6;
+        if (valb >= 0) {
+            output.push_back(static_cast<char>((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return output;
+}
+
+std::optional<int64_t> extract_jwt_expiration_epoch(const std::string& token) {
+    const size_t first_dot = token.find('.');
+    if (first_dot == std::string::npos) {
+        return std::nullopt;
+    }
+    const size_t second_dot = token.find('.', first_dot + 1);
+    if (second_dot == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const std::string payload_b64 = token.substr(first_dot + 1, second_dot - first_dot - 1);
+    const std::string payload = base64url_decode(payload_b64);
+    if (payload.empty()) {
+        return std::nullopt;
+    }
+
+    const std::string needle = "\"exp\":";
+    size_t exp_pos = payload.find(needle);
+    if (exp_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    exp_pos += needle.size();
+    while (exp_pos < payload.size() && std::isspace(static_cast<unsigned char>(payload[exp_pos]))) {
+        exp_pos++;
+    }
+
+    size_t end_pos = exp_pos;
+    while (end_pos < payload.size() && std::isdigit(static_cast<unsigned char>(payload[end_pos]))) {
+        end_pos++;
+    }
+    if (end_pos == exp_pos) {
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoll(payload.substr(exp_pos, end_pos - exp_pos));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+} // namespace
+
 // ============================================================================
 // RDPSession Implementation
 // ============================================================================
@@ -77,6 +180,14 @@ void RDPSession::set_authenticate_callback(AuthenticateCallback callback) {
 
 void RDPSession::set_aad_auth_callback(AADAuthCallback callback) {
     m_aad_callback = std::move(callback);
+}
+
+void RDPSession::set_token_cache_lookup_callback(TokenCacheLookupCallback callback) {
+    m_token_cache_lookup_callback = std::move(callback);
+}
+
+void RDPSession::set_token_cache_store_callback(TokenCacheStoreCallback callback) {
+    m_token_cache_store_callback = std::move(callback);
 }
 
 // Static callback trampolines - these extract the RDPSession from the global map
@@ -395,7 +506,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
         }
     }
     
-    if (!session || !session->m_aad_callback) {
+    if (!session) {
+        return FALSE;
+    }
+
+    if (!session->m_aad_callback && !session->m_token_cache_lookup_callback) {
         std::cout << "[RDPSession] AAD authentication required (no UI callback set)" << std::endl;
         std::cout << "[RDPSession] Token type: " << tokenType << ", count: " << count << std::endl;
         return FALSE;
@@ -416,6 +531,35 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     va_start(ap, count);
     
     AccessTokenType aadTokenType = static_cast<AccessTokenType>(tokenType);
+    std::string cache_kind = "machine";
+    std::string cache_hostname = normalize_host_key(session->m_params.hostname);
+
+    if (aadTokenType == ACCESS_TOKEN_TYPE_AVD) {
+        const std::string gateway_host = normalize_host_key(session->m_params.gateway_hostname);
+        const std::string machine_host = normalize_host_key(session->m_params.hostname);
+        const int request_index = session->m_avd_token_requests_seen.fetch_add(1);
+
+        if (request_index == 0 && !gateway_host.empty()) {
+            cache_kind = "gateway";
+            cache_hostname = gateway_host;
+        } else {
+            cache_kind = "machine";
+            cache_hostname = machine_host.empty() ? gateway_host : machine_host;
+        }
+    }
+
+    if (session->m_token_cache_lookup_callback && !cache_hostname.empty()) {
+        const auto cached_token = session->m_token_cache_lookup_callback(cache_hostname, cache_kind);
+        if (cached_token.has_value() && !cached_token->empty()) {
+            *token = strdup(cached_token->c_str());
+            if (*token) {
+                std::cout << "[RDPSession] Using cached AAD token for " << cache_kind
+                          << " host " << cache_hostname << std::endl;
+                va_end(ap);
+                return TRUE;
+            }
+        }
+    }
     
     switch (aadTokenType) {
         case ACCESS_TOKEN_TYPE_AAD: {
@@ -494,6 +638,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     
     if (request.auth_url.empty()) {
         std::cerr << "[RDPSession] Failed to generate AAD auth URL" << std::endl;
+        return FALSE;
+    }
+
+    if (!session->m_aad_callback) {
+        std::cerr << "[RDPSession] No cached AAD token and no interactive AAD callback available" << std::endl;
         return FALSE;
     }
     
@@ -586,6 +735,13 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
                       << " len=" << tlen
                       << " first80=" << std::string(*token, std::min(tlen, (size_t)80))
                       << "..." << std::endl;
+
+            if (session->m_token_cache_store_callback && !cache_hostname.empty()) {
+                const auto expires_at = extract_jwt_expiration_epoch(*token);
+                if (expires_at.has_value()) {
+                    session->m_token_cache_store_callback(cache_hostname, cache_kind, *token, *expires_at);
+                }
+            }
         }
     } else {
         std::cerr << "[RDPSession] AAD authentication: failed to exchange code for token" << std::endl;
@@ -1042,6 +1198,12 @@ bool RDPLauncher::launch(const RDPConnectionParams& params) {
     if (m_aad_callback) {
         session->set_aad_auth_callback(m_aad_callback);
     }
+    if (m_token_cache_lookup_callback) {
+        session->set_token_cache_lookup_callback(m_token_cache_lookup_callback);
+    }
+    if (m_token_cache_store_callback) {
+        session->set_token_cache_store_callback(m_token_cache_store_callback);
+    }
     
     auto sessionStartResult = session->start();
 
@@ -1101,6 +1263,14 @@ void RDPLauncher::set_authenticate_callback(AuthenticateCallback callback) {
 
 void RDPLauncher::set_aad_auth_callback(AADAuthCallback callback) {
     m_aad_callback = std::move(callback);
+}
+
+void RDPLauncher::set_token_cache_lookup_callback(TokenCacheLookupCallback callback) {
+    m_token_cache_lookup_callback = std::move(callback);
+}
+
+void RDPLauncher::set_token_cache_store_callback(TokenCacheStoreCallback callback) {
+    m_token_cache_store_callback = std::move(callback);
 }
 
 void RDPLauncher::terminate_all() {

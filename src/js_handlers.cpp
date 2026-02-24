@@ -12,6 +12,116 @@
 
 #include <iostream>
 #include <jansson.h>
+#include <cstdio>
+#include <array>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
+namespace {
+
+std::string trim_newlines(std::string value) {
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::string run_command_get_stdout(const char* command) {
+    if (!command || command[0] == '\0') {
+        return "";
+    }
+
+    std::array<char, 512> buffer{};
+    std::string output;
+    FILE* pipe = popen(command, "r");
+    if (!pipe) {
+        return "";
+    }
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+    const int status = pclose(pipe);
+    if (status != 0) {
+        return "";
+    }
+
+    return trim_newlines(output);
+}
+
+std::string pick_database_file_path() {
+#ifdef _WIN32
+    char file_buffer[MAX_PATH] = {0};
+    OPENFILENAMEA ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file_buffer;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = "Database Files\0*.db;*.sqlite;*.sqlite3\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn) == TRUE) {
+        return std::string(file_buffer);
+    }
+    return "";
+#elif defined(__APPLE__)
+    return run_command_get_stdout("osascript -e 'POSIX path of (choose file with prompt \"Open Database\")'");
+#else
+    std::string path = run_command_get_stdout(
+        "zenity --file-selection --title='Open Database' "
+        "--file-filter='Database files | *.db *.sqlite *.sqlite3' "
+        "--file-filter='All files | *'");
+    if (!path.empty()) {
+        return path;
+    }
+
+    path = run_command_get_stdout(
+        "kdialog --getopenfilename ~ '*.db *.sqlite *.sqlite3|Database files (*.db *.sqlite *.sqlite3)' 2>/dev/null");
+    return trim_newlines(path);
+#endif
+}
+
+std::string pick_database_save_path() {
+#ifdef _WIN32
+    char file_buffer[MAX_PATH] = "connections.db";
+    OPENFILENAMEA ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrFile = file_buffer;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = "Database Files\0*.db;*.sqlite;*.sqlite3\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+    ofn.lpstrDefExt = "db";
+
+    if (GetSaveFileNameA(&ofn) == TRUE) {
+        return std::string(file_buffer);
+    }
+    return "";
+#elif defined(__APPLE__)
+    return run_command_get_stdout("osascript -e 'POSIX path of (choose file name with prompt \"Create Database\" default name \"connections.db\")'");
+#else
+    std::string path = run_command_get_stdout(
+        "zenity --file-selection --save --confirm-overwrite "
+        "--title='Create Database' --filename='connections.db'");
+    if (!path.empty()) {
+        return path;
+    }
+
+    path = run_command_get_stdout(
+        "kdialog --getsavefilename ~ 'connections.db|Database files (*.db *.sqlite *.sqlite3)' 2>/dev/null");
+    return trim_newlines(path);
+#endif
+}
+
+}
 
 // Static instance pointer
 JSHandlers* JSHandlers::s_instance = nullptr;
@@ -42,7 +152,10 @@ void JSHandlers::bind_all(webui::window& window) {
     window.bind("getAppInfo", s_get_app_info);
     window.bind("importRdpFile", s_import_rdp_file);
     window.bind("createDatabase", s_create_database);
+    window.bind("createDatabaseDialog", s_create_database_dialog);
     window.bind("openDatabase", s_open_database);
+    window.bind("openDatabaseDialog", s_open_database_dialog);
+    window.bind("cloneDatabase", s_clone_database);
     window.bind("closeDatabase", s_close_database);
     window.bind("getDatabaseStatus", s_get_database_status);
     window.bind("createFolder", s_create_folder);
@@ -356,11 +469,46 @@ void JSHandlers::s_create_database(webui::window::event* e) {
     e->return_bool(success);
 }
 
+void JSHandlers::s_create_database_dialog(webui::window::event* e) {
+    if (!s_instance) return;
+
+    const std::string path = pick_database_save_path();
+    if (path.empty()) {
+        e->return_bool(false);
+        return;
+    }
+
+    bool success = s_instance->m_config_manager.create_database(path);
+    e->return_bool(success);
+}
+
 void JSHandlers::s_open_database(webui::window::event* e) {
     if (!s_instance) return;
 
     std::string path = e->get_string(0);
     bool success = s_instance->m_config_manager.open_database(path);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_open_database_dialog(webui::window::event* e) {
+    if (!s_instance) return;
+
+    const std::string path = pick_database_file_path();
+    if (path.empty()) {
+        e->return_bool(false);
+        return;
+    }
+
+    bool success = s_instance->m_config_manager.open_database(path);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_clone_database(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string source_path = e->get_string(0);
+    std::string target_path = e->get_string(1);
+    bool success = s_instance->m_config_manager.clone_database(source_path, target_path);
     e->return_bool(success);
 }
 

@@ -10,6 +10,7 @@
 #include <vector>
 #include <optional>
 #include <filesystem>
+#include <cstdint>
 
 struct sqlite3;
 
@@ -100,6 +101,11 @@ public:
     bool open_database(const std::string& path);
 
     /**
+     * Clone a database file to a new path and open the clone
+     */
+    bool clone_database(const std::string& source_path, const std::string& target_path);
+
+    /**
      * Close the current database
      */
     bool close_database();
@@ -138,6 +144,26 @@ public:
      * Get folders as JSON array
      */
     std::string get_folders_json() const;
+
+    /**
+     * Lookup cached AAD token by hostname and cache kind (e.g. gateway/machine)
+     */
+    std::optional<std::string> get_cached_token(const std::string& hostname,
+                                                const std::string& cache_kind) const;
+
+    /**
+     * Store cached AAD token with expiration epoch seconds
+     */
+    bool set_cached_token(const std::string& hostname,
+                          const std::string& cache_kind,
+                          const std::string& token,
+                          int64_t expires_at_epoch);
+
+    /**
+     * Remove cached token entry
+     */
+    bool delete_cached_token(const std::string& hostname,
+                             const std::string& cache_kind);
     
     /**
      * Get connection by name

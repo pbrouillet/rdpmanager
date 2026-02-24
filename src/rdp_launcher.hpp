@@ -103,6 +103,14 @@ using AuthenticateCallback = std::function<AuthResponse(const AuthRequest& reque
  */
 using AADAuthCallback = std::function<AADAuthResponse(const AADAuthRequest& request)>;
 
+using TokenCacheLookupCallback =
+    std::function<std::optional<std::string>(const std::string& hostname, const std::string& cache_kind)>;
+using TokenCacheStoreCallback =
+    std::function<bool(const std::string& hostname,
+                       const std::string& cache_kind,
+                       const std::string& token,
+                       int64_t expires_at_epoch)>;
+
 /**
  * RDP Connection Parameters
  */
@@ -244,6 +252,8 @@ public:
     void set_certificate_callback(CertificateVerifyCallback callback);
     void set_authenticate_callback(AuthenticateCallback callback);
     void set_aad_auth_callback(AADAuthCallback callback);
+    void set_token_cache_lookup_callback(TokenCacheLookupCallback callback);
+    void set_token_cache_store_callback(TokenCacheStoreCallback callback);
 
 private:
     RDPConnectionParams m_params;
@@ -258,6 +268,9 @@ private:
     CertificateVerifyCallback m_cert_callback;
     AuthenticateCallback m_auth_callback;
     AADAuthCallback m_aad_callback;
+    TokenCacheLookupCallback m_token_cache_lookup_callback;
+    TokenCacheStoreCallback m_token_cache_store_callback;
+    std::atomic<int> m_avd_token_requests_seen{0};
     
     // Internal methods
     void session_thread_func();
@@ -344,6 +357,8 @@ public:
      * This will be propagated to new sessions
      */
     void set_aad_auth_callback(AADAuthCallback callback);
+    void set_token_cache_lookup_callback(TokenCacheLookupCallback callback);
+    void set_token_cache_store_callback(TokenCacheStoreCallback callback);
 
     /**
      * Terminate all active sessions
@@ -357,6 +372,8 @@ private:
     CertificateVerifyCallback m_cert_callback;
     AuthenticateCallback m_auth_callback;
     AADAuthCallback m_aad_callback;
+    TokenCacheLookupCallback m_token_cache_lookup_callback;
+    TokenCacheStoreCallback m_token_cache_store_callback;
     mutable std::mutex m_mutex;
     
     // Clean up finished sessions

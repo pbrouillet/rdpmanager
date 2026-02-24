@@ -3,6 +3,11 @@ import {
   tokens,
   Button,
   Text,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
 } from '@fluentui/react-components';
 import { Database24Regular, Dismiss12Regular } from '@fluentui/react-icons';
 
@@ -12,24 +17,20 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     overflowX: 'auto',
-    padding: tokens.spacingVerticalXS,
+    padding: `0 ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground2,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusLarge,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   tab: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-    borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground3,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXXS}`,
+    borderBottom: '2px solid transparent',
     minWidth: 0,
   },
   tabActive: {
-    backgroundColor: tokens.colorBrandBackground2,
-    border: `1px solid ${tokens.colorBrandStroke1}`,
+    borderBottom: `2px solid ${tokens.colorBrandStroke1}`,
   },
   tabLabel: {
     maxWidth: '220px',
@@ -44,7 +45,7 @@ const useStyles = makeStyles({
   },
   empty: {
     color: tokens.colorNeutralForeground4,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
   },
 });
 
@@ -59,9 +60,18 @@ interface DatabaseTabsProps {
   activeDatabase: string;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
+  onClone: (path: string) => void;
+  onCopyPath: (path: string) => void;
 }
 
-export function DatabaseTabs({ databases, activeDatabase, onSelect, onClose }: DatabaseTabsProps) {
+export function DatabaseTabs({
+  databases,
+  activeDatabase,
+  onSelect,
+  onClose,
+  onClone,
+  onCopyPath,
+}: DatabaseTabsProps) {
   const styles = useStyles();
 
   if (databases.length === 0) {
@@ -77,24 +87,34 @@ export function DatabaseTabs({ databases, activeDatabase, onSelect, onClose }: D
       {databases.map((path) => {
         const isActive = path === activeDatabase;
         return (
-          <div key={path} className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}>
-            <Button
-              appearance="subtle"
-              icon={<Database24Regular />}
-              onClick={() => onSelect(path)}
-              title={path}
-            >
-              <span className={styles.tabLabel}>{basename(path)}</span>
-            </Button>
-            <Button
-              className={styles.closeBtn}
-              appearance="subtle"
-              icon={<Dismiss12Regular />}
-              onClick={() => onClose(path)}
-              title={`Close ${path}`}
-              aria-label={`Close ${path}`}
-            />
-          </div>
+          <Menu key={path} openOnContext>
+            <MenuTrigger disableButtonEnhancement>
+              <div className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}>
+                <Button
+                  appearance="subtle"
+                  icon={<Database24Regular />}
+                  onClick={() => onSelect(path)}
+                  title={path}
+                >
+                  <span className={styles.tabLabel}>{basename(path)}</span>
+                </Button>
+                <Button
+                  className={styles.closeBtn}
+                  appearance="subtle"
+                  icon={<Dismiss12Regular />}
+                  onClick={() => onClose(path)}
+                  title={`Close ${path}`}
+                  aria-label={`Close ${path}`}
+                />
+              </div>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem onClick={() => onClone(path)}>Clone</MenuItem>
+                <MenuItem onClick={() => onCopyPath(path)}>Copy Path</MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         );
       })}
     </div>

@@ -108,6 +108,17 @@ void MainWindow::setup_rdp_callbacks() {
     m_rdp_launcher->set_certificate_callback(m_dialog_manager->get_certificate_callback());
     m_rdp_launcher->set_authenticate_callback(m_dialog_manager->get_authenticate_callback());
     m_rdp_launcher->set_aad_auth_callback(m_aad_auth_handler->get_callback());
+    m_rdp_launcher->set_token_cache_lookup_callback(
+        [this](const std::string& hostname, const std::string& cache_kind) {
+            return m_config_manager->get_cached_token(hostname, cache_kind);
+        });
+    m_rdp_launcher->set_token_cache_store_callback(
+        [this](const std::string& hostname,
+               const std::string& cache_kind,
+               const std::string& token,
+               int64_t expires_at_epoch) {
+            return m_config_manager->set_cached_token(hostname, cache_kind, token, expires_at_epoch);
+        });
 }
 
 void MainWindow::bind_js_handlers() {

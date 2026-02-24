@@ -12,8 +12,10 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdlib>
+#include <cctype>
 #include <sqlite3.h>
 #include <set>
+#include <chrono>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -182,6 +184,21 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "remote_application_program", json_string(c.remote_application_program.c_str()));
     json_object_set_new(obj, "aad_tenant_id",     json_string(c.aad_tenant_id.c_str()));
     return obj;
+}
+
+static std::string normalize_token_cache_key(const std::string& value) {
+    std::string normalized = value;
+    normalized.erase(normalized.begin(),
+                     std::find_if(normalized.begin(), normalized.end(), [](unsigned char ch) {
+                         return !std::isspace(ch);
+                     }));
+    normalized.erase(std::find_if(normalized.rbegin(), normalized.rend(), [](unsigned char ch) {
+                         return !std::isspace(ch);
+                     }).base(),
+                     normalized.end());
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return normalized;
 }
 
 // ============================================================================
@@ -475,6 +492,79 @@ bool ConfigManager::open_database(const std::string& path) {
     return save_settings();
 }
 
+bool ConfigManager::clone_database(const std::string& source_path, const std::string& target_path) {
+    if (source_path.empty() || target_path.empty()) {
+        return false;
+    }
+
+    fs::path source_fs = fs::path(source_path);
+    fs::path target_fs = fs::path(target_path);
+
+    if (source_fs == target_fs) {
+        return false;
+    }
+
+    std::error_code ec;
+    const fs::path target_parent = target_fs.parent_path();
+    if (!target_parent.empty() && !fs::exists(target_parent)) {
+        fs::create_directories(target_parent, ec);
+        if (ec) {
+            std::cerr << "[ConfigManager] Failed to create clone target directory: " << ec.message() << std::endl;
+            return false;
+        }
+    }
+
+    sqlite3* source_db = nullptr;
+    if (sqlite3_open_v2(source_fs.string().c_str(), &source_db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to open source database for clone: " << source_path << std::endl;
+        if (source_db) {
+            sqlite3_close(source_db);
+        }
+        return false;
+    }
+
+    sqlite3* target_db = nullptr;
+    if (sqlite3_open(target_fs.string().c_str(), &target_db) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to open target database for clone: " << target_path << std::endl;
+        sqlite3_close(source_db);
+        if (target_db) {
+            sqlite3_close(target_db);
+        }
+        return false;
+    }
+
+    sqlite3_backup* backup = sqlite3_backup_init(target_db, "main", source_db, "main");
+    if (!backup) {
+        std::cerr << "[ConfigManager] Failed to initialize sqlite backup: " << sqlite3_errmsg(target_db) << std::endl;
+        sqlite3_close(target_db);
+        sqlite3_close(source_db);
+        return false;
+    }
+
+    const int step_result = sqlite3_backup_step(backup, -1);
+    const int finish_result = sqlite3_backup_finish(backup);
+
+    const bool copy_ok =
+        (step_result == SQLITE_DONE || step_result == SQLITE_OK) &&
+        (finish_result == SQLITE_OK);
+
+    sqlite3_close(target_db);
+    sqlite3_close(source_db);
+
+    if (!copy_ok) {
+        std::cerr << "[ConfigManager] Failed to clone database from " << source_path
+                  << " to " << target_path << std::endl;
+        return false;
+    }
+
+    if (!open_database_internal(target_fs)) {
+        return false;
+    }
+
+    set_last_database_path(target_path);
+    return save_settings();
+}
+
 bool ConfigManager::close_database() {
     if (m_db) {
         sqlite3_close(m_db);
@@ -554,6 +644,14 @@ bool ConfigManager::ensure_schema() {
         );
         CREATE TABLE IF NOT EXISTS folders (
             path TEXT PRIMARY KEY NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS "token-cache" (
+            hostname TEXT NOT NULL,
+            cache_kind TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(hostname, cache_kind)
         )
     )SQL";
 
@@ -920,4 +1018,126 @@ std::string ConfigManager::get_folders_json() const {
     std::string result(dump ? dump : "[]");
     free(dump);
     return result;
+}
+
+std::optional<std::string> ConfigManager::get_cached_token(const std::string& hostname,
+                                                           const std::string& cache_kind) const {
+    if (!m_db) {
+        return std::nullopt;
+    }
+
+    const std::string host_key = normalize_token_cache_key(hostname);
+    const std::string kind_key = normalize_token_cache_key(cache_kind);
+    if (host_key.empty() || kind_key.empty()) {
+        return std::nullopt;
+    }
+
+    const char* sql =
+        "SELECT access_token, expires_at FROM \"token-cache\" WHERE hostname = ? AND cache_kind = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare token cache SELECT: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return std::nullopt;
+    }
+
+    sqlite3_bind_text(stmt, 1, host_key.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, kind_key.c_str(), -1, SQLITE_TRANSIENT);
+
+    std::optional<std::string> result;
+    const auto now = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* token = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const int64_t expires_at = sqlite3_column_int64(stmt, 1);
+
+        if (token && expires_at > (now + 30)) {
+            result = std::string(token);
+        } else {
+            sqlite3_finalize(stmt);
+            return std::nullopt;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+bool ConfigManager::set_cached_token(const std::string& hostname,
+                                     const std::string& cache_kind,
+                                     const std::string& token,
+                                     int64_t expires_at_epoch) {
+    if (!m_db) {
+        return false;
+    }
+
+    const std::string host_key = normalize_token_cache_key(hostname);
+    const std::string kind_key = normalize_token_cache_key(cache_kind);
+    if (host_key.empty() || kind_key.empty() || token.empty() || expires_at_epoch <= 0) {
+        return false;
+    }
+
+    const auto now = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    const char* sql =
+        "INSERT INTO \"token-cache\"(hostname, cache_kind, access_token, expires_at, updated_at) "
+        "VALUES(?, ?, ?, ?, ?) "
+        "ON CONFLICT(hostname, cache_kind) DO UPDATE SET "
+        "access_token=excluded.access_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare token cache UPSERT: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, host_key.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, kind_key.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, expires_at_epoch);
+    sqlite3_bind_int64(stmt, 5, now);
+
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to save token cache entry: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+    }
+
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool ConfigManager::delete_cached_token(const std::string& hostname,
+                                        const std::string& cache_kind) {
+    if (!m_db) {
+        return false;
+    }
+
+    const std::string host_key = normalize_token_cache_key(hostname);
+    const std::string kind_key = normalize_token_cache_key(cache_kind);
+    if (host_key.empty() || kind_key.empty()) {
+        return false;
+    }
+
+    const char* sql = "DELETE FROM \"token-cache\" WHERE hostname = ? AND cache_kind = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare token cache DELETE: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, host_key.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, kind_key.c_str(), -1, SQLITE_TRANSIENT);
+
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
 }

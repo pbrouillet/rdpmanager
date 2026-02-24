@@ -21,6 +21,10 @@ const elements = {
     databaseBtn: document.getElementById('databaseBtn'),
     databaseMenu: document.getElementById('databaseMenu'),
     closeDatabaseItem: document.getElementById('closeDatabaseItem'),
+    databaseTabs: document.getElementById('databaseTabs'),
+    dbTabContextMenu: document.getElementById('dbTabContextMenu'),
+    dbTabContextClone: document.getElementById('dbTabContextClone'),
+    dbTabContextCopyPath: document.getElementById('dbTabContextCopyPath'),
     
     // Connections Grid
     connectionsGrid: document.getElementById('connectionsGrid'),
@@ -125,6 +129,9 @@ let contextMenuTarget = null; // Track which connection the context menu was ope
 let editingConnection = null; // Track which connection is being edited (null = new connection)
 let appInfo = null;
 let databaseStatus = { isOpen: false, path: '' };
+let openDatabases = [];
+let activeDatabase = '';
+let dbTabContextTargetPath = '';
 
 // ============================================================================
 // Toast Notifications
@@ -247,6 +254,28 @@ function hideDatabaseMenu() {
     elements.databaseMenu.classList.remove('active');
 }
 
+function showDbTabContextMenu(x, y, path) {
+    dbTabContextTargetPath = path || '';
+    elements.dbTabContextMenu.style.left = x + 'px';
+    elements.dbTabContextMenu.style.top = y + 'px';
+    elements.dbTabContextMenu.classList.add('active');
+
+    setTimeout(() => {
+        const rect = elements.dbTabContextMenu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            elements.dbTabContextMenu.style.left = (window.innerWidth - rect.width - 10) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            elements.dbTabContextMenu.style.top = (window.innerHeight - rect.height - 10) + 'px';
+        }
+    }, 0);
+}
+
+function hideDbTabContextMenu() {
+    elements.dbTabContextMenu.classList.remove('active');
+    dbTabContextTargetPath = '';
+}
+
 function toggleDatabaseMenu() {
     if (elements.databaseMenu.classList.contains('active')) {
         hideDatabaseMenu();
@@ -261,6 +290,46 @@ function updateDatabaseMenuState() {
     } else {
         elements.closeDatabaseItem.classList.add('disabled');
     }
+}
+
+function basename(path) {
+    const normalized = (path || '').replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : path;
+}
+
+function ensureDatabaseTab(path) {
+    const value = (path || '').trim();
+    if (!value) {
+        return;
+    }
+    if (!openDatabases.includes(value)) {
+        openDatabases.push(value);
+    }
+    activeDatabase = value;
+}
+
+function renderDatabaseTabs() {
+    if (!elements.databaseTabs) {
+        return;
+    }
+
+    if (openDatabases.length === 0) {
+        elements.databaseTabs.innerHTML = '<div class="db-tabs-empty">No database opened</div>';
+        return;
+    }
+
+    const html = openDatabases.map((path) => {
+        const activeClass = path === activeDatabase ? ' active' : '';
+        return `
+            <div class="db-tab${activeClass}" data-db-path="${escapeHtml(path)}" title="${escapeHtml(path)}">
+                <span class="db-tab-label">${escapeHtml(basename(path))}</span>
+                <button class="db-tab-close" data-db-close="${escapeHtml(path)}" aria-label="Close ${escapeHtml(path)}">×</button>
+            </div>
+        `;
+    }).join('');
+
+    elements.databaseTabs.innerHTML = html;
 }
 
 function handleContextMenuConnect() {
@@ -718,8 +787,13 @@ async function loadDatabaseStatus() {
         databaseStatus = { isOpen: false, path: '' };
     }
 
+    if (databaseStatus.isOpen && databaseStatus.path) {
+        ensureDatabaseTab(databaseStatus.path);
+    }
+
     updateDatabaseMenuState();
     updateFooterInfo();
+    renderDatabaseTabs();
 }
 
 function updateFooterInfo() {
@@ -733,16 +807,9 @@ function updateFooterInfo() {
 }
 
 async function handleCreateDatabase() {
-    const suggested = databaseStatus.path || 'connections.db';
-    const path = window.prompt('Create database at path:', suggested);
-    if (!path || !path.trim()) {
-        return;
-    }
-
     try {
-        const success = await createDatabase(path.trim());
+        const success = await createDatabaseDialog();
         if (!success) {
-            showToast('Failed to create database', 'error');
             return;
         }
 
@@ -756,16 +823,9 @@ async function handleCreateDatabase() {
 }
 
 async function handleOpenDatabase() {
-    const suggested = databaseStatus.path || 'connections.db';
-    const path = window.prompt('Open database path:', suggested);
-    if (!path || !path.trim()) {
-        return;
-    }
-
     try {
-        const success = await openDatabase(path.trim());
+        const success = await openDatabaseDialog();
         if (!success) {
-            showToast('Failed to open database', 'error');
             return;
         }
 
@@ -776,6 +836,64 @@ async function handleOpenDatabase() {
     } catch (error) {
         console.error('Open database error:', error);
         showToast('Failed to open database', 'error');
+    }
+}
+
+async function handleCloneDatabase(sourcePath) {
+    const source = (sourcePath || '').trim();
+    if (!source) {
+        return;
+    }
+
+    const suggested = source.endsWith('.db') ? `${source.slice(0, -3)}-copy.db` : `${source}-copy`;
+    const targetPath = window.prompt('Clone database to path:', suggested);
+    if (!targetPath || !targetPath.trim()) {
+        return;
+    }
+
+    try {
+        const success = await cloneDatabase(source, targetPath.trim());
+        if (!success) {
+            showToast('Failed to clone database', 'error');
+            return;
+        }
+
+        await loadDatabaseStatus();
+        await loadConnections();
+        selectedConnection = null;
+        ensureDatabaseTab(targetPath.trim());
+        renderDatabaseTabs();
+        showToast('Database cloned and opened', 'success');
+    } catch (error) {
+        console.error('Clone database error:', error);
+        showToast('Failed to clone database', 'error');
+    }
+}
+
+async function handleCopyDatabasePath(path) {
+    const value = (path || '').trim();
+    if (!value) {
+        return;
+    }
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+        showToast('Database path copied', 'success');
+    } catch (error) {
+        console.error('Copy path error:', error);
+        showToast('Failed to copy database path', 'error');
     }
 }
 
@@ -794,10 +912,76 @@ async function handleCloseDatabase() {
         await loadDatabaseStatus();
         await loadConnections();
         selectedConnection = null;
+        openDatabases = [];
+        activeDatabase = '';
+        renderDatabaseTabs();
         showToast('Database closed', 'info');
     } catch (error) {
         console.error('Close database error:', error);
         showToast('Failed to close database', 'error');
+    }
+}
+
+async function handleSelectDatabaseTab(path) {
+    const targetPath = (path || '').trim();
+    if (!targetPath || targetPath === activeDatabase) {
+        return;
+    }
+
+    try {
+        const success = await openDatabase(targetPath);
+        if (!success) {
+            showToast('Failed to switch database', 'error');
+            return;
+        }
+
+        activeDatabase = targetPath;
+        await loadDatabaseStatus();
+        await loadConnections();
+        selectedConnection = null;
+        renderDatabaseTabs();
+    } catch (error) {
+        console.error('Switch database error:', error);
+        showToast('Failed to switch database', 'error');
+    }
+}
+
+async function handleCloseDatabaseTab(path) {
+    const targetPath = (path || '').trim();
+    if (!targetPath) {
+        return;
+    }
+
+    const remaining = openDatabases.filter((dbPath) => dbPath !== targetPath);
+
+    if (targetPath !== activeDatabase) {
+        openDatabases = remaining;
+        renderDatabaseTabs();
+        return;
+    }
+
+    if (remaining.length === 0) {
+        await handleCloseDatabase();
+        return;
+    }
+
+    const nextPath = remaining[remaining.length - 1];
+    try {
+        const success = await openDatabase(nextPath);
+        if (!success) {
+            showToast('Failed to switch database after closing tab', 'error');
+            return;
+        }
+
+        openDatabases = remaining;
+        activeDatabase = nextPath;
+        await loadDatabaseStatus();
+        await loadConnections();
+        selectedConnection = null;
+        renderDatabaseTabs();
+    } catch (error) {
+        console.error('Close tab error:', error);
+        showToast('Failed to switch database after closing tab', 'error');
     }
 }
 
@@ -1030,6 +1214,41 @@ function initEventListeners() {
             await handleCloseDatabase();
         }
     });
+
+    elements.databaseTabs.addEventListener('click', async (e) => {
+        const closePath = e.target.closest('[data-db-close]')?.dataset.dbClose;
+        if (closePath) {
+            e.stopPropagation();
+            await handleCloseDatabaseTab(closePath);
+            return;
+        }
+
+        const tabPath = e.target.closest('[data-db-path]')?.dataset.dbPath;
+        if (tabPath) {
+            await handleSelectDatabaseTab(tabPath);
+        }
+    });
+
+    elements.databaseTabs.addEventListener('contextmenu', (e) => {
+        const tabPath = e.target.closest('[data-db-path]')?.dataset.dbPath;
+        if (!tabPath) {
+            return;
+        }
+        e.preventDefault();
+        showDbTabContextMenu(e.clientX, e.clientY, tabPath);
+    });
+
+    elements.dbTabContextClone.addEventListener('click', async () => {
+        const path = dbTabContextTargetPath;
+        hideDbTabContextMenu();
+        await handleCloneDatabase(path);
+    });
+
+    elements.dbTabContextCopyPath.addEventListener('click', async () => {
+        const path = dbTabContextTargetPath;
+        hideDbTabContextMenu();
+        await handleCopyDatabasePath(path);
+    });
     
     elements.rdpFileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
@@ -1174,6 +1393,9 @@ function initEventListeners() {
         if (!e.target.closest('.db-menu-container')) {
             hideDatabaseMenu();
         }
+        if (!e.target.closest('#dbTabContextMenu')) {
+            hideDbTabContextMenu();
+        }
     });
     
     // Keyboard shortcuts
@@ -1194,6 +1416,7 @@ function initEventListeners() {
             }
             hideContextMenu();
             hideDatabaseMenu();
+            hideDbTabContextMenu();
         }
         
         // Ctrl+N to open new connection

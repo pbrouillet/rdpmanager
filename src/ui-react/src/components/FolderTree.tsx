@@ -26,17 +26,15 @@ const useStyles = makeStyles({
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: tokens.colorNeutralBackground2,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
     overflow: 'hidden',
   },
   header: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: tokens.spacingVerticalS,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   headerTitle: {
     display: 'flex',
@@ -45,17 +43,17 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
   },
   list: {
-    padding: tokens.spacingVerticalXS,
+    padding: tokens.spacingVerticalXXS,
     overflowY: 'auto',
     flex: 1,
   },
   item: {
     width: '100%',
     justifyContent: 'flex-start',
-    marginBottom: tokens.spacingVerticalXXS,
+    marginBottom: 0,
   },
   itemDropZone: {
-    borderRadius: tokens.borderRadiusMedium,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   itemDropZoneActive: {
     outline: `2px solid ${tokens.colorBrandStroke1}`,

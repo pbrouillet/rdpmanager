@@ -1,22 +1,24 @@
 import {
   makeStyles,
   tokens,
-  Badge,
+  Button,
   Text,
-  Switch,
 } from '@fluentui/react-components';
-import { DesktopPulse24Regular } from '@fluentui/react-icons';
+import {
+  DesktopPulse24Regular,
+  WeatherMoon24Regular,
+  WeatherSunny24Regular,
+} from '@fluentui/react-icons';
 import type { ThemeMode } from '../theme';
 
 const useStyles = makeStyles({
   header: {
     display: 'flex',
     alignItems: 'center',
-    gap: tokens.spacingHorizontalL,
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: tokens.borderRadiusLarge,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   logo: {
     display: 'flex',
@@ -28,41 +30,28 @@ const useStyles = makeStyles({
     fontSize: '28px',
   },
   logoText: {
-    fontSize: tokens.fontSizeBase600,
+    fontSize: tokens.fontSizeBase500,
     fontWeight: tokens.fontWeightBold,
-    color: tokens.colorBrandForeground1,
-    letterSpacing: '2px',
+    color: tokens.colorNeutralForeground1,
+    letterSpacing: '0.5px',
   },
   subtitle: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase300,
-    paddingLeft: tokens.spacingHorizontalM,
-    borderLeft: `1px solid ${tokens.colorNeutralStroke1}`,
+    marginLeft: tokens.spacingHorizontalS,
   },
-  status: {
+  themeButton: {
     marginLeft: 'auto',
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-    backgroundColor: tokens.colorNeutralBackground3,
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  themeSwitch: {
-    marginLeft: tokens.spacingHorizontalM,
+    minWidth: '40px',
   },
 });
 
 interface AppHeaderProps {
-  statusText: string;
-  statusOnline: boolean;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
 }
 
 export function AppHeader({
-  statusText,
-  statusOnline,
   themeMode,
   onThemeModeChange,
 }: AppHeaderProps) {
@@ -72,25 +61,19 @@ export function AppHeader({
     <header className={styles.header}>
       <div className={styles.logo}>
         <DesktopPulse24Regular className={styles.logoIcon} />
-        <span className={styles.logoText}>RDP</span>
+        <Text className={styles.logoText}>RDP Manager</Text>
       </div>
-      <span className={styles.subtitle}>Remote Desktop Interface</span>
-      <Switch
-        className={styles.themeSwitch}
-        label="Dark mode"
-        checked={themeMode === 'dark'}
-        onChange={(_, data) => onThemeModeChange(data.checked ? 'dark' : 'light')}
-      />
-      <div className={styles.status}>
-        <Badge
-          size="tiny"
-          color={statusOnline ? 'success' : 'warning'}
-          appearance="filled"
-        />
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          {statusText}
-        </Text>
-      </div>
+      <Text className={styles.subtitle}>Remote Desktop</Text>
+      <Button
+        className={styles.themeButton}
+        appearance="subtle"
+        onClick={() => onThemeModeChange(themeMode === 'dark' ? 'light' : 'dark')}
+        title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        icon={themeMode === 'dark' ? <WeatherMoon24Regular /> : <WeatherSunny24Regular />}
+      >
+        {themeMode === 'dark' ? 'Dark' : 'Light'}
+      </Button>
     </header>
   );
 }

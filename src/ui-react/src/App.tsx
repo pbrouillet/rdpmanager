@@ -27,7 +27,10 @@ import {
   apiDeleteConnection,
   apiImportRdpFile,
   apiCreateDatabase,
+  apiCreateDatabaseDialog,
   apiOpenDatabase,
+  apiOpenDatabaseDialog,
+  apiCloneDatabase,
   apiCloseDatabase,
   apiGetDatabaseStatus,
   apiCreateFolder,
@@ -54,32 +57,33 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     height: '100vh',
-    maxWidth: '1400px',
-    margin: '0 auto',
-    padding: tokens.spacingHorizontalL,
-    gap: tokens.spacingVerticalM,
+    width: '100%',
+    margin: 0,
+    padding: 0,
+    gap: 0,
     boxSizing: 'border-box',
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   main: {
     flex: 1,
     minHeight: 0,
     overflow: 'hidden',
     display: 'flex',
-    gap: tokens.spacingHorizontalS,
+    gap: 0,
   },
   leftPane: {
     minWidth: '180px',
     maxWidth: '520px',
     height: '100%',
     overflow: 'hidden',
+    borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   splitter: {
-    width: '6px',
+    width: '4px',
     cursor: 'col-resize',
-    borderRadius: tokens.borderRadiusSmall,
-    backgroundColor: tokens.colorNeutralStroke2,
+    backgroundColor: tokens.colorNeutralBackground2,
     ':hover': {
-      backgroundColor: tokens.colorBrandStroke1,
+      backgroundColor: tokens.colorNeutralStroke2,
     },
   },
   contentPane: {
@@ -89,10 +93,12 @@ const useStyles = makeStyles({
     overflow: 'auto',
   },
   footer: {
-    padding: tokens.spacingVerticalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     textAlign: 'center' as const,
     color: tokens.colorNeutralForeground4,
     fontSize: tokens.fontSizeBase200,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
   },
 });
 
@@ -108,8 +114,6 @@ export function App() {
   // State
   const [connections, setConnections] = useState<ConnectionProfile[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [statusText, setStatusText] = useState('Systems Online');
-  const [statusOnline, setStatusOnline] = useState(true);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus>({ isOpen: false, path: '' });
   const [openDatabases, setOpenDatabases] = useState<string[]>([]);
@@ -191,8 +195,6 @@ export function App() {
         showToast('Please enter a hostname or IP address', 'error');
         return;
       }
-      setStatusText('Connecting...');
-      setStatusOnline(false);
 
       const params: ConnectionParams = {
         ...conn,
@@ -201,16 +203,8 @@ export function App() {
       const result = await apiConnect(params);
       if (result.success) {
         showToast(`Connecting to ${conn.hostname}...`, 'success');
-        setStatusText('Session Active');
-        setStatusOnline(true);
       } else {
         showToast(`Connection failed: ${result.error}`, 'error');
-        setStatusText('Connection Failed');
-        setStatusOnline(false);
-        setTimeout(() => {
-          setStatusText('Systems Online');
-          setStatusOnline(true);
-        }, 3000);
       }
     },
     [showToast]
@@ -398,7 +392,7 @@ export function App() {
       setSelectedFolder(normalized);
       showToast(`Folder created: ${normalized}`, 'success');
     })();
-  }, [loadFolders, selectedFolder, showToast]);
+  }, [loadFolders, showToast]);
 
   const handleDropConnectionToFolder = useCallback(
     async (folder: string, droppedConnectionName: string) => {
@@ -527,44 +521,90 @@ export function App() {
   );
 
   const handleCreateDatabase = useCallback(async () => {
-    const suggested = databaseStatus.path || 'connections.db';
-    const path = window.prompt('Create database at path:', suggested);
-    if (!path || !path.trim()) {
-      return;
-    }
-
-    const success = await apiCreateDatabase(path.trim());
+    const success = await apiCreateDatabaseDialog();
     if (!success) {
-      showToast('Failed to create database', 'error');
       return;
     }
 
     await loadDatabaseStatus();
     await loadConnections();
     await loadFolders();
-    ensureDatabaseTab(path.trim());
+    const status = await apiGetDatabaseStatus();
+    if (status.isOpen && status.path) {
+      ensureDatabaseTab(status.path);
+    }
     showToast('Database created and opened', 'success');
-  }, [databaseStatus.path, ensureDatabaseTab, loadConnections, loadDatabaseStatus, loadFolders, showToast]);
+  }, [ensureDatabaseTab, loadConnections, loadDatabaseStatus, loadFolders, showToast]);
 
   const handleOpenDatabase = useCallback(async () => {
-    const suggested = databaseStatus.path || 'connections.db';
-    const path = window.prompt('Open database path:', suggested);
-    if (!path || !path.trim()) {
-      return;
-    }
-
-    const success = await apiOpenDatabase(path.trim());
+    const success = await apiOpenDatabaseDialog();
     if (!success) {
-      showToast('Failed to open database', 'error');
       return;
     }
 
     await loadDatabaseStatus();
     await loadConnections();
     await loadFolders();
-    ensureDatabaseTab(path.trim());
+    const status = await apiGetDatabaseStatus();
+    if (status.isOpen && status.path) {
+      ensureDatabaseTab(status.path);
+    }
     showToast('Database opened', 'success');
-  }, [databaseStatus.path, ensureDatabaseTab, loadConnections, loadDatabaseStatus, loadFolders, showToast]);
+  }, [ensureDatabaseTab, loadConnections, loadDatabaseStatus, loadFolders, showToast]);
+
+  const handleCloneDatabase = useCallback(
+    async (sourcePath: string) => {
+      const suggested = sourcePath.endsWith('.db')
+        ? `${sourcePath.slice(0, -3)}-copy.db`
+        : `${sourcePath}-copy`;
+      const targetPath = window.prompt('Clone database to path:', suggested);
+      if (!targetPath || !targetPath.trim()) {
+        return;
+      }
+
+      const success = await apiCloneDatabase(sourcePath, targetPath.trim());
+      if (!success) {
+        showToast('Failed to clone database', 'error');
+        return;
+      }
+
+      await loadDatabaseStatus();
+      await loadConnections();
+      await loadFolders();
+      ensureDatabaseTab(targetPath.trim());
+      showToast('Database cloned and opened', 'success');
+    },
+    [ensureDatabaseTab, loadConnections, loadDatabaseStatus, loadFolders, showToast]
+  );
+
+  const handleCopyDatabasePath = useCallback(
+    async (path: string) => {
+      const value = path.trim();
+      if (!value) {
+        return;
+      }
+
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+        } else {
+          const textarea = document.createElement('textarea');
+          textarea.value = value;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+        }
+        showToast('Database path copied', 'success');
+      } catch {
+        showToast('Failed to copy database path', 'error');
+      }
+    },
+    [showToast]
+  );
 
   const handleCloseDatabase = useCallback(async () => {
     const success = await apiCloseDatabase();
@@ -756,6 +796,21 @@ export function App() {
   }, [databaseStatus, ensureDatabaseTab]);
 
   useEffect(() => {
+    if (databaseStatus.isOpen) {
+      return;
+    }
+
+    setConnections([]);
+    setFolders([]);
+    setSelectedFolder('');
+    setSelectedIndex(null);
+    setDraggingConnectionName('');
+    setImportedRdpData(null);
+    setOpenDatabases([]);
+    setActiveDatabase('');
+  }, [databaseStatus.isOpen]);
+
+  useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
       if (!isResizingRef.current) {
         return;
@@ -782,6 +837,7 @@ export function App() {
   const visibleConnections = selectedFolder
     ? connections.filter((conn) => (conn.folder || '') === selectedFolder)
     : connections;
+  const mainVisible = databaseStatus.isOpen;
 
   const footerText = appInfo
     ? `${appInfo.name} v${appInfo.version} | FreeRDP ${appInfo.freerdp_version}`
@@ -795,16 +851,8 @@ export function App() {
     <FluentProvider theme={getFluentTheme(themeMode)} style={{ height: '100%' }}>
       <div className={styles.root}>
         <AppHeader
-          statusText={statusText}
-          statusOnline={statusOnline}
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
-        />
-        <DatabaseTabs
-          databases={openDatabases}
-          activeDatabase={activeDatabase}
-          onSelect={handleSelectDatabaseTab}
-          onClose={handleCloseDatabaseTab}
         />
         <Toolbar
           onNewConnection={handleNewConnection}
@@ -814,45 +862,55 @@ export function App() {
           onCloseDatabase={handleCloseDatabase}
           databaseOpen={databaseStatus.isOpen}
         />
-        <div className={styles.main}>
-          <div className={styles.leftPane} style={{ width: `${treeWidth}px` }}>
-            <FolderTree
-              connections={connections}
-              folders={folders}
-              selectedFolder={selectedFolder}
-              onSelectFolder={(folder) => {
-                setSelectedFolder(folder);
-                setSelectedIndex(null);
+        <DatabaseTabs
+          databases={openDatabases}
+          activeDatabase={activeDatabase}
+          onSelect={handleSelectDatabaseTab}
+          onClose={handleCloseDatabaseTab}
+          onClone={handleCloneDatabase}
+          onCopyPath={handleCopyDatabasePath}
+        />
+        {mainVisible && (
+          <div className={styles.main}>
+            <div className={styles.leftPane} style={{ width: `${treeWidth}px` }}>
+              <FolderTree
+                connections={connections}
+                folders={folders}
+                selectedFolder={selectedFolder}
+                onSelectFolder={(folder) => {
+                  setSelectedFolder(folder);
+                  setSelectedIndex(null);
+                }}
+                onCreateFolder={handleCreateFolder}
+                onDropConnectionToFolder={handleDropConnectionToFolder}
+                onDropFolderToFolder={handleDropFolderToFolder}
+                onRenameFolder={handleRenameFolder}
+                onDeleteFolder={handleDeleteFolder}
+              />
+            </div>
+            <div
+              className={styles.splitter}
+              onMouseDown={() => {
+                isResizingRef.current = true;
               }}
-              onCreateFolder={handleCreateFolder}
-              onDropConnectionToFolder={handleDropConnectionToFolder}
-              onDropFolderToFolder={handleDropFolderToFolder}
-              onRenameFolder={handleRenameFolder}
-              onDeleteFolder={handleDeleteFolder}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize folder tree"
             />
+            <div className={styles.contentPane}>
+              <ConnectionGrid
+                connections={visibleConnections}
+                selectedIndex={selectedIndex}
+                onSelect={setSelectedIndex}
+                onDoubleClick={handleDoubleClick}
+                onConnect={handleContextConnect}
+                onEdit={handleEditConnection}
+                onDelete={handleRequestDelete}
+                onDragStartConnection={setDraggingConnectionName}
+              />
+            </div>
           </div>
-          <div
-            className={styles.splitter}
-            onMouseDown={() => {
-              isResizingRef.current = true;
-            }}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize folder tree"
-          />
-          <div className={styles.contentPane}>
-            <ConnectionGrid
-              connections={visibleConnections}
-              selectedIndex={selectedIndex}
-              onSelect={setSelectedIndex}
-              onDoubleClick={handleDoubleClick}
-              onConnect={handleContextConnect}
-              onEdit={handleEditConnection}
-              onDelete={handleRequestDelete}
-              onDragStartConnection={setDraggingConnectionName}
-            />
-          </div>
-        </div>
+        )}
         <div className={styles.footer}>{`${footerText} | ${databaseText}`}</div>
 
         <Toaster toasterId={toasterId} />

@@ -14,11 +14,11 @@ import { Add24Regular, ArrowUpload24Regular, Database24Regular } from '@fluentui
 const useStyles = makeStyles({
   toolbar: {
     display: 'flex',
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingVerticalM,
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: tokens.borderRadiusLarge,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
 });
 

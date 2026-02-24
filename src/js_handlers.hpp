@@ -57,7 +57,10 @@ private:
     static void s_get_app_info(webui::window::event* e);
     static void s_import_rdp_file(webui::window::event* e);
     static void s_create_database(webui::window::event* e);
+    static void s_create_database_dialog(webui::window::event* e);
     static void s_open_database(webui::window::event* e);
+    static void s_open_database_dialog(webui::window::event* e);
+    static void s_clone_database(webui::window::event* e);
     static void s_close_database(webui::window::event* e);
     static void s_get_database_status(webui::window::event* e);
     static void s_create_folder(webui::window::event* e);

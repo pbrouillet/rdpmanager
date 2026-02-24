@@ -73,9 +73,33 @@ export async function apiCreateDatabase(path: string): Promise<boolean> {
   }
 }
 
+export async function apiCreateDatabaseDialog(): Promise<boolean> {
+  try {
+    return await createDatabaseDialog();
+  } catch {
+    return false;
+  }
+}
+
 export async function apiOpenDatabase(path: string): Promise<boolean> {
   try {
     return await openDatabase(path);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiOpenDatabaseDialog(): Promise<boolean> {
+  try {
+    return await openDatabaseDialog();
+  } catch {
+    return false;
+  }
+}
+
+export async function apiCloneDatabase(sourcePath: string, targetPath: string): Promise<boolean> {
+  try {
+    return await cloneDatabase(sourcePath, targetPath);
   } catch {
     return false;
   }
