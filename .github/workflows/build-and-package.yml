@@ -1,0 +1,40 @@
+name: Build And Package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-linux-artifact:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Make scripts executable
+        run: chmod +x init.sh setup-deps.sh scripts/check-freerdp-patch.sh
+
+      - name: Install dependencies
+        run: ./setup-deps.sh
+
+      - name: Build application
+        run: ./init.sh
+
+      - name: Package artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist/rdpmanager
+          cp build/webui-rdp-client dist/rdpmanager/
+          cp -r build/ui-dist dist/rdpmanager/
+          tar -czf dist/rdpmanager-linux-x86_64.tar.gz -C dist rdpmanager
+
+      - name: Upload tar.gz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdpmanager-linux-x86_64
+          path: dist/rdpmanager-linux-x86_64.tar.gz
+          if-no-files-found: error

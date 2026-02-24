@@ -1,0 +1,17 @@
+name: FreeRDP Patch Guard
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify-freerdp-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify FreeRDP AAD patch
+        run: bash scripts/check-freerdp-patch.sh
