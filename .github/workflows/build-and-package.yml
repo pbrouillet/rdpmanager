@@ -15,6 +15,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Init FreeRDP and webui submodules
+        run: |
+          git submodule update --init subprojects/freerdp
+          git submodule update --init subprojects/webui
+
       - name: Make scripts executable
         run: chmod +x init.sh setup-deps.sh scripts/check-freerdp-patch.sh
 
