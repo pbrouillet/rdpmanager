@@ -25,12 +25,43 @@ jobs:
       - name: Build application
         run: ./init.sh
 
+      - name: Install patchelf
+        run: sudo apt-get install -y -qq patchelf
+
       - name: Package artifact
         run: |
           set -euo pipefail
-          mkdir -p dist/rdpmanager
+          mkdir -p dist/rdpmanager/lib
+
           cp build/webui-rdp-client dist/rdpmanager/
           cp -r build/ui-dist dist/rdpmanager/
+
+          # Bundle shared libraries that aren't part of the base Linux system.
+          # We skip the core C runtime libs that every distro ships.
+          SKIP_LIBS="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libmvec\.so|libresolv\.so"
+          ldd build/webui-rdp-client \
+            | grep -v "not found" \
+            | grep "=> /" \
+            | grep -Ev "$SKIP_LIBS" \
+            | awk '{print $3}' \
+            | sort -u \
+            | while read -r lib; do
+                cp -L "$lib" dist/rdpmanager/lib/
+              done
+
+          # Set RPATH so the binary finds bundled libs at $ORIGIN/lib
+          patchelf --set-rpath '$ORIGIN/lib' dist/rdpmanager/webui-rdp-client
+
+          # Create a convenience wrapper script
+          cat > dist/rdpmanager/rdpmanager.sh << 'WRAPPER'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export LD_LIBRARY_PATH="$SCRIPT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          exec "$SCRIPT_DIR/webui-rdp-client" "$@"
+          WRAPPER
+          sed -i 's/^          //' dist/rdpmanager/rdpmanager.sh
+          chmod +x dist/rdpmanager/rdpmanager.sh
+
           tar -czf dist/rdpmanager-linux-x86_64.tar.gz -C dist rdpmanager
 
       - name: Upload tar.gz artifact
