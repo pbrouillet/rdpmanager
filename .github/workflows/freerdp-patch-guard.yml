@@ -10,8 +10,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Init FreeRDP submodule
+        run: git submodule update --init subprojects/freerdp
 
       - name: Verify FreeRDP AAD patch
         run: bash scripts/check-freerdp-patch.sh
