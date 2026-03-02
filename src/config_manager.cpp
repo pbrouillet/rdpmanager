@@ -652,6 +652,13 @@ bool ConfigManager::ensure_schema() {
             expires_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY(hostname, cache_kind)
+        );
+        CREATE TABLE IF NOT EXISTS feed_accounts (
+            id TEXT PRIMARY KEY NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            refresh_token TEXT NOT NULL DEFAULT '',
+            last_synced INTEGER NOT NULL DEFAULT 0
         )
     )SQL";
 
@@ -1140,4 +1147,139 @@ bool ConfigManager::delete_cached_token(const std::string& hostname,
     const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;
+}
+
+// ============================================================================
+// Feed Account Management
+// ============================================================================
+
+bool ConfigManager::add_feed_account(const FeedAccount& account) {
+    if (!m_db || account.id.empty()) {
+        return false;
+    }
+
+    const char* sql =
+        "INSERT INTO feed_accounts(id, display_name, email, refresh_token, last_synced) "
+        "VALUES(?, ?, ?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare feed_accounts INSERT: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, account.id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, account.display_name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, account.email.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, account.refresh_token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 5, account.last_synced);
+
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to add feed account: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool ConfigManager::update_feed_account(const FeedAccount& account) {
+    if (!m_db || account.id.empty()) {
+        return false;
+    }
+
+    const char* sql =
+        "UPDATE feed_accounts SET display_name=?, email=?, refresh_token=?, last_synced=? "
+        "WHERE id=?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare feed_accounts UPDATE: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, account.display_name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, account.email.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, account.refresh_token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, account.last_synced);
+    sqlite3_bind_text(stmt, 5, account.id.c_str(), -1, SQLITE_TRANSIENT);
+
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!ok) {
+        std::cerr << "[ConfigManager] Failed to update feed account: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool ConfigManager::delete_feed_account(const std::string& id) {
+    if (!m_db || id.empty()) {
+        return false;
+    }
+
+    const char* sql = "DELETE FROM feed_accounts WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare feed_accounts DELETE: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+std::vector<FeedAccount> ConfigManager::get_feed_accounts() const {
+    std::vector<FeedAccount> accounts;
+    if (!m_db) {
+        return accounts;
+    }
+
+    const char* sql = "SELECT id, display_name, email, refresh_token, last_synced "
+                      "FROM feed_accounts ORDER BY display_name COLLATE NOCASE";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "[ConfigManager] Failed to prepare feed_accounts SELECT: "
+                  << sqlite3_errmsg(m_db) << std::endl;
+        return accounts;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        FeedAccount a;
+        const char* id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* email = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        const char* rt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        a.id = id ? id : "";
+        a.display_name = name ? name : "";
+        a.email = email ? email : "";
+        a.refresh_token = rt ? rt : "";
+        a.last_synced = sqlite3_column_int64(stmt, 4);
+        accounts.push_back(std::move(a));
+    }
+
+    sqlite3_finalize(stmt);
+    return accounts;
+}
+
+std::string ConfigManager::get_feed_accounts_json() const {
+    const auto accounts = get_feed_accounts();
+    json_t* root = json_array();
+    for (const auto& a : accounts) {
+        json_t* obj = json_object();
+        json_object_set_new(obj, "id", json_string(a.id.c_str()));
+        json_object_set_new(obj, "display_name", json_string(a.display_name.c_str()));
+        json_object_set_new(obj, "email", json_string(a.email.c_str()));
+        json_object_set_new(obj, "last_synced", json_integer(a.last_synced));
+        json_array_append_new(root, obj);
+    }
+
+    char* dump = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    std::string result(dump ? dump : "[]");
+    free(dump);
+    return result;
 }

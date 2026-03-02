@@ -17,6 +17,7 @@ import type {
   AuthRequest,
   AppInfo,
   DatabaseStatus,
+  FeedAccount,
 } from './types';
 import { defaultConnectionProfile } from './types';
 import {
@@ -40,6 +41,9 @@ import {
   apiGetFolders,
   apiCertificateResponse,
   apiAuthResponse,
+  apiGetFeedAccounts,
+  apiDeleteFeedAccount,
+  apiDiscoverFeeds,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
@@ -140,6 +144,10 @@ export function App() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTargetName, setDeleteTargetName] = useState('');
 
+  // Feed discovery state
+  const [feedAccounts, setFeedAccounts] = useState<FeedAccount[]>([]);
+  const [discoveryInProgress, setDiscoveryInProgress] = useState(false);
+
   // Ref to track imported RDP data for connection params
   const importedRdpDataRef = useRef<Record<string, unknown> | null>(null);
   importedRdpDataRef.current = importedRdpData;
@@ -173,6 +181,12 @@ export function App() {
   const loadDatabaseStatus = useCallback(async () => {
     const status = await apiGetDatabaseStatus();
     setDatabaseStatus(status);
+  }, []);
+
+  // Load feed accounts
+  const loadFeedAccounts = useCallback(async () => {
+    const accounts = await apiGetFeedAccounts();
+    setFeedAccounts(accounts);
   }, []);
 
   const ensureDatabaseTab = useCallback((path: string) => {
@@ -745,9 +759,49 @@ export function App() {
       await loadDatabaseStatus();
       await loadConnections();
       await loadFolders();
+      await loadFeedAccounts();
       console.log('[RDPMAN] Initial data loaded.');
     };
-  }, [dispatchToast, loadAppInfo, loadConnections, loadDatabaseStatus, loadFolders]);
+
+    // Feed discovery progress/completion callbacks
+    (window as unknown as Record<string, unknown>).onFeedDiscoveryProgress = (
+      data: { message: string; current: number; total: number }
+    ) => {
+      dispatchToast(
+        <Toast>
+          <ToastTitle>{data.message}</ToastTitle>
+        </Toast>,
+        { intent: 'info', timeout: 3000, position: 'bottom-end' }
+      );
+    };
+
+    (window as unknown as Record<string, unknown>).onFeedDiscoveryComplete = async (
+      data: { success: boolean; imported_count: number; tenant_count: number; message: string }
+    ) => {
+      setDiscoveryInProgress(false);
+      await loadConnections();
+      await loadFolders();
+      await loadFeedAccounts();
+      dispatchToast(
+        <Toast>
+          <ToastTitle>{data.message}</ToastTitle>
+        </Toast>,
+        { intent: data.success ? 'success' : 'error', timeout: 6000, position: 'bottom-end' }
+      );
+    };
+
+    // showToast global for C++ backend usage
+    (window as unknown as Record<string, unknown>).showToast = (
+      message: string, intent: string, _timeout?: number
+    ) => {
+      dispatchToast(
+        <Toast>
+          <ToastTitle>{message}</ToastTitle>
+        </Toast>,
+        { intent: (intent as 'info' | 'success' | 'error' | 'warning') || 'info', timeout: 4000, position: 'bottom-end' }
+      );
+    };
+  }, [dispatchToast, loadAppInfo, loadConnections, loadDatabaseStatus, loadFolders, loadFeedAccounts]);
 
   // Keyboard shortcut: Ctrl+N for new connection
   useEffect(() => {
@@ -861,6 +915,41 @@ export function App() {
           onOpenDatabase={handleOpenDatabase}
           onCloseDatabase={handleCloseDatabase}
           databaseOpen={databaseStatus.isOpen}
+          feedAccounts={feedAccounts}
+          onAddAccount={async () => {
+            setDiscoveryInProgress(true);
+            const result = await apiDiscoverFeeds('');
+            setDiscoveryInProgress(false);
+            await loadConnections();
+            await loadFolders();
+            await loadFeedAccounts();
+            if (!result.success) {
+              showToast(result.error || 'Feed discovery failed', 'error');
+            }
+          }}
+          onDeleteAccount={async (id) => {
+            const confirmed = window.confirm('Delete this feed account?');
+            if (!confirmed) return;
+            const success = await apiDeleteFeedAccount(id);
+            if (success) {
+              showToast('Account deleted', 'info');
+              await loadFeedAccounts();
+            } else {
+              showToast('Failed to delete account', 'error');
+            }
+          }}
+          onDiscoverFeeds={async (account) => {
+            setDiscoveryInProgress(true);
+            const result = await apiDiscoverFeeds(account.id);
+            setDiscoveryInProgress(false);
+            await loadConnections();
+            await loadFolders();
+            await loadFeedAccounts();
+            if (!result.success) {
+              showToast(result.error || 'Feed discovery failed', 'error');
+            }
+          }}
+          discoveryInProgress={discoveryInProgress}
         />
         <DatabaseTabs
           databases={openDatabases}

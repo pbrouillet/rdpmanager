@@ -7,10 +7,13 @@
 #include "../config_manager.hpp"
 #include "../dialog_manager.hpp"
 #include "aad_auth_handler.hpp"
+#include "../feed_discovery.hpp"
 #include "../js_handlers.hpp"
 #include "../path_utils.hpp"
 
 #include <iostream>
+#include <chrono>
+#include <thread>
 
 MainWindow::MainWindow(int debug_port)
     : m_debug_port(debug_port)
@@ -25,6 +28,7 @@ bool MainWindow::initialize() {
     m_config_manager = std::make_unique<ConfigManager>();
     m_dialog_manager = std::make_unique<DialogManager>();
     m_aad_auth_handler = std::make_unique<AADAuthHandler>();
+    m_feed_discovery = std::make_unique<FeedDiscoveryManager>(*m_config_manager);
 
     // Find UI files
     if (!find_and_set_ui_path()) {
@@ -34,6 +38,7 @@ bool MainWindow::initialize() {
     // Set up dialog managers with the main window
     m_dialog_manager->set_main_window(&m_window);
     m_aad_auth_handler->set_main_window(&m_window);
+    m_feed_discovery->set_main_window(&m_window);
 
     // Configure debug settings if needed
     configure_debug_settings();
@@ -123,17 +128,41 @@ void MainWindow::setup_rdp_callbacks() {
 
 void MainWindow::bind_js_handlers() {
     m_js_handlers = std::make_unique<JSHandlers>(
-        *m_rdp_launcher, *m_config_manager, *m_dialog_manager, *m_aad_auth_handler);
+        *m_rdp_launcher, *m_config_manager, *m_dialog_manager,
+        *m_aad_auth_handler, *m_feed_discovery);
     m_js_handlers->bind_all(m_window);
 }
 
 void MainWindow::bind_ready_event() {
-    // Bind an empty element to capture all events including connection events
-    m_window.bind("", [](webui::window::event* e) {
+    // Bind an empty element to capture all events including connection events.
+    // We use the DISCONNECTED event to schedule a graceful exit so that
+    // webui::wait() returns when the user closes the main window.  A short
+    // grace period allows normal page-refresh reconnections to cancel the
+    // exit.
+    m_window.bind("", [this](webui::window::event* e) {
         if (e->get_type() == webui::CONNECTED) {
+            // Cancel any pending exit — the webview reconnected (e.g. page refresh).
+            m_exit_scheduled.store(false);
             std::cout << "[RDPMAN] WebUI connected, triggering initial data load" << std::endl;
             // Trigger JavaScript to load initial data now that connection is ready
             e->get_window().run("if (typeof onWebuiReady === 'function') onWebuiReady();");
+        }
+        else if (e->get_type() == webui::DISCONNECTED) {
+            std::cout << "[RDPMAN] WebUI disconnected – scheduling graceful exit" << std::endl;
+            // Schedule a delayed exit.  If the webview reconnects (CONNECTED
+            // fires again) within the grace period, the exit is cancelled.
+            if (!m_exit_scheduled.exchange(true)) {
+                std::thread([this] {
+                    // Grace period — matches WEBUI_RELOAD_TIMEOUT used by the
+                    // library for page-refresh reconnections.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                    if (m_exit_scheduled.load()) {
+                        std::cout << "[RDPMAN] No reconnection – terminating RDP sessions and exiting" << std::endl;
+                        m_rdp_launcher->terminate_all();
+                        webui::exit();
+                    }
+                }).detach();
+            }
         }
     });
 }

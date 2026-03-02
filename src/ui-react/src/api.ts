@@ -8,6 +8,8 @@ import type {
   AppInfo,
   ImportResult,
   DatabaseStatus,
+  FeedAccount,
+  DiscoverResult,
 } from './types';
 
 export async function apiGetConnections(): Promise<ConnectionProfile[]> {
@@ -181,4 +183,36 @@ export function apiAuthResponse(
 
 export function apiAadAuthResponse(success: boolean, redirectUrl: string): void {
   aadAuthResponse(success, redirectUrl);
+}
+
+// ============================================================================
+// Feed Discovery
+// ============================================================================
+
+export async function apiGetFeedAccounts(): Promise<FeedAccount[]> {
+  try {
+    const result = await getFeedAccounts();
+    if (!result) return [];
+    return JSON.parse(result) as FeedAccount[];
+  } catch {
+    console.error('[RDPMAN] Failed to load feed accounts');
+    return [];
+  }
+}
+
+export async function apiDeleteFeedAccount(id: string): Promise<boolean> {
+  try {
+    return await deleteFeedAccount(id);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiDiscoverFeeds(accountId: string): Promise<DiscoverResult> {
+  try {
+    const result = await discoverFeeds(accountId);
+    return JSON.parse(result) as DiscoverResult;
+  } catch (error) {
+    return { success: false, error: String(error), imported_count: 0, tenant_count: 0, account_id: '', account_display_name: '' };
+  }
 }

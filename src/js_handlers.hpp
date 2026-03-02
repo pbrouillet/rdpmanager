@@ -19,6 +19,7 @@ class RDPLauncher;
 class ConfigManager;
 class DialogManager;
 class AADAuthHandler;
+class FeedDiscoveryManager;
 
 /**
  * JSHandlers encapsulates all JavaScript binding callback functions.
@@ -33,7 +34,8 @@ public:
     JSHandlers(RDPLauncher& rdp_launcher, 
                ConfigManager& config_manager,
                DialogManager& dialog_manager,
-               AADAuthHandler& aad_auth_handler);
+               AADAuthHandler& aad_auth_handler,
+               FeedDiscoveryManager& feed_discovery);
     ~JSHandlers();
 
     /**
@@ -46,6 +48,7 @@ private:
     ConfigManager& m_config_manager;
     DialogManager& m_dialog_manager;
     AADAuthHandler& m_aad_auth_handler;
+    FeedDiscoveryManager& m_feed_discovery;
 
     // ========================================================================
     // Static callbacks for WebUI (which requires plain function pointers)
@@ -71,6 +74,11 @@ private:
     static void s_certificate_response(webui::window::event* e);
     static void s_auth_response(webui::window::event* e);
     static void s_aad_auth_response(webui::window::event* e);
+
+    // Feed discovery handlers
+    static void s_get_feed_accounts(webui::window::event* e);
+    static void s_delete_feed_account(webui::window::event* e);
+    static void s_discover_feeds(webui::window::event* e);
 
     // Global instance pointer for static callbacks
     static JSHandlers* s_instance;

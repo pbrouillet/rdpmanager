@@ -8,8 +8,20 @@ import {
   MenuPopover,
   MenuList,
   MenuItem,
+  MenuDivider,
+  Spinner,
+  Text,
 } from '@fluentui/react-components';
-import { Add24Regular, ArrowUpload24Regular, Database24Regular } from '@fluentui/react-icons';
+import {
+  Add24Regular,
+  ArrowUpload24Regular,
+  Database24Regular,
+  People24Regular,
+  ArrowSync24Regular,
+  Delete24Regular,
+  PersonAdd24Regular,
+} from '@fluentui/react-icons';
+import type { FeedAccount } from '../types';
 
 const useStyles = makeStyles({
   toolbar: {
@@ -20,6 +32,15 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
+  accountItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  accountEmail: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground4,
+  },
 });
 
 interface ToolbarProps {
@@ -29,6 +50,12 @@ interface ToolbarProps {
   onOpenDatabase: () => void;
   onCloseDatabase: () => void;
   databaseOpen: boolean;
+  // Feed discovery
+  feedAccounts: FeedAccount[];
+  onAddAccount: () => void;
+  onDeleteAccount: (id: string) => void;
+  onDiscoverFeeds: (account: FeedAccount) => void;
+  discoveryInProgress: boolean;
 }
 
 export function Toolbar({
@@ -38,6 +65,11 @@ export function Toolbar({
   onOpenDatabase,
   onCloseDatabase,
   databaseOpen,
+  feedAccounts,
+  onAddAccount,
+  onDeleteAccount,
+  onDiscoverFeeds,
+  discoveryInProgress,
 }: ToolbarProps) {
   const styles = useStyles();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +120,63 @@ export function Toolbar({
             <MenuItem onClick={onCreateDatabase}>Create Database</MenuItem>
             <MenuItem onClick={onOpenDatabase}>Open Database</MenuItem>
             <MenuItem disabled={!databaseOpen} onClick={onCloseDatabase}>Close Database</MenuItem>
+          </MenuList>
+        </MenuPopover>
+      </Menu>
+      <Menu>
+        <MenuTrigger disableButtonEnhancement>
+          <Button
+            appearance="secondary"
+            icon={discoveryInProgress ? <Spinner size="tiny" /> : <People24Regular />}
+            disabled={!databaseOpen || discoveryInProgress}
+          >
+            Accounts
+          </Button>
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList>
+            {feedAccounts.map((account) => (
+              <Menu key={account.id}>
+                <MenuTrigger disableButtonEnhancement>
+                  <MenuItem>
+                    <div className={styles.accountItem}>
+                      <Text weight="semibold">{account.display_name}</Text>
+                      {account.last_synced > 0 && (
+                        <Text className={styles.accountEmail}>
+                          Last synced: {new Date(account.last_synced * 1000).toLocaleString()}
+                        </Text>
+                      )}
+                    </div>
+                  </MenuItem>
+                </MenuTrigger>
+                <MenuPopover>
+                  <MenuList>
+                    <MenuItem
+                      icon={<ArrowSync24Regular />}
+                      onClick={() => onDiscoverFeeds(account)}
+                      disabled={discoveryInProgress}
+                    >
+                      Refresh Feeds
+                    </MenuItem>
+                    <MenuDivider />
+                    <MenuItem
+                      icon={<Delete24Regular />}
+                      onClick={() => onDeleteAccount(account.id)}
+                    >
+                      Delete Account
+                    </MenuItem>
+                  </MenuList>
+                </MenuPopover>
+              </Menu>
+            ))}
+            {feedAccounts.length > 0 && <MenuDivider />}
+            <MenuItem
+              icon={<PersonAdd24Regular />}
+              onClick={onAddAccount}
+              disabled={discoveryInProgress}
+            >
+              Add Account
+            </MenuItem>
           </MenuList>
         </MenuPopover>
       </Menu>

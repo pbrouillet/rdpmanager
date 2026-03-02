@@ -456,11 +456,9 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     
     std::cout << "[AAD] Opening native window..." << std::endl;
     
-    // Prevent WebUI from exiting the GTK main loop when the AAD window
-    // disconnects (navigating to login.microsoftonline.com drops the
-    // WebSocket).  With timeout 0 the server-thread exit path skips the
-    // "break main loop" signal, keeping the main window alive.
-    webui::set_timeout(0);
+    // Note: webui::set_timeout(0) is set globally at startup so the
+    // server-thread never auto-exits on WebSocket disconnects.  No per-
+    // flow timeout manipulation is needed here.
     
     // Notify the main window about AAD auth (for UI feedback)
     if (m_main_window) {
@@ -668,8 +666,8 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         }
     }
     
-    // Restore normal timeout so the app exits when the user closes the main window
-    webui::set_timeout(15);
+    // Note: timeout stays at 0 — the main window's DISCONNECTED handler
+    // calls webui::exit() to terminate the app when the user closes it.
     
     if (!status) {
         std::cerr << "[AAD] Auth timed out" << std::endl;

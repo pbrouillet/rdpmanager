@@ -151,6 +151,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    // Prevent the WebUI server from auto-exiting on WebSocket hiccups.
+    // FreeRDP's X11 client calls XSetErrorHandler() and freerdp_handle_signals()
+    // which replace global handlers and can cause brief WebSocket disruptions
+    // in the GTK/WebKit webview.  With timeout 0 the server thread enters a
+    // "wait forever" loop that only exits on an explicit webui::exit() call,
+    // which we trigger from the main window's DISCONNECTED handler.
+    webui::set_timeout(0);
+
     // Show the window
     if (!main_window.show()) {
         std::cerr << "[ERROR] Failed to show main window" << std::endl;

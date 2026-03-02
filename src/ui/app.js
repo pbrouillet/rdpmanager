@@ -25,6 +25,8 @@ const elements = {
     dbTabContextMenu: document.getElementById('dbTabContextMenu'),
     dbTabContextClone: document.getElementById('dbTabContextClone'),
     dbTabContextCopyPath: document.getElementById('dbTabContextCopyPath'),
+    accountsBtn: document.getElementById('accountsBtn'),
+    accountsMenu: document.getElementById('accountsMenu'),
     
     // Connections Grid
     connectionsGrid: document.getElementById('connectionsGrid'),
@@ -1249,6 +1251,34 @@ function initEventListeners() {
         hideDbTabContextMenu();
         await handleCopyDatabasePath(path);
     });
+
+    // Accounts menu
+    if (elements.accountsBtn) {
+        elements.accountsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = elements.accountsMenu;
+            if (menu) {
+                menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+            }
+        });
+    }
+    if (elements.accountsMenu) {
+        elements.accountsMenu.addEventListener('click', async (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (!action) return;
+            elements.accountsMenu.style.display = 'none';
+            if (action === 'add-account') {
+                try {
+                    showStatus('Opening WVD login...');
+                    const disc = JSON.parse(await discoverFeeds(''));
+                    showStatus(disc.success ? 'Imported ' + disc.imported_count + ' resources' : (disc.error || 'Discovery failed'));
+                    await loadConnections();
+                } catch (err) {
+                    showStatus('Error: ' + err);
+                }
+            }
+        });
+    }
     
     elements.rdpFileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {

@@ -63,6 +63,17 @@ struct ConnectionProfile {
 };
 
 /**
+ * Saved feed account for WVD feed discovery
+ */
+struct FeedAccount {
+    std::string id;                    // UUID identifier
+    std::string display_name;          // Display name / label
+    std::string email;                 // Account email (informational)
+    std::string refresh_token;         // Cached refresh token (for future use)
+    int64_t last_synced = 0;           // Epoch seconds of last sync
+};
+
+/**
  * Configuration Manager class
  */
 class ConfigManager {
@@ -179,6 +190,35 @@ public:
      * Get list of all connection profiles
      */
     const std::vector<ConnectionProfile>& get_connections() const { return m_connections; }
+
+    // ========================================================================
+    // Feed Account Management
+    // ========================================================================
+
+    /**
+     * Add a new feed account
+     */
+    bool add_feed_account(const FeedAccount& account);
+
+    /**
+     * Update an existing feed account
+     */
+    bool update_feed_account(const FeedAccount& account);
+
+    /**
+     * Delete a feed account by id
+     */
+    bool delete_feed_account(const std::string& id);
+
+    /**
+     * Get all feed accounts
+     */
+    std::vector<FeedAccount> get_feed_accounts() const;
+
+    /**
+     * Get all feed accounts as JSON string
+     */
+    std::string get_feed_accounts_json() const;
     
 private:
     std::vector<ConnectionProfile> m_connections;

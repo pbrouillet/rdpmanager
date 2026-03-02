@@ -122,6 +122,12 @@ platform_deps = []
 jansson_dep = dependency('jansson', required: true)
 sqlite_dep = dependency('sqlite3', required: true)
 
+# HTTP client library (libcurl) - for WVD feed discovery
+curl_dep = dependency('libcurl', required: true)
+
+# XML parsing library (pugixml) - for WVD feed discovery XML responses
+pugixml_dep = dependency('pugixml', required: true)
+
 if is_linux
   # X11 for window management
   x11_dep = dependency('x11', required: false)
@@ -196,6 +202,7 @@ sources = files(
   'src/rdp_file_parser.cpp',
   'src/dialog_manager.cpp',
   'src/js_handlers.cpp',
+  'src/feed_discovery.cpp',
 )
 
 # ============================================================================
@@ -263,6 +270,8 @@ executable('webui-rdp-client',
     webui_dep,
     jansson_dep,
     sqlite_dep,
+    curl_dep,
+    pugixml_dep,
     xfreerdp_client_dep,  # X11 FreeRDP client for popup windows
     freerdp_dep,
     freerdp_client_dep,

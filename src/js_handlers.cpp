@@ -9,11 +9,13 @@
 #include "dialog_manager.hpp"
 #include "gui/aad_auth_handler.hpp"
 #include "rdp_file_parser.hpp"
+#include "feed_discovery.hpp"
 
 #include <iostream>
 #include <jansson.h>
 #include <cstdio>
 #include <array>
+#include <random>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -129,11 +131,13 @@ JSHandlers* JSHandlers::s_instance = nullptr;
 JSHandlers::JSHandlers(RDPLauncher& rdp_launcher,
                        ConfigManager& config_manager,
                        DialogManager& dialog_manager,
-                       AADAuthHandler& aad_auth_handler)
+                       AADAuthHandler& aad_auth_handler,
+                       FeedDiscoveryManager& feed_discovery)
     : m_rdp_launcher(rdp_launcher)
     , m_config_manager(config_manager)
     , m_dialog_manager(dialog_manager)
     , m_aad_auth_handler(aad_auth_handler)
+    , m_feed_discovery(feed_discovery)
 {
     s_instance = this;
 }
@@ -168,6 +172,11 @@ void JSHandlers::bind_all(webui::window& window) {
     window.bind("certificateResponse", s_certificate_response);
     window.bind("authResponse", s_auth_response);
     window.bind("aadAuthResponse", s_aad_auth_response);
+
+    // Feed discovery handlers
+    window.bind("getFeedAccounts", s_get_feed_accounts);
+    window.bind("deleteFeedAccount", s_delete_feed_account);
+    window.bind("discoverFeeds", s_discover_feeds);
 }
 
 // ============================================================================
@@ -592,4 +601,48 @@ void JSHandlers::s_aad_auth_response(webui::window::event* e) {
     bool success = e->get_bool(0);
     std::string redirect_url = e->get_string(1);
     s_instance->m_aad_auth_handler.on_response(success, redirect_url);
+}
+
+// ============================================================================
+// Feed Discovery Handlers
+// ============================================================================
+
+void JSHandlers::s_get_feed_accounts(webui::window::event* e) {
+    if (!s_instance) return;
+
+    e->return_string(s_instance->m_config_manager.get_feed_accounts_json());
+}
+
+void JSHandlers::s_delete_feed_account(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string id = e->get_string(0);
+    bool success = s_instance->m_config_manager.delete_feed_account(id);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_discover_feeds(webui::window::event* e) {
+    if (!s_instance) return;
+
+    // account_id is optional: empty string means "add new account"
+    std::string account_id = e->get_string(0);
+
+    if (s_instance->m_feed_discovery.is_busy()) {
+        e->return_string("{\"success\": false, \"error\": \"Discovery already in progress\"}");
+        return;
+    }
+
+    // Run discovery (blocks until complete - popup + HTTP calls)
+    auto result = s_instance->m_feed_discovery.discover_and_import(account_id);
+
+    std::string json = "{\"success\":" + std::string(result.success ? "true" : "false");
+    if (!result.error.empty()) {
+        json += ",\"error\":\"" + json_utils::escape_string(result.error) + "\"";
+    }
+    json += ",\"imported_count\":" + std::to_string(result.imported_count);
+    json += ",\"tenant_count\":" + std::to_string(result.tenant_count);
+    json += ",\"account_id\":\"" + json_utils::escape_string(result.account_id) + "\"";
+    json += ",\"account_display_name\":\"" + json_utils::escape_string(result.account_display_name) + "\"";
+    json += "}";
+    e->return_string(json);
 }

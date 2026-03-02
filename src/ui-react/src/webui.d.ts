@@ -40,3 +40,8 @@ declare function aadAuthResponse(
   success: boolean,
   redirectUrl: string
 ): Promise<void>;
+
+// Feed discovery
+declare function getFeedAccounts(): Promise<string>;
+declare function deleteFeedAccount(id: string): Promise<boolean>;
+declare function discoverFeeds(accountId: string): Promise<string>;

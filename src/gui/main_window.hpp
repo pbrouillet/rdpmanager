@@ -12,12 +12,15 @@
 #include <memory>
 #include <string>
 #include <filesystem>
+#include <atomic>
+#include <thread>
 
 // Forward declarations
 class RDPLauncher;
 class ConfigManager;
 class DialogManager;
 class AADAuthHandler;
+class FeedDiscoveryManager;
 class JSHandlers;
 
 namespace fs = std::filesystem;
@@ -80,6 +83,11 @@ public:
      */
     AADAuthHandler& get_aad_auth_handler() { return *m_aad_auth_handler; }
 
+    /**
+     * Get the feed discovery manager
+     */
+    FeedDiscoveryManager& get_feed_discovery() { return *m_feed_discovery; }
+
 private:
     /**
      * Find and set the UI path
@@ -121,7 +129,13 @@ private:
     std::unique_ptr<ConfigManager> m_config_manager;
     std::unique_ptr<DialogManager> m_dialog_manager;
     std::unique_ptr<AADAuthHandler> m_aad_auth_handler;
+    std::unique_ptr<FeedDiscoveryManager> m_feed_discovery;
     std::unique_ptr<JSHandlers> m_js_handlers;
+
+    // Disconnect tracking — allows the DISCONNECTED handler to schedule
+    // a graceful exit while still giving the WebSocket a chance to
+    // reconnect (e.g. after a page refresh).
+    std::atomic<bool> m_exit_scheduled{false};
 };
 
 #endif // MAIN_WINDOW_HPP

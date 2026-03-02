@@ -98,6 +98,22 @@ export interface RdpFileData {
   uses_gateway: boolean;
 }
 
+export interface FeedAccount {
+  id: string;
+  display_name: string;
+  email: string;
+  last_synced: number;
+}
+
+export interface DiscoverResult {
+  success: boolean;
+  error?: string;
+  imported_count: number;
+  tenant_count: number;
+  account_id: string;
+  account_display_name: string;
+}
+
 export function defaultConnectionProfile(): ConnectionProfile {
   return {
     name: '',
