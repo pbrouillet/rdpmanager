@@ -6,8 +6,7 @@
  * discover tenant feeds, workspace resources, and import RDP entries.
  */
 
-#ifndef FEED_DISCOVERY_HPP
-#define FEED_DISCOVERY_HPP
+#pragma once
 
 #include <webui.hpp>
 #include <mutex>
@@ -15,6 +14,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <functional>
 #include <chrono>
@@ -97,7 +97,7 @@ public:
     /**
      * Check if a discovery is currently in progress
      */
-    bool is_busy() const { return m_busy.load(); }
+    [[nodiscard]] bool is_busy() const { return m_busy.load(); }
 
 private:
     // ========================================================================
@@ -203,25 +203,25 @@ private:
     static constexpr auto AUTH_TIMEOUT = std::chrono::minutes(5);
 
     // WVD endpoints
-    static constexpr const char* WVD_WEBCLIENT_URL =
+    static constexpr std::string_view WVD_WEBCLIENT_URL =
         "https://client.wvd.microsoft.com/arm/webclient/index.html";
-    static constexpr const char* WVD_FEED_DISCOVERY_URL =
+    static constexpr std::string_view WVD_FEED_DISCOVERY_URL =
         "https://client.wvd.microsoft.com/api/arm/feeddiscovery";
 
     // WVD OAuth constants
-    static constexpr const char* WVD_CLIENT_ID =
+    static constexpr std::string_view WVD_CLIENT_ID =
         "a85cf173-4192-42f8-81fa-777a763e6e2c";
-    static constexpr const char* WVD_REDIRECT_URI =
+    static constexpr std::string_view WVD_REDIRECT_URI =
         "https://client.wvd.microsoft.com/arm/webclient/index.html";
-    static constexpr const char* WVD_SCOPE =
+    static constexpr std::string_view WVD_SCOPE =
         "https://www.wvd.microsoft.com/.default openid profile offline_access";
-    static constexpr const char* MS_TOKEN_ENDPOINT =
+    static constexpr std::string_view MS_TOKEN_ENDPOINT =
         "https://login.microsoftonline.com/common/oauth2/v2.0/token";
-    static constexpr const char* MS_AUTHORIZE_ENDPOINT =
+    static constexpr std::string_view MS_AUTHORIZE_ENDPOINT =
         "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 
     // Global instance pointer for static callbacks
     static FeedDiscoveryManager* s_instance;
 };
 
-#endif // FEED_DISCOVERY_HPP
+

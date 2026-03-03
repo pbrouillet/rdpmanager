@@ -10,12 +10,14 @@
 #include "gui/aad_auth_handler.hpp"
 #include "rdp_file_parser.hpp"
 #include "feed_discovery.hpp"
+#include "logger.hpp"
 
 #include <iostream>
 #include <jansson.h>
 #include <cstdio>
 #include <array>
 #include <random>
+#include <format>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -190,7 +192,7 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
         // Get JSON string from JavaScript
         std::string json_str = e->get_string(0);
         
-        std::cout << "[RDPMAN] Received connection request" << std::endl;
+        LOG_DEBUG("RDPMAN", "Received connection request");
         
         if (json_str.empty()) {
             e->return_string("{\"success\": false, \"error\": \"Empty connection parameters\"}");
@@ -199,51 +201,48 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
         
         // Parse JSON
         json_error_t error;
-        json_t* root = json_loads(json_str.c_str(), 0, &error);
+        json_utils::JsonPtr root{json_loads(json_str.c_str(), 0, &error)};
         if (!root) {
-            std::cerr << "[RDPMAN] JSON parse error: " << error.text << std::endl;
+            LOG_ERROR("RDPMAN", "JSON parse error: " << error.text);
             e->return_string("{\"success\": false, \"error\": \"Invalid JSON: " + json_utils::escape_string(error.text) + "\"}");
             return;
         }
         
         // Extract parameters from JSON
-        std::string host = json_utils::get_string(root, "hostname");
-        int port = json_utils::get_int(root, "port", 3389);
-        std::string username = json_utils::get_string(root, "username");
-        std::string domain = json_utils::get_string(root, "domain");
+        std::string host = json_utils::get_string(root.get(), "hostname");
+        int port = json_utils::get_int(root.get(), "port", 3389);
+        std::string username = json_utils::get_string(root.get(), "username");
+        std::string domain = json_utils::get_string(root.get(), "domain");
         
         // Advanced options
-        bool home_drive = json_utils::get_bool(root, "home_drive");
-        bool clipboard = json_utils::get_bool(root, "clipboard", true);
-        bool cert_tofu = json_utils::get_bool(root, "cert_tofu");
-        bool usb_auto = json_utils::get_bool(root, "usb_auto");
-        bool floatbar = json_utils::get_bool(root, "floatbar");
-        bool dynamic_resolution = json_utils::get_bool(root, "dynamic_resolution");
-        bool network_auto = json_utils::get_bool(root, "network_auto");
-        bool gfx_avc420 = json_utils::get_bool(root, "gfx_avc420");
-        bool compression = json_utils::get_bool(root, "compression");
-        bool audio_pulse = json_utils::get_bool(root, "audio_pulse");
-        bool prevent_session_lock = json_utils::get_bool(root, "prevent_session_lock");
-        bool auto_reconnect = json_utils::get_bool(root, "auto_reconnect");
-        int auto_reconnect_max_retries = json_utils::get_int(root, "auto_reconnect_max_retries", 3);
+        bool home_drive = json_utils::get_bool(root.get(), "home_drive");
+        bool clipboard = json_utils::get_bool(root.get(), "clipboard", true);
+        bool cert_tofu = json_utils::get_bool(root.get(), "cert_tofu");
+        bool usb_auto = json_utils::get_bool(root.get(), "usb_auto");
+        bool floatbar = json_utils::get_bool(root.get(), "floatbar");
+        bool dynamic_resolution = json_utils::get_bool(root.get(), "dynamic_resolution");
+        bool network_auto = json_utils::get_bool(root.get(), "network_auto");
+        bool gfx_avc420 = json_utils::get_bool(root.get(), "gfx_avc420");
+        bool compression = json_utils::get_bool(root.get(), "compression");
+        bool audio_pulse = json_utils::get_bool(root.get(), "audio_pulse");
+        bool prevent_session_lock = json_utils::get_bool(root.get(), "prevent_session_lock");
+        bool auto_reconnect = json_utils::get_bool(root.get(), "auto_reconnect");
+        int auto_reconnect_max_retries = json_utils::get_int(root.get(), "auto_reconnect_max_retries", 3);
         
         // Gateway / AVD options
-        std::string gateway_hostname = json_utils::get_string(root, "gateway_hostname");
-        bool enable_rds_aad_auth = json_utils::get_bool(root, "enable_rds_aad_auth");
-        bool target_is_aad_joined = json_utils::get_bool(root, "target_is_aad_joined");
-        std::string load_balance_info = json_utils::get_string(root, "load_balance_info");
+        std::string gateway_hostname = json_utils::get_string(root.get(), "gateway_hostname");
+        bool enable_rds_aad_auth = json_utils::get_bool(root.get(), "enable_rds_aad_auth");
+        bool target_is_aad_joined = json_utils::get_bool(root.get(), "target_is_aad_joined");
+        std::string load_balance_info = json_utils::get_string(root.get(), "load_balance_info");
         
         // Additional AVD parameters
-        std::string aad_tenant_id = json_utils::get_string(root, "aad_tenant_id");
-        std::string wvd_endpoint_pool = json_utils::get_string(root, "wvd_endpoint_pool");
-        std::string arm_path = json_utils::get_string(root, "arm_path");
-        std::string workspace_id = json_utils::get_string(root, "workspace_id");
-        std::string remote_application_program = json_utils::get_string(root, "remote_application_program");
+        std::string aad_tenant_id = json_utils::get_string(root.get(), "aad_tenant_id");
+        std::string wvd_endpoint_pool = json_utils::get_string(root.get(), "wvd_endpoint_pool");
+        std::string arm_path = json_utils::get_string(root.get(), "arm_path");
+        std::string workspace_id = json_utils::get_string(root.get(), "workspace_id");
+        std::string remote_application_program = json_utils::get_string(root.get(), "remote_application_program");
         
-        // Free the JSON object
-        json_decref(root);
-        
-        std::cout << "[RDPMAN] Initiating RDP connection to " << host << ":" << port << std::endl;
+        LOG_INFO("RDPMAN", "Initiating RDP connection to " << host << ":" << port);
     
         if (host.empty()) {
             e->return_string("{\"success\": false, \"error\": \"Host cannot be empty\"}");
@@ -305,14 +304,14 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
         
         // Log AVD connection info
         if (params.is_avd_connection()) {
-            std::cout << "[RDPMAN] AVD/Dev Box connection detected" << std::endl;
-            std::cout << "[RDPMAN]   Gateway: " << params.gateway_hostname << ":" << params.gateway_port << std::endl;
-            std::cout << "[RDPMAN]   AAD Auth: " << (params.enable_rds_aad_auth ? "enabled" : "disabled") << std::endl;
+            LOG_INFO("RDPMAN", "AVD/Dev Box connection detected");
+            LOG_DEBUG("RDPMAN", "  Gateway: " << params.gateway_hostname << ":" << params.gateway_port);
+            LOG_DEBUG("RDPMAN", "  AAD Auth: " << (params.enable_rds_aad_auth ? "enabled" : "disabled"));
             if (!params.aad_tenant_id.empty()) {
-                std::cout << "[RDPMAN]   AAD Tenant: " << params.aad_tenant_id << std::endl;
+                LOG_DEBUG("RDPMAN", "  AAD Tenant: " << params.aad_tenant_id);
             }
             if (!params.load_balance_info.empty()) {
-                std::cout << "[RDPMAN]   Load Balance: " << params.load_balance_info << std::endl;
+                LOG_DEBUG("RDPMAN", "  Load Balance: " << params.load_balance_info);
             }
         }
         
@@ -328,10 +327,10 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
             e->return_string("{\"success\": false, \"error\": \"" + json_utils::escape_string(error) + "\"}");
         }
     } catch (const std::exception& ex) {
-        std::cerr << "[RDPMAN] Exception in connect_rdp: " << ex.what() << std::endl;
+        LOG_ERROR("RDPMAN", "Exception in connect_rdp: " << ex.what());
         e->return_string("{\"success\": false, \"error\": \"Internal error: " + json_utils::escape_string(ex.what()) + "\"}");
     } catch (...) {
-        std::cerr << "[RDPMAN] Unknown exception in connect_rdp" << std::endl;
+        LOG_ERROR("RDPMAN", "Unknown exception in connect_rdp");
         e->return_string("{\"success\": false, \"error\": \"Unknown internal error\"}");
     }
 }
@@ -339,9 +338,9 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
 void JSHandlers::s_get_connections(webui::window::event* e) {
     if (!s_instance) return;
     
-    std::cout << "[RDPMAN] get_connections called" << std::endl;
+    LOG_DEBUG("RDPMAN", "get_connections called");
     std::string json = s_instance->m_config_manager.get_connections_json();
-    std::cout << "[RDPMAN] Returning " << json.size() << " bytes of JSON" << std::endl;
+    LOG_DEBUG("RDPMAN", "Returning " << json.size() << " bytes of JSON");
     e->return_string(json);
 }
 
@@ -352,78 +351,75 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
         // Get JSON string from JavaScript
         std::string json_str = e->get_string(0);
         
-        std::cout << "[RDPMAN] save_connection called with JSON: " << json_str.substr(0, 100) << "..." << std::endl;
+        LOG_DEBUG("RDPMAN", "save_connection called with JSON: " << json_str.substr(0, 100) << "...");
         
         if (json_str.empty()) {
-            std::cerr << "[RDPMAN] save_connection: Empty JSON" << std::endl;
+            LOG_ERROR("RDPMAN", "save_connection: Empty JSON");
             e->return_bool(false);
             return;
         }
         
         // Parse JSON
         json_error_t error;
-        json_t* root = json_loads(json_str.c_str(), 0, &error);
+        json_utils::JsonPtr root{json_loads(json_str.c_str(), 0, &error)};
         if (!root) {
-            std::cerr << "[RDPMAN] save_connection JSON parse error: " << error.text << std::endl;
+            LOG_ERROR("RDPMAN", "save_connection JSON parse error: " << error.text);
             e->return_bool(false);
             return;
         }
         
         // Build ConnectionProfile from JSON
         ConnectionProfile profile;
-        profile.name = json_utils::get_string(root, "name");
-        profile.folder = json_utils::get_string(root, "folder");
-        profile.hostname = json_utils::get_string(root, "hostname");
-        profile.port = json_utils::get_int(root, "port", 3389);
-        profile.username = json_utils::get_string(root, "username");
-        profile.domain = json_utils::get_string(root, "domain");
+        profile.name = json_utils::get_string(root.get(), "name");
+        profile.folder = json_utils::get_string(root.get(), "folder");
+        profile.hostname = json_utils::get_string(root.get(), "hostname");
+        profile.port = json_utils::get_int(root.get(), "port", 3389);
+        profile.username = json_utils::get_string(root.get(), "username");
+        profile.domain = json_utils::get_string(root.get(), "domain");
         
-        std::cout << "[RDPMAN] save_connection: name='" << profile.name << "' host='" << profile.hostname << "' port=" << profile.port << std::endl;
+        LOG_DEBUG("RDPMAN", "save_connection: name='" << profile.name << "' host='" << profile.hostname << "' port=" << profile.port);
         
         // Advanced options
-        profile.home_drive = json_utils::get_bool(root, "home_drive");
-        profile.clipboard = json_utils::get_bool(root, "clipboard", true);
-        profile.cert_tofu = json_utils::get_bool(root, "cert_tofu");
-        profile.usb_auto = json_utils::get_bool(root, "usb_auto");
-        profile.floatbar = json_utils::get_bool(root, "floatbar");
-        profile.dynamic_resolution = json_utils::get_bool(root, "dynamic_resolution");
-        profile.network_auto = json_utils::get_bool(root, "network_auto");
-        profile.gfx_avc420 = json_utils::get_bool(root, "gfx_avc420");
-        profile.compression = json_utils::get_bool(root, "compression");
-        profile.audio_pulse = json_utils::get_bool(root, "audio_pulse");
-        profile.prevent_session_lock = json_utils::get_bool(root, "prevent_session_lock");
-        profile.auto_reconnect = json_utils::get_bool(root, "auto_reconnect");
-        profile.auto_reconnect_max_retries = json_utils::get_int(root, "auto_reconnect_max_retries", 3);
+        profile.home_drive = json_utils::get_bool(root.get(), "home_drive");
+        profile.clipboard = json_utils::get_bool(root.get(), "clipboard", true);
+        profile.cert_tofu = json_utils::get_bool(root.get(), "cert_tofu");
+        profile.usb_auto = json_utils::get_bool(root.get(), "usb_auto");
+        profile.floatbar = json_utils::get_bool(root.get(), "floatbar");
+        profile.dynamic_resolution = json_utils::get_bool(root.get(), "dynamic_resolution");
+        profile.network_auto = json_utils::get_bool(root.get(), "network_auto");
+        profile.gfx_avc420 = json_utils::get_bool(root.get(), "gfx_avc420");
+        profile.compression = json_utils::get_bool(root.get(), "compression");
+        profile.audio_pulse = json_utils::get_bool(root.get(), "audio_pulse");
+        profile.prevent_session_lock = json_utils::get_bool(root.get(), "prevent_session_lock");
+        profile.auto_reconnect = json_utils::get_bool(root.get(), "auto_reconnect");
+        profile.auto_reconnect_max_retries = json_utils::get_int(root.get(), "auto_reconnect_max_retries", 3);
         if (profile.auto_reconnect_max_retries <= 0) {
             profile.auto_reconnect_max_retries = 3;
         }
         
         // AVD/Dev Box fields
-        profile.remote_desktop_name = json_utils::get_string(root, "remote_desktop_name");
-        profile.wvd_endpoint_pool = json_utils::get_string(root, "wvd_endpoint_pool");
-        profile.workspace_id = json_utils::get_string(root, "workspace_id");
-        profile.arm_path = json_utils::get_string(root, "arm_path");
-        profile.remote_application_program = json_utils::get_string(root, "remote_application_program");
+        profile.remote_desktop_name = json_utils::get_string(root.get(), "remote_desktop_name");
+        profile.wvd_endpoint_pool = json_utils::get_string(root.get(), "wvd_endpoint_pool");
+        profile.workspace_id = json_utils::get_string(root.get(), "workspace_id");
+        profile.arm_path = json_utils::get_string(root.get(), "arm_path");
+        profile.remote_application_program = json_utils::get_string(root.get(), "remote_application_program");
         
         // Gateway / AAD fields
-        profile.gateway_hostname = json_utils::get_string(root, "gateway_hostname");
-        profile.enable_rds_aad_auth = json_utils::get_bool(root, "enable_rds_aad_auth");
-        profile.target_is_aad_joined = json_utils::get_bool(root, "target_is_aad_joined");
-        profile.load_balance_info = json_utils::get_string(root, "load_balance_info");
-        profile.aad_tenant_id = json_utils::get_string(root, "aad_tenant_id");
-        
-        // Free the JSON object
-        json_decref(root);
+        profile.gateway_hostname = json_utils::get_string(root.get(), "gateway_hostname");
+        profile.enable_rds_aad_auth = json_utils::get_bool(root.get(), "enable_rds_aad_auth");
+        profile.target_is_aad_joined = json_utils::get_bool(root.get(), "target_is_aad_joined");
+        profile.load_balance_info = json_utils::get_string(root.get(), "load_balance_info");
+        profile.aad_tenant_id = json_utils::get_string(root.get(), "aad_tenant_id");
         
         bool success = s_instance->m_config_manager.save_connection(profile);
         
-        std::cout << "[RDPMAN] save_connection result: " << (success ? "success" : "failed") << std::endl;
+        LOG_INFO("RDPMAN", "save_connection result: " << (success ? "success" : "failed"));
         e->return_bool(success);
     } catch (const std::exception& ex) {
-        std::cerr << "[RDPMAN] Exception in save_connection: " << ex.what() << std::endl;
+        LOG_ERROR("RDPMAN", "Exception in save_connection: " << ex.what());
         e->return_bool(false);
     } catch (...) {
-        std::cerr << "[RDPMAN] Unknown exception in save_connection" << std::endl;
+        LOG_ERROR("RDPMAN", "Unknown exception in save_connection");
         e->return_bool(false);
     }
 }
@@ -452,7 +448,7 @@ void JSHandlers::s_import_rdp_file(webui::window::event* e) {
     
     std::string content = e->get_string(0);
     
-    std::cout << "[RDPMAN] Importing RDP file content (" << content.size() << " bytes)" << std::endl;
+    LOG_DEBUG("RDPMAN", "Importing RDP file content (" << content.size() << " bytes)");
     
     if (content.empty()) {
         e->return_string("{\"success\": false, \"error\": \"Empty file content\"}");
@@ -532,9 +528,9 @@ void JSHandlers::s_get_database_status(webui::window::event* e) {
     if (!s_instance) return;
 
     const bool is_open = s_instance->m_config_manager.has_open_database();
-    const std::string path = json_utils::escape_string(s_instance->m_config_manager.get_database_path());
-    std::string result = "{\"isOpen\":" + std::string(is_open ? "true" : "false") +
-                        ",\"path\":\"" + path + "\"}";
+    const auto path = json_utils::escape_string(s_instance->m_config_manager.get_database_path());
+    auto result = std::format(R"({{"isOpen":{},"path":"{}"}})",
+                              is_open ? "true" : "false", path);
     e->return_string(result);
 }
 
@@ -635,14 +631,13 @@ void JSHandlers::s_discover_feeds(webui::window::event* e) {
     // Run discovery (blocks until complete - popup + HTTP calls)
     auto result = s_instance->m_feed_discovery.discover_and_import(account_id);
 
-    std::string json = "{\"success\":" + std::string(result.success ? "true" : "false");
-    if (!result.error.empty()) {
-        json += ",\"error\":\"" + json_utils::escape_string(result.error) + "\"";
-    }
-    json += ",\"imported_count\":" + std::to_string(result.imported_count);
-    json += ",\"tenant_count\":" + std::to_string(result.tenant_count);
-    json += ",\"account_id\":\"" + json_utils::escape_string(result.account_id) + "\"";
-    json += ",\"account_display_name\":\"" + json_utils::escape_string(result.account_display_name) + "\"";
-    json += "}";
+    auto json = std::format(
+        R"({{"success":{},{}"imported_count":{},"tenant_count":{},"account_id":"{}","account_display_name":"{}"}})",
+        result.success ? "true" : "false",
+        result.error.empty() ? "" : std::format(R"("error":"{}",)", json_utils::escape_string(result.error)).c_str(),
+        result.imported_count, result.tenant_count,
+        json_utils::escape_string(result.account_id),
+        json_utils::escape_string(result.account_display_name)
+    );
     e->return_string(json);
 }

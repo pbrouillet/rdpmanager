@@ -7,8 +7,7 @@
  * AAD authentication is handled by the separate AADAuthHandler class.
  */
 
-#ifndef DIALOG_MANAGER_HPP
-#define DIALOG_MANAGER_HPP
+#pragma once
 
 #include <webui.hpp>
 #include <mutex>
@@ -18,7 +17,7 @@
 #include <iostream>
 #include <chrono>
 
-#include "rdp_launcher.hpp"
+#include "connection_types.hpp"
 
 /**
  * DialogManager handles certificate and authentication dialogs between FreeRDP and the UI.
@@ -99,4 +98,4 @@ private:
     AuthResponse m_auth_dialog_result;
 };
 
-#endif // DIALOG_MANAGER_HPP
+

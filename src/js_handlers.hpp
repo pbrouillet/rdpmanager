@@ -7,8 +7,7 @@
  * a global instance pointer to access the handlers.
  */
 
-#ifndef JS_HANDLERS_HPP
-#define JS_HANDLERS_HPP
+#pragma once
 
 #include <webui.hpp>
 #include <string>
@@ -84,4 +83,4 @@ private:
     static JSHandlers* s_instance;
 };
 
-#endif // JS_HANDLERS_HPP
+

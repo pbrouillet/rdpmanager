@@ -8,33 +8,34 @@
 #include <webui.hpp>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <array>
 #include <vector>
 #include <cstdlib>
 #include <cstring>
-#include <sys/stat.h>
+#include <filesystem>
 
 #include "gui/main_window.hpp"
 #include "gui/aad_auth_handler.hpp"
+#include "logger.hpp"
+
+namespace fs = std::filesystem;
 
 namespace {
 
 #if defined(__linux__)
 bool is_directory(const char* path) {
-    struct stat st {};
-    return (path != nullptr) && (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
+    return path != nullptr && fs::is_directory(path);
 }
 
 bool has_tls_module(const std::string& module_dir) {
-    const std::array<const char*, 2> modules = {
+    constexpr std::array modules = {
         "libgiognutls.so",
         "libgioopenssl.so",
     };
 
-    for (const char* module_name : modules) {
-        std::string module_path = module_dir + "/" + module_name;
-        struct stat st {};
-        if (stat(module_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+    for (const auto* module_name : modules) {
+        if (fs::is_regular_file(fs::path{module_dir} / module_name)) {
             return true;
         }
     }
@@ -81,8 +82,8 @@ void configure_webview_tls_backend() {
     }
 
     if (tls_dirs.empty()) {
-        std::cerr << "[RDPMAN] WARNING: No GIO TLS backend module found. "
-                     "Install glib-networking to enable HTTPS in embedded WebView." << std::endl;
+        LOG_WARN("RDPMAN", "No GIO TLS backend module found. "
+                     "Install glib-networking to enable HTTPS in embedded WebView.");
         return;
     }
 
@@ -102,12 +103,12 @@ void configure_webview_tls_backend() {
 
     if (updated_extra) {
         setenv("GIO_EXTRA_MODULES", merged_extra.c_str(), 1);
-        std::cout << "[RDPMAN] GIO_EXTRA_MODULES=" << merged_extra << std::endl;
+        LOG_INFO("RDPMAN", "GIO_EXTRA_MODULES=" << merged_extra);
     }
 
     if (!std::getenv("GIO_MODULE_DIR")) {
         setenv("GIO_MODULE_DIR", tls_dirs.front().c_str(), 1);
-        std::cout << "[RDPMAN] GIO_MODULE_DIR=" << tls_dirs.front() << std::endl;
+        LOG_INFO("RDPMAN", "GIO_MODULE_DIR=" << tls_dirs.front());
     }
 }
 #endif
@@ -115,39 +116,44 @@ void configure_webview_tls_backend() {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    std::cout << "============================================" << std::endl;
-    std::cout << "  WebUI RDP Client v0.1.0" << std::endl;
-    std::cout << "  Remote Desktop Interface" << std::endl;
-    std::cout << "============================================" << std::endl;
+    // Parse command line arguments (before logger init so --log-level takes effect)
+    int debug_port = 0;
+    auto console_level = logger::Level::Warn;
+    for (int i = 1; i < argc; i++) {
+        std::string_view arg = argv[i];
+        if (arg.starts_with("--debug-port=")) {
+            try {
+                debug_port = std::stoi(std::string{arg.substr(13)});
+            } catch (...) {
+                std::cerr << "Invalid debug port: " << arg.substr(13) << std::endl;
+            }
+        } else if (arg.starts_with("--log-level=")) {
+            console_level = logger::parse_level(arg.substr(12));
+        } else if (arg == "-USE_MANUAL_CODE_FLOW") {
+            AADAuthHandler::enable_manual_code_flow();
+        } else if (arg == "--aad-dbg") {
+            AADAuthHandler::enable_debug();
+            console_level = logger::Level::Debug;  // --aad-dbg implies debug console
+        }
+    }
+
+    // Initialise logger: file always at Debug, console at requested level
+    logger::Logger::instance().init(console_level);
+
+    LOG_RAW("============================================\n");
+    LOG_RAW("  WebUI RDP Client v0.1.0\n");
+    LOG_RAW("  Remote Desktop Interface\n");
+    LOG_RAW("============================================\n");
 
 #if defined(__linux__)
     configure_webview_tls_backend();
 #endif
     
-    // Parse command line arguments
-    int debug_port = 0;
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg.find("--debug-port=") == 0) {
-            try {
-                debug_port = std::stoi(arg.substr(13));
-            } catch (...) {
-                std::cerr << "[RDPMAN] Invalid debug port: " << arg.substr(13) << std::endl;
-            }
-        } else if (arg == "-USE_MANUAL_CODE_FLOW") {
-            // Enable manual AAD code flow mode
-            AADAuthHandler::enable_manual_code_flow();
-        } else if (arg == "--aad-dbg") {
-            // Enable verbose AAD debug logging (navigations, headers, bodies)
-            AADAuthHandler::enable_debug();
-        }
-    }
-    
     // Create and initialize the main window
     MainWindow main_window(debug_port);
     
     if (!main_window.initialize()) {
-        std::cerr << "[ERROR] Failed to initialize main window" << std::endl;
+        LOG_ERROR("RDPMAN", "Failed to initialize main window");
         return 1;
     }
     
@@ -161,16 +167,16 @@ int main(int argc, char* argv[]) {
 
     // Show the window
     if (!main_window.show()) {
-        std::cerr << "[ERROR] Failed to show main window" << std::endl;
+        LOG_ERROR("RDPMAN", "Failed to show main window");
         return 1;
     }
 
-    std::cout << "[RDPMAN] Systems online. Awaiting your command." << std::endl;
+    LOG_INFO("RDPMAN", "Systems online. Awaiting your command.");
     
     // Wait until the window is closed
     webui::wait();
     
-    std::cout << "[RDPMAN] Shutting down. Goodbye." << std::endl;
+    LOG_INFO("RDPMAN", "Shutting down. Goodbye.");
     
     return 0;
 }

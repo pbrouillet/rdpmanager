@@ -6,6 +6,8 @@
  */
 
 #include "rdp_launcher.hpp"
+#include "utils.hpp"
+#include "logger.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -16,6 +18,7 @@
 #include <cstring>
 #include <chrono>
 #include <cctype>
+#include <format>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -76,82 +79,6 @@ std::string normalize_host_key(std::string host) {
     return host;
 }
 
-std::string base64url_decode(const std::string& input) {
-    std::string converted = input;
-    std::replace(converted.begin(), converted.end(), '-', '+');
-    std::replace(converted.begin(), converted.end(), '_', '/');
-    while ((converted.size() % 4) != 0) {
-        converted.push_back('=');
-    }
-
-    static const std::string kAlphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    std::string output;
-    int val = 0;
-    int valb = -8;
-    for (unsigned char c : converted) {
-        if (std::isspace(c)) {
-            continue;
-        }
-        if (c == '=') {
-            break;
-        }
-        const int idx = static_cast<int>(kAlphabet.find(static_cast<char>(c)));
-        if (idx < 0) {
-            return "";
-        }
-        val = (val << 6) + idx;
-        valb += 6;
-        if (valb >= 0) {
-            output.push_back(static_cast<char>((val >> valb) & 0xFF));
-            valb -= 8;
-        }
-    }
-    return output;
-}
-
-std::optional<int64_t> extract_jwt_expiration_epoch(const std::string& token) {
-    const size_t first_dot = token.find('.');
-    if (first_dot == std::string::npos) {
-        return std::nullopt;
-    }
-    const size_t second_dot = token.find('.', first_dot + 1);
-    if (second_dot == std::string::npos) {
-        return std::nullopt;
-    }
-
-    const std::string payload_b64 = token.substr(first_dot + 1, second_dot - first_dot - 1);
-    const std::string payload = base64url_decode(payload_b64);
-    if (payload.empty()) {
-        return std::nullopt;
-    }
-
-    const std::string needle = "\"exp\":";
-    size_t exp_pos = payload.find(needle);
-    if (exp_pos == std::string::npos) {
-        return std::nullopt;
-    }
-    exp_pos += needle.size();
-    while (exp_pos < payload.size() && std::isspace(static_cast<unsigned char>(payload[exp_pos]))) {
-        exp_pos++;
-    }
-
-    size_t end_pos = exp_pos;
-    while (end_pos < payload.size() && std::isdigit(static_cast<unsigned char>(payload[end_pos]))) {
-        end_pos++;
-    }
-    if (end_pos == exp_pos) {
-        return std::nullopt;
-    }
-
-    try {
-        return std::stoll(payload.substr(exp_pos, end_pos - exp_pos));
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
 } // namespace
 
 // ============================================================================
@@ -209,24 +136,26 @@ uint32_t RDPSession::verify_certificate_callback(freerdp* instance, const char* 
     
     if (!session || !session->m_cert_callback) {
         // No callback set - prompt in console (default behavior)
-        std::cout << "[RDPSession] Certificate verification required (no UI callback set)" << std::endl;
-        std::cout << "  Host: " << (host ? host : "") << ":" << port << std::endl;
-        std::cout << "  CN: " << (common_name ? common_name : "") << std::endl;
-        std::cout << "  Fingerprint: " << (fingerprint ? fingerprint : "") << std::endl;
+        LOG_WARN("RDPSession", "Certificate verification required (no UI callback set)");
+        LOG_WARN("RDPSession", "  Host: " << (host ? host : "") << ":" << port);
+        LOG_WARN("RDPSession", "  CN: " << (common_name ? common_name : ""));
+        LOG_WARN("RDPSession", "  Fingerprint: " << (fingerprint ? fingerprint : ""));
         // Return 0 to reject, as we can't show a dialog
         return 0;
     }
     
-    CertificateInfo info;
-    info.host = host ? host : "";
-    info.port = port;
-    info.common_name = common_name ? common_name : "";
-    info.subject = subject ? subject : "";
-    info.issuer = issuer ? issuer : "";
-    info.fingerprint = fingerprint ? fingerprint : "";
-    info.is_changed = false;
+    CertificateInfo info{
+        .host = host ? host : "",
+        .port = port,
+        .common_name = common_name ? common_name : "",
+        .subject = subject ? subject : "",
+        .issuer = issuer ? issuer : "",
+        .fingerprint = fingerprint ? fingerprint : "",
+        .is_changed = false,
+        .old_fingerprint = {},
+    };
     
-    CertificateAcceptance result = session->m_cert_callback(info);
+    auto result = session->m_cert_callback(info);
     return static_cast<uint32_t>(result);
 }
 
@@ -251,21 +180,22 @@ uint32_t RDPSession::verify_changed_certificate_callback(freerdp* instance, cons
     }
     
     if (!session || !session->m_cert_callback) {
-        std::cout << "[RDPSession] Changed certificate verification required (no UI callback set)" << std::endl;
+        LOG_INFO("RDPSession", "Changed certificate verification required (no UI callback set)");
         return 0;
     }
     
-    CertificateInfo info;
-    info.host = host ? host : "";
-    info.port = port;
-    info.common_name = common_name ? common_name : "";
-    info.subject = subject ? subject : "";
-    info.issuer = issuer ? issuer : "";
-    info.fingerprint = new_fingerprint ? new_fingerprint : "";
-    info.is_changed = true;
-    info.old_fingerprint = old_fingerprint ? old_fingerprint : "";
+    CertificateInfo info{
+        .host = host ? host : "",
+        .port = port,
+        .common_name = common_name ? common_name : "",
+        .subject = subject ? subject : "",
+        .issuer = issuer ? issuer : "",
+        .fingerprint = new_fingerprint ? new_fingerprint : "",
+        .is_changed = true,
+        .old_fingerprint = old_fingerprint ? old_fingerprint : "",
+    };
     
-    CertificateAcceptance result = session->m_cert_callback(info);
+    auto result = session->m_cert_callback(info);
     return static_cast<uint32_t>(result);
 }
 
@@ -282,17 +212,18 @@ int RDPSession::authenticate_callback(freerdp* instance, char** username, char**
     }
     
     if (!session || !session->m_auth_callback) {
-        std::cout << "[RDPSession] Authentication required (no UI callback set)" << std::endl;
+        LOG_INFO("RDPSession", "Authentication required (no UI callback set)");
         return 0;
     }
     
-    AuthRequest request;
-    if (instance->context && instance->context->settings) {
-        request.hostname = freerdp_settings_get_string(instance->context->settings, FreeRDP_ServerHostname);
-    }
-    request.is_gateway = false;
-    request.current_username = (username && *username) ? *username : "";
-    request.current_domain = (domain && *domain) ? *domain : "";
+    AuthRequest request{
+        .hostname = (instance->context && instance->context->settings)
+            ? freerdp_settings_get_string(instance->context->settings, FreeRDP_ServerHostname)
+            : "",
+        .is_gateway = false,
+        .current_username = (username && *username) ? *username : "",
+        .current_domain = (domain && *domain) ? *domain : "",
+    };
     
     AuthResponse response = session->m_auth_callback(request);
     
@@ -330,19 +261,20 @@ int RDPSession::gateway_authenticate_callback(freerdp* instance, char** username
     }
     
     if (!session || !session->m_auth_callback) {
-        std::cout << "[RDPSession] Gateway authentication required (no UI callback set)" << std::endl;
+        LOG_INFO("RDPSession", "Gateway authentication required (no UI callback set)");
         return 0;
     }
     
-    AuthRequest request;
-    if (instance->context && instance->context->settings) {
-        request.hostname = freerdp_settings_get_string(instance->context->settings, FreeRDP_GatewayHostname);
-    }
-    request.is_gateway = true;
-    request.current_username = (username && *username) ? *username : "";
-    request.current_domain = (domain && *domain) ? *domain : "";
+    AuthRequest request{
+        .hostname = (instance->context && instance->context->settings)
+            ? freerdp_settings_get_string(instance->context->settings, FreeRDP_GatewayHostname)
+            : "",
+        .is_gateway = true,
+        .current_username = (username && *username) ? *username : "",
+        .current_domain = (domain && *domain) ? *domain : "",
+    };
     
-    AuthResponse response = session->m_auth_callback(request);
+    auto response = session->m_auth_callback(request);
     
     if (!response.success) {
         return 0;
@@ -407,7 +339,7 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
         redirect_pos = url.find("REDIRECT_URI=");
     }
     if (redirect_pos == std::string::npos) {
-        std::cout << "[RDPSession] replace_msappx_redirect_uri: No redirect_uri parameter found" << std::endl;
+        LOG_DEBUG("RDPSession", "replace_msappx_redirect_uri: No redirect_uri parameter found");
         return url;  // No redirect_uri found
     }
     
@@ -415,8 +347,8 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
     size_t value_start = redirect_pos + 13;  // Length of "redirect_uri="
     std::string remaining = url.substr(value_start);
     
-    std::cout << "[RDPSession] replace_msappx_redirect_uri: Found redirect_uri value starting with: " 
-              << remaining.substr(0, 30) << "..." << std::endl;
+    LOG_DEBUG("RDPSession", "replace_msappx_redirect_uri: Found redirect_uri value starting with: " 
+              << remaining.substr(0, 30) << "...");
     
     // Check for URL-encoded ms-appx-web (various case combinations)
     // ms-appx-web%3a, ms-appx-web%3A, MS-APPX-WEB%3a, etc.
@@ -428,11 +360,11 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
                       remaining_lower.find("ms-appx-web:") == 0);
     
     if (!is_msappx) {
-        std::cout << "[RDPSession] replace_msappx_redirect_uri: Not an ms-appx-web redirect, skipping" << std::endl;
+        LOG_DEBUG("RDPSession", "replace_msappx_redirect_uri: Not an ms-appx-web redirect, skipping");
         return url;  // Not an ms-appx-web redirect
     }
     
-    std::cout << "[RDPSession] replace_msappx_redirect_uri: Detected ms-appx-web redirect, replacing..." << std::endl;
+    LOG_DEBUG("RDPSession", "replace_msappx_redirect_uri: Detected ms-appx-web redirect, replacing...");
     
     // Find the end of the redirect_uri value (next & or end of string)
     size_t value_end = remaining.find('&');
@@ -446,7 +378,7 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
         result += remaining.substr(value_end);  // Append remaining parameters
     }
     
-    std::cout << "[RDPSession] replace_msappx_redirect_uri: Replacement complete" << std::endl;
+    LOG_DEBUG("RDPSession", "replace_msappx_redirect_uri: Replacement complete");
     
     return result;
 }
@@ -457,13 +389,13 @@ std::string RDPSession::replace_msappx_redirect_uri(const std::string& url) {
  */
 static std::string replace_redirect_uri_in_request(const std::string& request, const std::string& actual_uri) {
     if (actual_uri.empty()) {
-        std::cout << "[RDPSession] replace_redirect_uri: no actual_redirect_uri, returning as-is" << std::endl;
+        LOG_INFO("RDPSession", "replace_redirect_uri: no actual_redirect_uri, returning as-is");
         return request;
     }
 
     size_t pos = request.find("redirect_uri=");
     if (pos == std::string::npos) {
-        std::cout << "[RDPSession] replace_redirect_uri: no redirect_uri param found" << std::endl;
+        LOG_INFO("RDPSession", "replace_redirect_uri: no redirect_uri param found");
         return request;
     }
 
@@ -475,13 +407,12 @@ static std::string replace_redirect_uri_in_request(const std::string& request, c
 
     // URL-encode the actual redirect URI for the form body
     std::string encoded_uri;
-    for (unsigned char c : actual_uri) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+    for (auto c : actual_uri) {
+        auto uc = static_cast<unsigned char>(c);
+        if (isalnum(uc) || uc == '-' || uc == '_' || uc == '.' || uc == '~') {
             encoded_uri += c;
         } else {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%%%02X", c);
-            encoded_uri += buf;
+            encoded_uri += std::format("%{:02X}", uc);
         }
     }
 
@@ -490,7 +421,7 @@ static std::string replace_redirect_uri_in_request(const std::string& request, c
         result += request.substr(value_end);
     }
 
-    std::cout << "[RDPSession] replace_redirect_uri: replaced with " << actual_uri << std::endl;
+    LOG_INFO("RDPSession", "replace_redirect_uri: replaced with " << actual_uri);
     return result;
 }
 
@@ -511,14 +442,14 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     }
 
     if (!session->m_aad_callback && !session->m_token_cache_lookup_callback) {
-        std::cout << "[RDPSession] AAD authentication required (no UI callback set)" << std::endl;
-        std::cout << "[RDPSession] Token type: " << tokenType << ", count: " << count << std::endl;
+        LOG_INFO("RDPSession", "AAD authentication required (no UI callback set)");
+        LOG_INFO("RDPSession", "Token type: " << tokenType << ", count: " << count);
         return FALSE;
     }
     
     rdpClientContext* cctx = reinterpret_cast<rdpClientContext*>(instance->context);
     if (!cctx) {
-        std::cerr << "[RDPSession] No client context available for AAD" << std::endl;
+        LOG_ERROR("RDPSession", "No client context available for AAD");
         return FALSE;
     }
     
@@ -553,8 +484,8 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
         if (cached_token.has_value() && !cached_token->empty()) {
             *token = strdup(cached_token->c_str());
             if (*token) {
-                std::cout << "[RDPSession] Using cached AAD token for " << cache_kind
-                          << " host " << cache_hostname << std::endl;
+                LOG_INFO("RDPSession", "Using cached AAD token for " << cache_kind
+                          << " host " << cache_hostname);
                 va_end(ap);
                 return TRUE;
             }
@@ -563,7 +494,7 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     
     switch (aadTokenType) {
         case ACCESS_TOKEN_TYPE_AAD: {
-            request.type = AADAuthRequest::RDS_AAD;
+            request.type = AADAuthRequest::Type::RDS_AAD;
             if (count >= 2) {
                 const char* scope_arg = va_arg(ap, const char*);
                 const char* req_cnf_arg = va_arg(ap, const char*);
@@ -577,7 +508,7 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AUTH_REQUEST, 
                                                         scope.c_str());
             if (auth_url) {
-                std::cout << "[RDPSession] RDS_AAD auth_url: " << auth_url << std::endl;
+                LOG_INFO("RDPSession", "RDS_AAD auth_url: " << auth_url);
                 // Pass the raw URL to the auth handler — it will rewrite the redirect_uri
                 // to localhost so it can intercept the callback
                 request.auth_url = auth_url;
@@ -586,7 +517,7 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             break;
         }
         case ACCESS_TOKEN_TYPE_AVD: {
-            request.type = AADAuthRequest::AVD;
+            request.type = AADAuthRequest::Type::AVD;
             
             // Debug: Print AVD-related settings
             rdpSettings* settings = instance->context->settings;
@@ -594,22 +525,22 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             const char* avd_client_id = freerdp_settings_get_string(settings, FreeRDP_GatewayAvdClientID);
             const char* avd_tenant = freerdp_settings_get_string(settings, FreeRDP_GatewayAvdAadtenantid);
             const char* azure_ad = freerdp_settings_get_string(settings, FreeRDP_GatewayAzureActiveDirectory);
-            std::cout << "[RDPSession] AVD Debug Settings:" << std::endl;
-            std::cout << "[RDPSession]   GatewayAvdScope: " << (avd_scope ? avd_scope : "(null)") << std::endl;
-            std::cout << "[RDPSession]   GatewayAvdClientID: " << (avd_client_id ? avd_client_id : "(null)") << std::endl;
-            std::cout << "[RDPSession]   GatewayAvdAadtenantid: " << (avd_tenant ? avd_tenant : "(null)") << std::endl;
-            std::cout << "[RDPSession]   GatewayAzureActiveDirectory: " << (azure_ad ? azure_ad : "(null)") << std::endl;
+            LOG_INFO("RDPSession", "AVD Debug Settings:");
+            LOG_INFO("RDPSession", "  GatewayAvdScope: " << (avd_scope ? avd_scope : "(null)"));
+            LOG_INFO("RDPSession", "  GatewayAvdClientID: " << (avd_client_id ? avd_client_id : "(null)"));
+            LOG_INFO("RDPSession", "  GatewayAvdAadtenantid: " << (avd_tenant ? avd_tenant : "(null)"));
+            LOG_INFO("RDPSession", "  GatewayAzureActiveDirectory: " << (azure_ad ? azure_ad : "(null)"));
             
             // Get the AVD authorization URL
             char* auth_url = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_AUTH_REQUEST);
             if (auth_url) {
-                std::cout << "[RDPSession]   Generated auth_url: " << auth_url << std::endl;
+                LOG_INFO("RDPSession", "  Generated auth_url: " << auth_url);
                 // Pass the raw URL to the auth handler — it will rewrite the redirect_uri
                 // to localhost so it can intercept the callback
                 request.auth_url = auth_url;
                 free(auth_url);
             } else {
-                std::cerr << "[RDPSession]   Failed to generate auth URL - freerdp_client_get_aad_url returned NULL" << std::endl;
+                LOG_ERROR("RDPSession", "  Failed to generate auth URL - freerdp_client_get_aad_url returned NULL");
                 
                 // Try to manually construct the URL as a fallback
                 if (avd_scope && avd_client_id) {
@@ -624,52 +555,52 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
                     // Use native client redirect URI for AVD authentication
                     fallback_url += "&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient";
                     request.auth_url = fallback_url;
-                    std::cout << "[RDPSession]   Using fallback auth_url: " << fallback_url << std::endl;
+                    LOG_INFO("RDPSession", "  Using fallback auth_url: " << fallback_url);
                 }
             }
             break;
         }
         default:
             va_end(ap);
-            std::cerr << "[RDPSession] Unknown AAD token type: " << tokenType << std::endl;
+            LOG_ERROR("RDPSession", "Unknown AAD token type: " << tokenType);
             return FALSE;
     }
     va_end(ap);
     
     if (request.auth_url.empty()) {
-        std::cerr << "[RDPSession] Failed to generate AAD auth URL" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to generate AAD auth URL");
         return FALSE;
     }
 
     if (!session->m_aad_callback) {
-        std::cerr << "[RDPSession] No cached AAD token and no interactive AAD callback available" << std::endl;
+        LOG_ERROR("RDPSession", "No cached AAD token and no interactive AAD callback available");
         return FALSE;
     }
     
-    std::cout << "[RDPSession] AAD authentication required" << std::endl;
-    std::cout << "[RDPSession]   Type: " << (request.type == AADAuthRequest::RDS_AAD ? "RDS_AAD" : "AVD") << std::endl;
-    std::cout << "[RDPSession]   Auth URL: " << request.auth_url << std::endl;
+    LOG_INFO("RDPSession", "AAD authentication required");
+    LOG_INFO("RDPSession", "  Type: " << (request.type == AADAuthRequest::Type::RDS_AAD ? "RDS_AAD" : "AVD"));
+    LOG_INFO("RDPSession", "  Auth URL: " << request.auth_url);
     
     // Call the UI callback to handle the OAuth flow
     AADAuthResponse response = session->m_aad_callback(request);
     
     if (!response.success || response.redirect_url.empty()) {
-        std::cout << "[RDPSession] AAD authentication cancelled or failed" << std::endl;
+        LOG_INFO("RDPSession", "AAD authentication cancelled or failed");
         return FALSE;
     }
     
-    std::cout << "[RDPSession] AAD authentication: received redirect URL" << std::endl;
-    std::cout << "[RDPSession]   Redirect URL: " << response.redirect_url << std::endl;
-    std::cout << "[RDPSession]   Actual redirect_uri used: " << response.actual_redirect_uri << std::endl;
+    LOG_INFO("RDPSession", "AAD authentication: received redirect URL");
+    LOG_INFO("RDPSession", "  Redirect URL: " << response.redirect_url);
+    LOG_INFO("RDPSession", "  Actual redirect_uri used: " << response.actual_redirect_uri);
     
     // Extract authorization code from redirect URL
     std::string code = extract_code_from_url(response.redirect_url);
     if (code.empty()) {
-        std::cerr << "[RDPSession] Failed to extract authorization code from redirect URL" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to extract authorization code from redirect URL");
         return FALSE;
     }
     
-    std::cout << "[RDPSession] AAD authentication: extracted authorization code" << std::endl;
+    LOG_INFO("RDPSession", "AAD authentication: extracted authorization code");
     
     // Build token request URL and exchange code for token
     char* token_request_raw = nullptr;
@@ -679,11 +610,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_TOKEN_REQUEST,
                                                        scope.c_str(), code.c_str(), req_cnf.c_str());
             if (token_request_raw) {
-                std::cout << "[RDPSession] RDS_AAD Token request (original): " << token_request_raw << std::endl;
+                LOG_INFO("RDPSession", "RDS_AAD Token request (original): " << token_request_raw);
                 // The token request redirect_uri must match the one used in the auth request.
                 // FreeRDP builds it with the original URI (ms-appx-web), but we used localhost.
                 token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
-                std::cout << "[RDPSession] RDS_AAD Token request (final): " << token_request << std::endl;
+                LOG_INFO("RDPSession", "RDS_AAD Token request (final): " << token_request);
                 free(token_request_raw);
             }
             break;
@@ -691,9 +622,9 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_TOKEN_REQUEST,
                                                        code.c_str());
             if (token_request_raw) {
-                std::cout << "[RDPSession] AVD Token request (original): " << token_request_raw << std::endl;
+                LOG_INFO("RDPSession", "AVD Token request (original): " << token_request_raw);
                 token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
-                std::cout << "[RDPSession] AVD Token request (final): " << token_request << std::endl;
+                LOG_INFO("RDPSession", "AVD Token request (final): " << token_request);
                 free(token_request_raw);
             }
             break;
@@ -702,11 +633,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     }
     
     if (token_request.empty()) {
-        std::cerr << "[RDPSession] Failed to build token request" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to build token request");
         return FALSE;
     }
     
-    std::cout << "[RDPSession] AAD authentication: exchanging code for token..." << std::endl;
+    LOG_INFO("RDPSession", "AAD authentication: exchanging code for token...");
     
     // Ensure OpenSSL is initialized before making HTTPS requests
     winpr_InitializeSSL(WINPR_SSL_INIT_DEFAULT);
@@ -715,12 +646,12 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     const char* token_ep = freerdp_utils_aad_get_wellknown_string(
         instance->context, AAD_WELLKNOWN_token_endpoint);
     if (!token_ep) {
-        std::cerr << "[RDPSession] AAD: well-known token_endpoint is NULL — AAD module may not be initialized" << std::endl;
-        std::cerr << "[RDPSession] AAD: context=" << (void*)instance->context
-                  << " rdp=" << (void*)instance->context->rdp << std::endl;
+        LOG_ERROR("RDPSession", "AAD: well-known token_endpoint is NULL — AAD module may not be initialized");
+        LOG_DEBUG("RDPSession", "AAD: context=" << (void*)instance->context
+                  << " rdp=" << (void*)instance->context->rdp);
         return FALSE;
     }
-    std::cout << "[RDPSession] AAD: token_endpoint = " << token_ep << std::endl;
+    LOG_DEBUG("RDPSession", "AAD: token_endpoint = " << token_ep);
     
     // Exchange code for token using FreeRDP's HTTP client
     char* token_request_cstr = strdup(token_request.c_str());
@@ -728,23 +659,23 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     free(token_request_cstr);
     
     if (result) {
-        std::cout << "[RDPSession] AAD authentication: successfully obtained access token" << std::endl;
+        LOG_INFO("RDPSession", "AAD authentication: successfully obtained access token");
         if (*token) {
             size_t tlen = strlen(*token);
-            std::cerr << "[AAD-TOKEN] type=" << tokenType
+            LOG_DEBUG("RDPSession", "AAD-TOKEN type=" << tokenType
                       << " len=" << tlen
                       << " first80=" << std::string(*token, std::min(tlen, (size_t)80))
-                      << "..." << std::endl;
+                      << "...");
 
             if (session->m_token_cache_store_callback && !cache_hostname.empty()) {
-                const auto expires_at = extract_jwt_expiration_epoch(*token);
+                const auto expires_at = utils::jwt_extract_expiration(*token);
                 if (expires_at.has_value()) {
                     session->m_token_cache_store_callback(cache_hostname, cache_kind, *token, *expires_at);
                 }
             }
         }
     } else {
-        std::cerr << "[RDPSession] AAD authentication: failed to exchange code for token" << std::endl;
+        LOG_ERROR("RDPSession", "AAD authentication: failed to exchange code for token");
     }
     
     return result;
@@ -770,7 +701,7 @@ void RDPSession::install_callbacks(freerdp* instance) {
     // Install AAD access token callback for Azure AD authentication
     instance->GetAccessToken = reinterpret_cast<pGetAccessToken>(get_access_token_callback);
     
-    std::cout << "[RDPSession] Installed custom callbacks for certificate, authentication, and AAD" << std::endl;
+    LOG_INFO("RDPSession", "Installed custom callbacks for certificate, authentication, and AAD");
 }
 
 bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
@@ -778,7 +709,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     
     // Server address and port
     if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, m_params.hostname.c_str())) {
-        std::cerr << "[ERROR] Failed to set ServerHostname" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to set ServerHostname");
         return false;
     }
     freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, m_params.port);
@@ -822,7 +753,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     if (m_params.enable_rds_aad_auth || m_params.target_is_aad_joined) {
         // Enable AAD authentication
         freerdp_settings_set_bool(settings, FreeRDP_AadSecurity, true);
-        std::cout << "[RDPSession] AAD authentication enabled" << std::endl;
+        LOG_INFO("RDPSession", "AAD authentication enabled");
     } else {
         // Disable Kerberos for workgroup machines - the NTLM fallback doesn't work reliably
         // when Kerberos credential acquisition fails with "Cannot find KDC" errors.
@@ -845,7 +776,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         if (m_params.gateway_use_http_transport || m_params.is_avd_connection()) {
             freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpTransport, true);
             freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpUseWebsockets, true);
-            std::cout << "[RDPSession] Gateway HTTP transport enabled for AVD connection" << std::endl;
+            LOG_DEBUG("RDPSession", "Gateway HTTP transport enabled for AVD connection");
         }
         
         // Gateway credentials source
@@ -854,7 +785,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         // Enable ARM transport for AVD
         if (m_params.is_avd_connection()) {
             freerdp_settings_set_bool(settings, FreeRDP_GatewayArmTransport, true);
-            std::cout << "[RDPSession] Gateway ARM transport enabled for AVD" << std::endl;
+            LOG_INFO("RDPSession", "Gateway ARM transport enabled for AVD");
         }
     }
     
@@ -866,7 +797,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         freerdp_settings_set_pointer_len(settings, FreeRDP_LoadBalanceInfo, 
                                          m_params.load_balance_info.c_str(),
                                          m_params.load_balance_info.size());
-        std::cout << "[RDPSession] Load balance info set: " << m_params.load_balance_info << std::endl;
+        LOG_INFO("RDPSession", "Load balance info set: " << m_params.load_balance_info);
     }
     
     // AAD Tenant ID for Azure authentication
@@ -877,7 +808,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         if (m_params.aad_tenant_id != "common") {
             freerdp_settings_set_bool(settings, FreeRDP_GatewayAvdUseTenantid, true);
         }
-        std::cout << "[RDPSession] AAD Tenant ID set: " << m_params.aad_tenant_id << std::endl;
+        LOG_INFO("RDPSession", "AAD Tenant ID set: " << m_params.aad_tenant_id);
     }
     
     // Use nativeclient redirect URI format for AAD authentication (cross-platform support)
@@ -895,7 +826,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     // So we use a format that ignores the arguments
     freerdp_settings_set_string(settings, FreeRDP_GatewayAvdAccessAadFormat,
                                 "https%%3A%%2F%%2Flogin.microsoftonline.com%%2Fcommon%%2Foauth2%%2Fnativeclient");
-    std::cout << "[RDPSession] Using nativeclient redirect URI for AAD authentication" << std::endl;
+    LOG_INFO("RDPSession", "Using nativeclient redirect URI for AAD authentication");
     
     // AVD-specific settings
     if (!m_params.arm_path.empty()) {
@@ -907,7 +838,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     if (!m_params.workspace_id.empty()) {
         // workspace_id is an AVD-specific field not directly consumed by FreeRDP core.
         // It's used for hub discovery and diagnostics, not for connection setup.
-        std::cout << "[RDPSession] Workspace ID: " << m_params.workspace_id << std::endl;
+        LOG_INFO("RDPSession", "Workspace ID: " << m_params.workspace_id);
     }
     
     // Remote application program (for RemoteApp connections or AVD ARM transport)
@@ -915,7 +846,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
     // RemoteApplicationMode should NOT be set for desktop sessions (remoteapplicationmode:i:0)
     if (!m_params.remote_application_program.empty()) {
         freerdp_settings_set_string(settings, FreeRDP_RemoteApplicationProgram, m_params.remote_application_program.c_str());
-        std::cout << "[RDPSession] RemoteApplicationProgram set: " << m_params.remote_application_program << std::endl;
+        LOG_INFO("RDPSession", "RemoteApplicationProgram set: " << m_params.remote_application_program);
     }
     
     // ========================================================================
@@ -1041,7 +972,7 @@ bool RDPSession::apply_settings_to_context(rdpSettings* settings) const {
         }
         freerdp_settings_set_uint32(settings, FreeRDP_AutoReconnectMaxRetries, 
                                     static_cast<uint32_t>(max_retries));
-        std::cout << "[RDPSession] Auto-reconnect enabled (max retries: " << max_retries << ")" << std::endl;
+        LOG_INFO("RDPSession", "Auto-reconnect enabled (max retries: " << max_retries << ")");
     }
     
     return true;
@@ -1072,7 +1003,7 @@ void RDPSession::session_thread_func() {
     clientEntryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
     
     if (RdpClientEntry(&clientEntryPoints) != 0) {
-        std::cerr << "[ERROR] Failed to initialize FreeRDP client entry points" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to initialize FreeRDP client entry points");
         m_state = RDPConnectionState::Error;
         m_running = false;
         return;
@@ -1081,7 +1012,7 @@ void RDPSession::session_thread_func() {
     // Create client context
     context = freerdp_client_context_new(&clientEntryPoints);
     if (!context) {
-        std::cerr << "[ERROR] Failed to create FreeRDP client context" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to create FreeRDP client context");
         m_state = RDPConnectionState::Error;
         m_running = false;
         return;
@@ -1093,7 +1024,7 @@ void RDPSession::session_thread_func() {
     // Apply connection parameters to settings
     rdpSettings* settings = context->settings;
     if (!apply_settings_to_context(settings)) {
-        std::cerr << "[ERROR] Failed to apply RDP settings" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to apply RDP settings");
         freerdp_client_context_free(context);
         m_context = nullptr;
         m_state = RDPConnectionState::Error;
@@ -1104,11 +1035,11 @@ void RDPSession::session_thread_func() {
     // Install our custom callbacks for certificate verification and authentication
     install_callbacks(context->instance);
     
-    std::cout << "[RDPSession] Starting FreeRDP X11 client for " << m_params.hostname << std::endl;
+    LOG_INFO("RDPSession", "Starting FreeRDP X11 client for " << m_params.hostname);
     
     // Start the client (this spawns the X11 window)
     if (freerdp_client_start(context) != 0) {
-        std::cerr << "[ERROR] Failed to start FreeRDP client" << std::endl;
+        LOG_ERROR("RDPSession", "Failed to start FreeRDP client");
         // Remove from global session map before cleanup
         if (context->instance) {
             std::lock_guard<std::mutex> lock(g_session_map_mutex);
@@ -1156,7 +1087,7 @@ void RDPSession::session_thread_func() {
 void RDPSession::stop() {
     // Stop the FreeRDP client if context is valid and still running
     if (m_running && m_context) {
-        std::cout << "[RDPSession] Stopping FreeRDP client session" << std::endl;
+        LOG_INFO("RDPSession", "Stopping FreeRDP client session");
         freerdp_client_stop(static_cast<rdpContext*>(m_context));
     }
     
@@ -1179,8 +1110,8 @@ RDPConnectionState RDPSession::get_state() const {
 // ============================================================================
 
 RDPLauncher::RDPLauncher() {
-    std::cout << "[RDPLauncher] Initialized (using FreeRDP library API). Version: " 
-              << get_freerdp_version() << std::endl;
+    LOG_INFO("RDPLauncher", "Initialized (using FreeRDP library API). Version: " 
+              << get_freerdp_version());
 }
 
 RDPLauncher::~RDPLauncher() {
@@ -1190,8 +1121,8 @@ RDPLauncher::~RDPLauncher() {
 bool RDPLauncher::launch(const RDPConnectionParams& params) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    std::cout << "[RDPLauncher] Launching RDP session to: " << params.hostname 
-              << ":" << params.port << std::endl;
+    LOG_INFO("RDPLauncher", "Launching RDP session to: " << params.hostname 
+              << ":" << params.port);
     
     // Clean up finished sessions
     cleanup_sessions();

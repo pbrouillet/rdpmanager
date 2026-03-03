@@ -27,3 +27,9 @@ option('enable_audio',
   value: true,
   description: 'Enable audio redirection in RDP sessions'
 )
+
+option('embed_ui',
+  type: 'boolean',
+  value: false,
+  description: 'Embed UI assets into the executable via WebUI VFS (single-binary deployment)'
+)

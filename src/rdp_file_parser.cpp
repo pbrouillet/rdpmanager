@@ -5,17 +5,113 @@
  */
 
 #include "rdp_file_parser.hpp"
+#include "json_utils.hpp"
+#include "logger.hpp"
 
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <iostream>
 #include <cctype>
+#include <functional>
+#include <unordered_map>
+#include <format>
 
-std::optional<RDPFileData> RDPFileParser::parse_file(const std::string& filepath) {
-    std::ifstream file(filepath);
+// ============================================================================
+// Table-driven parser: maps lowercase key → setter on RDPFileData
+// ============================================================================
+
+namespace {
+
+using Setter = std::function<void(RDPFileData&, const std::string&)>;
+
+// Helper: parse string with unescaping
+Setter str_setter(std::string RDPFileData::* field) {
+    return [field](RDPFileData& d, const std::string& v) { d.*field = v; };
+}
+
+// Helper: parse "0"/"1" into bool
+Setter bool_setter(bool RDPFileData::* field) {
+    return [field](RDPFileData& d, const std::string& v) { d.*field = (v == "1"); };
+}
+
+// Helper: parse integer with safe fallback
+Setter int_setter(int RDPFileData::* field) {
+    return [field](RDPFileData& d, const std::string& v) {
+        try { d.*field = std::stoi(v); }
+        catch (...) { /* keep default */ }
+    };
+}
+
+const std::unordered_map<std::string, Setter>& rdp_key_map() {
+    static const std::unordered_map<std::string, Setter> map = {
+        // Basic connection
+        {"full address",              str_setter(&RDPFileData::full_address)},
+        {"alternate full address",    str_setter(&RDPFileData::alternate_full_address)},
+        {"server port",               int_setter(&RDPFileData::server_port)},
+        {"username",                  str_setter(&RDPFileData::username)},
+        {"domain",                    str_setter(&RDPFileData::domain)},
+        // Authentication
+        {"prompt for credentials",    bool_setter(&RDPFileData::prompt_for_credentials)},
+        {"promptcredentialonce",      bool_setter(&RDPFileData::prompt_credential_once)},
+        {"authentication level",      int_setter(&RDPFileData::authentication_level)},
+        // Azure AD
+        {"targetisaadjoined",         bool_setter(&RDPFileData::target_is_aad_joined)},
+        {"enablerdsaadauth",          bool_setter(&RDPFileData::enable_rds_aad_auth)},
+        {"aadtenantid",               str_setter(&RDPFileData::aad_tenant_id)},
+        // Gateway
+        {"gatewayhostname",           str_setter(&RDPFileData::gateway_hostname)},
+        {"gatewayusagemethod",        int_setter(&RDPFileData::gateway_usage_method)},
+        {"gatewayprofileusagemethod",  int_setter(&RDPFileData::gateway_profile_usage_method)},
+        {"gatewaycredentialssource",   int_setter(&RDPFileData::gateway_credentials_source)},
+        {"gatewaybrokeringtype",       int_setter(&RDPFileData::gateway_brokering_type)},
+        // AVD / WVD
+        {"loadbalanceinfo",           str_setter(&RDPFileData::load_balance_info)},
+        {"wvd endpoint pool",         str_setter(&RDPFileData::wvd_endpoint_pool)},
+        {"armpath",                   str_setter(&RDPFileData::arm_path)},
+        {"workspace id",             str_setter(&RDPFileData::workspace_id)},
+        {"resourceprovider",          str_setter(&RDPFileData::resource_provider)},
+        {"geo",                       str_setter(&RDPFileData::geo)},
+        {"diagnosticserviceurl",      str_setter(&RDPFileData::diagnostic_service_url)},
+        {"hubdiscoverygeourl",        str_setter(&RDPFileData::hub_discovery_geo_url)},
+        {"activityhint",              str_setter(&RDPFileData::activity_hint)},
+        // Remote app
+        {"remoteapplicationprogram",  str_setter(&RDPFileData::remote_application_program)},
+        {"remotedesktopname",         str_setter(&RDPFileData::remote_desktop_name)},
+        {"remoteapplicationmode",     int_setter(&RDPFileData::remote_application_mode)},
+        // Display
+        {"desktopwidth",              int_setter(&RDPFileData::desktop_width)},
+        {"desktopheight",             int_setter(&RDPFileData::desktop_height)},
+        {"screen mode id",           int_setter(&RDPFileData::screen_mode_id)},
+        {"smart sizing",             bool_setter(&RDPFileData::smart_sizing)},
+        {"dynamic resolution",       bool_setter(&RDPFileData::dynamic_resolution)},
+        {"singlemoninwindowedmode",   int_setter(&RDPFileData::single_mon_in_windowed_mode)},
+        // Redirection
+        {"redirectclipboard",         bool_setter(&RDPFileData::redirect_clipboard)},
+        {"redirectprinters",          bool_setter(&RDPFileData::redirect_printers)},
+        {"redirectsmartcards",        bool_setter(&RDPFileData::redirect_smart_cards)},
+        {"redirectcomports",          bool_setter(&RDPFileData::redirect_com_ports)},
+        {"redirectlocation",          bool_setter(&RDPFileData::redirect_location)},
+        {"drivestoredirect",          str_setter(&RDPFileData::drives_to_redirect)},
+        {"devicestoredirect",         str_setter(&RDPFileData::devices_to_redirect)},
+        {"camerastoredirect",         str_setter(&RDPFileData::cameras_to_redirect)},
+        {"usbdevicestoredirect",      str_setter(&RDPFileData::usb_devices_to_redirect)},
+        // Audio
+        {"audiomode",                 int_setter(&RDPFileData::audio_mode)},
+        {"audiocapturemode",          int_setter(&RDPFileData::audio_capture_mode)},
+        // Security
+        {"signscope",                 str_setter(&RDPFileData::sign_scope)},
+        {"signature",                 str_setter(&RDPFileData::signature)},
+    };
+    return map;
+}
+
+} // namespace
+
+std::optional<RDPFileData> RDPFileParser::parse_file(std::string_view filepath) {
+    std::ifstream file(std::string{filepath});
     if (!file.is_open()) {
-        std::cerr << "[RDPFileParser] Failed to open file: " << filepath << std::endl;
+        LOG_ERROR("RDPFileParser", "Failed to open file: " << filepath);
         return std::nullopt;
     }
     
@@ -28,10 +124,10 @@ std::optional<RDPFileData> RDPFileParser::parse_file(const std::string& filepath
     return result;
 }
 
-std::optional<RDPFileData> RDPFileParser::parse_content(const std::string& content) {
+std::optional<RDPFileData> RDPFileParser::parse_content(std::string_view content) {
     RDPFileData data;
     
-    std::istringstream stream(content);
+    std::istringstream stream{std::string{content}};
     std::string line;
     
     while (std::getline(stream, line)) {
@@ -55,161 +151,25 @@ std::optional<RDPFileData> RDPFileParser::parse_content(const std::string& conte
         std::string key_lower = key;
         std::transform(key_lower.begin(), key_lower.end(), key_lower.begin(), ::tolower);
         
-        // Parse based on key
-        if (key_lower == "full address") {
-            data.full_address = unescape_value(value);
-        }
-        else if (key_lower == "alternate full address") {
-            data.alternate_full_address = unescape_value(value);
-        }
-        else if (key_lower == "server port") {
-            data.server_port = std::stoi(value);
-        }
-        else if (key_lower == "username") {
-            data.username = unescape_value(value);
-        }
-        else if (key_lower == "domain") {
-            data.domain = unescape_value(value);
-        }
-        else if (key_lower == "prompt for credentials") {
-            data.prompt_for_credentials = (value == "1");
-        }
-        else if (key_lower == "promptcredentialonce") {
-            data.prompt_credential_once = (value == "1");
-        }
-        else if (key_lower == "authentication level") {
-            data.authentication_level = std::stoi(value);
-        }
-        else if (key_lower == "targetisaadjoined") {
-            data.target_is_aad_joined = (value == "1");
-        }
-        else if (key_lower == "enablerdsaadauth") {
-            data.enable_rds_aad_auth = (value == "1");
-        }
-        else if (key_lower == "aadtenantid") {
-            data.aad_tenant_id = unescape_value(value);
-        }
-        else if (key_lower == "gatewayhostname") {
-            data.gateway_hostname = unescape_value(value);
-        }
-        else if (key_lower == "gatewayusagemethod") {
-            data.gateway_usage_method = std::stoi(value);
-        }
-        else if (key_lower == "gatewayprofileusagemethod") {
-            data.gateway_profile_usage_method = std::stoi(value);
-        }
-        else if (key_lower == "gatewaycredentialssource") {
-            data.gateway_credentials_source = std::stoi(value);
-        }
-        else if (key_lower == "gatewaybrokeringtype") {
-            data.gateway_brokering_type = std::stoi(value);
-        }
-        else if (key_lower == "loadbalanceinfo") {
-            data.load_balance_info = unescape_value(value);
-        }
-        else if (key_lower == "wvd endpoint pool") {
-            data.wvd_endpoint_pool = unescape_value(value);
-        }
-        else if (key_lower == "armpath") {
-            data.arm_path = unescape_value(value);
-        }
-        else if (key_lower == "workspace id") {
-            data.workspace_id = unescape_value(value);
-        }
-        else if (key_lower == "resourceprovider") {
-            data.resource_provider = unescape_value(value);
-        }
-        else if (key_lower == "geo") {
-            data.geo = unescape_value(value);
-        }
-        else if (key_lower == "diagnosticserviceurl") {
-            data.diagnostic_service_url = unescape_value(value);
-        }
-        else if (key_lower == "hubdiscoverygeourl") {
-            data.hub_discovery_geo_url = unescape_value(value);
-        }
-        else if (key_lower == "activityhint") {
-            data.activity_hint = unescape_value(value);
-        }
-        else if (key_lower == "remoteapplicationprogram") {
-            data.remote_application_program = unescape_value(value);
-        }
-        else if (key_lower == "remotedesktopname") {
-            data.remote_desktop_name = unescape_value(value);
-        }
-        else if (key_lower == "remoteapplicationmode") {
-            data.remote_application_mode = std::stoi(value);
-        }
-        else if (key_lower == "desktopwidth") {
-            data.desktop_width = std::stoi(value);
-        }
-        else if (key_lower == "desktopheight") {
-            data.desktop_height = std::stoi(value);
-        }
-        else if (key_lower == "screen mode id") {
-            data.screen_mode_id = std::stoi(value);
-        }
-        else if (key_lower == "smart sizing") {
-            data.smart_sizing = (value == "1");
-        }
-        else if (key_lower == "dynamic resolution") {
-            data.dynamic_resolution = (value == "1");
-        }
-        else if (key_lower == "singlemoninwindowedmode") {
-            data.single_mon_in_windowed_mode = std::stoi(value);
-        }
-        else if (key_lower == "redirectclipboard") {
-            data.redirect_clipboard = (value == "1");
-        }
-        else if (key_lower == "redirectprinters") {
-            data.redirect_printers = (value == "1");
-        }
-        else if (key_lower == "redirectsmartcards") {
-            data.redirect_smart_cards = (value == "1");
-        }
-        else if (key_lower == "redirectcomports") {
-            data.redirect_com_ports = (value == "1");
-        }
-        else if (key_lower == "redirectlocation") {
-            data.redirect_location = (value == "1");
-        }
-        else if (key_lower == "drivestoredirect") {
-            data.drives_to_redirect = unescape_value(value);
-        }
-        else if (key_lower == "devicestoredirect") {
-            data.devices_to_redirect = unescape_value(value);
-        }
-        else if (key_lower == "camerastoredirect") {
-            data.cameras_to_redirect = unescape_value(value);
-        }
-        else if (key_lower == "usbdevicestoredirect") {
-            data.usb_devices_to_redirect = unescape_value(value);
-        }
-        else if (key_lower == "audiomode") {
-            data.audio_mode = std::stoi(value);
-        }
-        else if (key_lower == "audiocapturemode") {
-            data.audio_capture_mode = std::stoi(value);
-        }
-        else if (key_lower == "signscope") {
-            data.sign_scope = unescape_value(value);
-        }
-        else if (key_lower == "signature") {
-            data.signature = unescape_value(value);
+        // Look up and apply the setter from the table
+        const auto& map = rdp_key_map();
+        auto it = map.find(key_lower);
+        if (it != map.end()) {
+            it->second(data, unescape_value(value));
         }
     }
     
     // Validate that we have at least a full address or gateway
     if (data.full_address.empty() && data.gateway_hostname.empty()) {
-        std::cerr << "[RDPFileParser] No valid connection address found" << std::endl;
+        LOG_ERROR("RDPFileParser", "No valid connection address found");
         return std::nullopt;
     }
     
-    std::cout << "[RDPFileParser] Parsed RDP file successfully" << std::endl;
-    std::cout << "[RDPFileParser]   Full address: " << data.full_address << std::endl;
-    std::cout << "[RDPFileParser]   Gateway: " << data.gateway_hostname << std::endl;
-    std::cout << "[RDPFileParser]   AVD connection: " << (data.is_avd_connection() ? "yes" : "no") << std::endl;
-    std::cout << "[RDPFileParser]   AAD auth required: " << (data.requires_aad_auth() ? "yes" : "no") << std::endl;
+    LOG_INFO("RDPFileParser", "Parsed RDP file successfully");
+    LOG_DEBUG("RDPFileParser", "  Full address: " << data.full_address);
+    LOG_DEBUG("RDPFileParser", "  Gateway: " << data.gateway_hostname);
+    LOG_DEBUG("RDPFileParser", "  AVD connection: " << (data.is_avd_connection() ? "yes" : "no"));
+    LOG_DEBUG("RDPFileParser", "  AAD auth required: " << (data.requires_aad_auth() ? "yes" : "no"));
     
     return data;
 }
@@ -250,111 +210,54 @@ std::string RDPFileParser::unescape_value(const std::string& value) {
     return value;
 }
 
-std::string RDPFileParser::escape_json(const std::string& str) {
-    std::string result;
-    result.reserve(str.size() + 10);
-    
-    for (char c : str) {
-        switch (c) {
-            case '"':  result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\b': result += "\\b"; break;
-            case '\f': result += "\\f"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    // Control characters - output as unicode escape
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(c));
-                    result += buf;
-                } else {
-                    result += c;
-                }
-                break;
-        }
-    }
-    
-    return result;
-}
-
 std::string RDPFileParser::to_json(const RDPFileData& data) {
-    std::ostringstream json;
-    
-    json << "{";
-    
-    // Basic connection
-    json << "\"full_address\":\"" << escape_json(data.full_address) << "\",";
-    json << "\"alternate_full_address\":\"" << escape_json(data.alternate_full_address) << "\",";
-    json << "\"server_port\":" << data.server_port << ",";
-    
-    // Authentication
-    json << "\"username\":\"" << escape_json(data.username) << "\",";
-    json << "\"domain\":\"" << escape_json(data.domain) << "\",";
-    json << "\"prompt_for_credentials\":" << (data.prompt_for_credentials ? "true" : "false") << ",";
-    json << "\"prompt_credential_once\":" << (data.prompt_credential_once ? "true" : "false") << ",";
-    json << "\"authentication_level\":" << data.authentication_level << ",";
-    
-    // Azure AD
-    json << "\"target_is_aad_joined\":" << (data.target_is_aad_joined ? "true" : "false") << ",";
-    json << "\"enable_rds_aad_auth\":" << (data.enable_rds_aad_auth ? "true" : "false") << ",";
-    json << "\"aad_tenant_id\":\"" << escape_json(data.aad_tenant_id) << "\",";
-    
-    // Gateway
-    json << "\"gateway_hostname\":\"" << escape_json(data.gateway_hostname) << "\",";
-    json << "\"gateway_usage_method\":" << data.gateway_usage_method << ",";
-    json << "\"gateway_profile_usage_method\":" << data.gateway_profile_usage_method << ",";
-    json << "\"gateway_credentials_source\":" << data.gateway_credentials_source << ",";
-    json << "\"gateway_brokering_type\":" << data.gateway_brokering_type << ",";
-    
-    // AVD specific
-    json << "\"load_balance_info\":\"" << escape_json(data.load_balance_info) << "\",";
-    json << "\"wvd_endpoint_pool\":\"" << escape_json(data.wvd_endpoint_pool) << "\",";
-    json << "\"arm_path\":\"" << escape_json(data.arm_path) << "\",";
-    json << "\"workspace_id\":\"" << escape_json(data.workspace_id) << "\",";
-    json << "\"resource_provider\":\"" << escape_json(data.resource_provider) << "\",";
-    json << "\"geo\":\"" << escape_json(data.geo) << "\",";
-    json << "\"diagnostic_service_url\":\"" << escape_json(data.diagnostic_service_url) << "\",";
-    json << "\"hub_discovery_geo_url\":\"" << escape_json(data.hub_discovery_geo_url) << "\",";
-    json << "\"activity_hint\":\"" << escape_json(data.activity_hint) << "\",";
-    
-    // Remote app
-    json << "\"remote_application_program\":\"" << escape_json(data.remote_application_program) << "\",";
-    json << "\"remote_desktop_name\":\"" << escape_json(data.remote_desktop_name) << "\",";
-    json << "\"remote_application_mode\":" << data.remote_application_mode << ",";
-    
-    // Display
-    json << "\"desktop_width\":" << data.desktop_width << ",";
-    json << "\"desktop_height\":" << data.desktop_height << ",";
-    json << "\"screen_mode_id\":" << data.screen_mode_id << ",";
-    json << "\"smart_sizing\":" << (data.smart_sizing ? "true" : "false") << ",";
-    json << "\"dynamic_resolution\":" << (data.dynamic_resolution ? "true" : "false") << ",";
-    json << "\"single_mon_in_windowed_mode\":" << data.single_mon_in_windowed_mode << ",";
-    
-    // Redirection
-    json << "\"redirect_clipboard\":" << (data.redirect_clipboard ? "true" : "false") << ",";
-    json << "\"redirect_printers\":" << (data.redirect_printers ? "true" : "false") << ",";
-    json << "\"redirect_smart_cards\":" << (data.redirect_smart_cards ? "true" : "false") << ",";
-    json << "\"redirect_com_ports\":" << (data.redirect_com_ports ? "true" : "false") << ",";
-    json << "\"redirect_location\":" << (data.redirect_location ? "true" : "false") << ",";
-    json << "\"drives_to_redirect\":\"" << escape_json(data.drives_to_redirect) << "\",";
-    json << "\"devices_to_redirect\":\"" << escape_json(data.devices_to_redirect) << "\",";
-    json << "\"cameras_to_redirect\":\"" << escape_json(data.cameras_to_redirect) << "\",";
-    json << "\"usb_devices_to_redirect\":\"" << escape_json(data.usb_devices_to_redirect) << "\",";
-    
-    // Audio
-    json << "\"audio_mode\":" << data.audio_mode << ",";
-    json << "\"audio_capture_mode\":" << data.audio_capture_mode << ",";
-    
-    // Helper computed properties
-    json << "\"is_avd_connection\":" << (data.is_avd_connection() ? "true" : "false") << ",";
-    json << "\"uses_gateway\":" << (data.uses_gateway() ? "true" : "false") << ",";
-    json << "\"requires_aad_auth\":" << (data.requires_aad_auth() ? "true" : "false") << ",";
-    json << "\"display_name\":\"" << escape_json(data.get_display_name()) << "\"";
-    
-    json << "}";
-    
-    std::string jsonString = json.str();
-    return jsonString;
+    auto esc = [](const std::string& s) { return json_utils::escape_string(s); };
+    auto b = [](bool v) -> const char* { return v ? "true" : "false"; };
+
+    return std::format(
+        R"({{"full_address":"{}","alternate_full_address":"{}","server_port":{},)" 
+        R"("username":"{}","domain":"{}","prompt_for_credentials":{},)" 
+        R"("prompt_credential_once":{},"authentication_level":{},)" 
+        R"("target_is_aad_joined":{},"enable_rds_aad_auth":{},"aad_tenant_id":"{}",)" 
+        R"("gateway_hostname":"{}","gateway_usage_method":{},)" 
+        R"("gateway_profile_usage_method":{},"gateway_credentials_source":{},)" 
+        R"("gateway_brokering_type":{},)" 
+        R"("load_balance_info":"{}","wvd_endpoint_pool":"{}",)" 
+        R"("arm_path":"{}","workspace_id":"{}","resource_provider":"{}",)" 
+        R"("geo":"{}","diagnostic_service_url":"{}","hub_discovery_geo_url":"{}",)" 
+        R"("activity_hint":"{}",)" 
+        R"("remote_application_program":"{}","remote_desktop_name":"{}",)" 
+        R"("remote_application_mode":{},)" 
+        R"("desktop_width":{},"desktop_height":{},"screen_mode_id":{},)" 
+        R"("smart_sizing":{},"dynamic_resolution":{},"single_mon_in_windowed_mode":{},)" 
+        R"("redirect_clipboard":{},"redirect_printers":{},"redirect_smart_cards":{},)" 
+        R"("redirect_com_ports":{},"redirect_location":{},)" 
+        R"("drives_to_redirect":"{}","devices_to_redirect":"{}",)" 
+        R"("cameras_to_redirect":"{}","usb_devices_to_redirect":"{}",)" 
+        R"("audio_mode":{},"audio_capture_mode":{},)" 
+        R"("is_avd_connection":{},"uses_gateway":{},"requires_aad_auth":{},)" 
+        R"("display_name":"{}"}})",
+        esc(data.full_address), esc(data.alternate_full_address), data.server_port,
+        esc(data.username), esc(data.domain), b(data.prompt_for_credentials),
+        b(data.prompt_credential_once), data.authentication_level,
+        b(data.target_is_aad_joined), b(data.enable_rds_aad_auth), esc(data.aad_tenant_id),
+        esc(data.gateway_hostname), data.gateway_usage_method,
+        data.gateway_profile_usage_method, data.gateway_credentials_source,
+        data.gateway_brokering_type,
+        esc(data.load_balance_info), esc(data.wvd_endpoint_pool),
+        esc(data.arm_path), esc(data.workspace_id), esc(data.resource_provider),
+        esc(data.geo), esc(data.diagnostic_service_url), esc(data.hub_discovery_geo_url),
+        esc(data.activity_hint),
+        esc(data.remote_application_program), esc(data.remote_desktop_name),
+        data.remote_application_mode,
+        data.desktop_width, data.desktop_height, data.screen_mode_id,
+        b(data.smart_sizing), b(data.dynamic_resolution), data.single_mon_in_windowed_mode,
+        b(data.redirect_clipboard), b(data.redirect_printers), b(data.redirect_smart_cards),
+        b(data.redirect_com_ports), b(data.redirect_location),
+        esc(data.drives_to_redirect), esc(data.devices_to_redirect),
+        esc(data.cameras_to_redirect), esc(data.usb_devices_to_redirect),
+        data.audio_mode, data.audio_capture_mode,
+        b(data.is_avd_connection()), b(data.uses_gateway()), b(data.requires_aad_auth()),
+        esc(data.get_display_name())
+    );
 }

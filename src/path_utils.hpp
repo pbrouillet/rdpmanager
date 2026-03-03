@@ -2,8 +2,7 @@
  * Path Utilities - Filesystem path helpers
  */
 
-#ifndef PATH_UTILS_HPP
-#define PATH_UTILS_HPP
+#pragma once
 
 #include <filesystem>
 #include <vector>
@@ -17,7 +16,7 @@ namespace path_utils {
  * Find the UI directory path by searching common locations
  * @return Absolute path to the UI directory, or empty path if not found
  */
-inline fs::path find_ui_path() {
+[[nodiscard]] inline fs::path find_ui_path() {
     // Check compile-time path first
     #ifdef UI_PATH
     fs::path compile_path(UI_PATH);
@@ -64,4 +63,4 @@ inline fs::path find_ui_path() {
 
 } // namespace path_utils
 
-#endif // PATH_UTILS_HPP
+

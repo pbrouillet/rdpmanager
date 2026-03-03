@@ -3,6 +3,8 @@
  */
 
 #include "aad_auth_handler.hpp"
+#include "../logger.hpp"
+#include "../utils.hpp"
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -19,45 +21,8 @@ bool AADAuthHandler::s_manual_code_flow = false;
 bool AADAuthHandler::s_aad_debug = false;
 
 // ============================================================================
-// URL encoding/decoding helpers
+// URL / redirect helpers
 // ============================================================================
-
-static std::string url_decode(const std::string& str) {
-    std::string result;
-    result.reserve(str.size());
-    
-    for (size_t i = 0; i < str.size(); ++i) {
-        if (str[i] == '%' && i + 2 < str.size()) {
-            int hex_val = 0;
-            std::istringstream hex_stream(str.substr(i + 1, 2));
-            hex_stream >> std::hex >> hex_val;
-            result += static_cast<char>(hex_val);
-            i += 2;
-        } else if (str[i] == '+') {
-            result += ' ';
-        } else {
-            result += str[i];
-        }
-    }
-    return result;
-}
-
-static std::string url_encode(const std::string& str) {
-    std::ostringstream encoded;
-    encoded.fill('0');
-    encoded << std::hex;
-    
-    for (unsigned char c : str) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded << c;
-        } else {
-            encoded << std::uppercase;
-            encoded << '%' << std::setw(2) << int(c);
-            encoded << std::nouppercase;
-        }
-    }
-    return encoded.str();
-}
 
 /**
  * Extract the redirect_uri parameter from an OAuth URL
@@ -67,7 +32,7 @@ static std::string extract_redirect_uri(const std::string& auth_url) {
     std::regex redirect_regex("redirect_uri=([^&]+)", std::regex::icase);
     std::smatch match;
     if (std::regex_search(auth_url, match, redirect_regex)) {
-        return url_decode(match[1].str());
+        return utils::url_decode(match[1].str());
     }
     return "";
 }
@@ -108,7 +73,7 @@ static std::string rewrite_auth_url_with_localhost_redirect(const std::string& a
 #else
     std::string new_redirect = "http://localhost:" + std::to_string(port) + "/oauth/callback";
 #endif
-    std::string new_redirect_encoded = url_encode(new_redirect);
+    std::string new_redirect_encoded = utils::url_encode(new_redirect);
     
     // Replace the redirect_uri in the URL
     std::string result = auth_url;
@@ -147,7 +112,7 @@ AADAuthHandler::AADAuthHandler() {
 
 void AADAuthHandler::enable_manual_code_flow() {
     s_manual_code_flow = true;
-    std::cout << "[AAD] Manual code flow mode enabled" << std::endl;
+    LOG_INFO("AAD", "Manual code flow mode enabled");
 }
 
 bool AADAuthHandler::is_manual_code_flow_enabled() {
@@ -156,7 +121,7 @@ bool AADAuthHandler::is_manual_code_flow_enabled() {
 
 void AADAuthHandler::enable_debug() {
     s_aad_debug = true;
-    std::cout << "[AAD] Debug logging enabled (--aad-dbg)" << std::endl;
+    LOG_INFO("AAD", "Debug logging enabled (--aad-dbg)");
 }
 
 bool AADAuthHandler::is_debug_enabled() {
@@ -164,25 +129,25 @@ bool AADAuthHandler::is_debug_enabled() {
 }
 
 void AADAuthHandler::log_url_details(const std::string& url, const std::string& context) {
-    std::cout << "[AAD-DBG] --- " << context << " ---" << std::endl;
-    std::cout << "[AAD-DBG] Full URL: " << url << std::endl;
+    LOG_DEBUG("AAD", "--- " << context << " ---");
+    LOG_DEBUG("AAD", "Full URL: " << url);
 
     // Parse scheme and host
     size_t scheme_end = url.find("://");
     if (scheme_end != std::string::npos) {
-        std::cout << "[AAD-DBG] Scheme: " << url.substr(0, scheme_end) << std::endl;
+        LOG_DEBUG("AAD", "Scheme: " << url.substr(0, scheme_end));
         size_t host_start = scheme_end + 3;
         size_t path_start = url.find('/', host_start);
         size_t query_start = url.find('?', host_start);
         size_t host_end = std::min(path_start, query_start);
         if (host_end != std::string::npos) {
-            std::cout << "[AAD-DBG] Host: " << url.substr(host_start, host_end - host_start) << std::endl;
+            LOG_DEBUG("AAD", "Host: " << url.substr(host_start, host_end - host_start));
             if (path_start != std::string::npos && path_start < query_start) {
                 size_t pend = (query_start != std::string::npos) ? query_start : url.size();
-                std::cout << "[AAD-DBG] Path: " << url.substr(path_start, pend - path_start) << std::endl;
+                LOG_DEBUG("AAD", "Path: " << url.substr(path_start, pend - path_start));
             }
         } else {
-            std::cout << "[AAD-DBG] Host: " << url.substr(host_start) << std::endl;
+            LOG_DEBUG("AAD", "Host: " << url.substr(host_start));
         }
     }
 
@@ -194,22 +159,22 @@ void AADAuthHandler::log_url_details(const std::string& url, const std::string& 
         size_t frag = query.find('#');
         if (frag != std::string::npos) query = query.substr(0, frag);
 
-        std::cout << "[AAD-DBG] Query parameters:" << std::endl;
+        LOG_DEBUG("AAD", "Query parameters:");
         std::istringstream qs(query);
         std::string param;
         while (std::getline(qs, param, '&')) {
             size_t eq = param.find('=');
             if (eq != std::string::npos) {
                 std::string key = param.substr(0, eq);
-                std::string val = url_decode(param.substr(eq + 1));
+                std::string val = utils::url_decode(param.substr(eq + 1));
                 // Mask sensitive values
                 if (key == "code" || key == "client_secret") {
-                    std::cout << "[AAD-DBG]   " << key << " = " << val.substr(0, 8) << "..." << std::endl;
+                    LOG_DEBUG("AAD", "  " << key << " = " << val.substr(0, 8) << "...");
                 } else {
-                    std::cout << "[AAD-DBG]   " << key << " = " << val << std::endl;
+                    LOG_DEBUG("AAD", "  " << key << " = " << val);
                 }
             } else {
-                std::cout << "[AAD-DBG]   " << param << std::endl;
+                LOG_DEBUG("AAD", "  " << param);
             }
         }
     }
@@ -217,9 +182,9 @@ void AADAuthHandler::log_url_details(const std::string& url, const std::string& 
     // Parse fragment
     size_t fpos = url.find('#');
     if (fpos != std::string::npos) {
-        std::cout << "[AAD-DBG] Fragment: " << url.substr(fpos + 1) << std::endl;
+        LOG_DEBUG("AAD", "Fragment: " << url.substr(fpos + 1));
     }
-    std::cout << "[AAD-DBG] --- end " << context << " ---" << std::endl;
+    LOG_DEBUG("AAD", "--- end " << context << " ---");
 }
 
 AADAuthHandler::~AADAuthHandler() {
@@ -255,7 +220,7 @@ void AADAuthHandler::on_response(bool success, const std::string& redirect_url) 
     m_pending = false;
     m_cv.notify_all();
     
-    std::cout << "[AAD] Auth response: " << (success ? "completed" : "cancelled") << std::endl;
+    LOG_DEBUG("AAD", "Auth response: " << (success ? "completed" : "cancelled"));
 }
 
 // ============================================================================
@@ -287,10 +252,10 @@ void AADAuthHandler::s_handle_oauth_callback(webui::window::event* e) {
     if (!s_instance) return;
     
     std::string url = e->get_string(0);
-    std::cout << "[AAD] ============================================" << std::endl;
-    std::cout << "[AAD] OAuth callback received via JavaScript" << std::endl;
-    std::cout << "[AAD] Callback URL: " << url << std::endl;
-    std::cout << "[AAD] ============================================" << std::endl;
+    LOG_INFO("AAD", "============================================");
+    LOG_DEBUG("AAD", "OAuth callback received via JavaScript");
+    LOG_DEBUG("AAD", "Callback URL: " << url);
+    LOG_INFO("AAD", "============================================");
     if (s_aad_debug) {
         log_url_details(url, "OAuth callback (JS)");
     }
@@ -301,7 +266,7 @@ void AADAuthHandler::s_handle_oauth_callback(webui::window::event* e) {
 void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
     std::string message = e->get_string(0);
     // Always print JS-forwarded messages (they carry [AAD-Browser] prefix from the injected script)
-    std::cout << message << std::endl;
+    LOG_DEBUG("AAD", message);
 }
 
 // ============================================================================
@@ -309,7 +274,7 @@ void AADAuthHandler::s_handle_log_to_backend(webui::window::event* e) {
 // ============================================================================
 
 void AADAuthHandler::process_navigation(const std::string& url) {
-    std::cerr << "[AAD] NAVIGATION: " << url << std::endl;
+    LOG_DEBUG("AAD", "NAVIGATION: " << url);
 
     // When --aad-dbg is active, parse and display URL components
     if (s_aad_debug) {
@@ -335,7 +300,7 @@ void AADAuthHandler::process_navigation(const std::string& url) {
         (url.find("login.microsoftonline.com") != std::string::npos ||
          url.find("login.microsoft.com") != std::string::npos ||
          url.find("login.live.com") != std::string::npos)) {
-        std::cout << "[AAD] Navigating to OAuth provider - expecting disconnect" << std::endl;
+        LOG_DEBUG("AAD", "Navigating to OAuth provider - expecting disconnect");
         m_navigating_to_oauth = true;
         return;  // Don't process further, let the browser navigate
     }
@@ -353,46 +318,46 @@ void AADAuthHandler::process_navigation(const std::string& url) {
     // Also check for code= or error= in any URL (for compatibility)
     if (is_localhost_callback || is_nativeclient_callback || is_msappx_redirect || has_auth_code || has_auth_error) {
         
-        std::cerr << "[AAD-DIAG] Auth code/error URL detected, acquiring m_mutex..." << std::endl;
+        LOG_DEBUG("AAD", "Auth code/error URL detected, acquiring m_mutex...");
         std::lock_guard<std::mutex> lock(m_mutex);
-        std::cerr << "[AAD-DIAG] m_mutex acquired in process_navigation" << std::endl;
+        LOG_DEBUG("AAD", "m_mutex acquired in process_navigation");
         
         if (has_auth_code) {
-            std::cout << "[AAD] ============================================" << std::endl;
-            std::cout << "[AAD] AUTHORIZATION CODE RECEIVED" << std::endl;
-            std::cout << "[AAD] ============================================" << std::endl;
-            std::cout << "[AAD] Callback URL: " << url << std::endl;
+            LOG_INFO("AAD", "============================================");
+            LOG_INFO("AAD", "AUTHORIZATION CODE RECEIVED");
+            LOG_INFO("AAD", "============================================");
+            LOG_DEBUG("AAD", "Callback URL: " << url);
             
             // For nativeclient redirect, the URL is already in the correct format
             // For localhost callback, reconstruct the original redirect URL for FreeRDP
             std::string result_url = url;
             if (is_localhost_callback && !m_original_redirect_uri.empty()) {
                 result_url = reconstruct_original_redirect(url, m_original_redirect_uri);
-                std::cout << "[AAD] Reconstructed redirect URL: " << result_url << std::endl;
+                LOG_DEBUG("AAD", "Reconstructed redirect URL: " << result_url);
             } else if (is_nativeclient_callback) {
-                std::cout << "[AAD] Using nativeclient redirect URL directly" << std::endl;
+                LOG_DEBUG("AAD", "Using nativeclient redirect URL directly");
             }
-            std::cout << "[AAD] ============================================" << std::endl;
+            LOG_INFO("AAD", "============================================");
             
             m_result = {true, result_url, m_actual_redirect_uri};
         } else if (has_auth_error) {
-            std::cout << "[AAD] ============================================" << std::endl;
-            std::cout << "[AAD] AUTHENTICATION ERROR" << std::endl;
-            std::cout << "[AAD] ============================================" << std::endl;
-            std::cout << "[AAD] Error URL: " << url << std::endl;
-            std::cout << "[AAD] ============================================" << std::endl;
+            LOG_INFO("AAD", "============================================");
+            LOG_WARN("AAD", "AUTHENTICATION ERROR");
+            LOG_INFO("AAD", "============================================");
+            LOG_DEBUG("AAD", "Error URL: " << url);
+            LOG_INFO("AAD", "============================================");
             m_result = {false, "", ""};
         } else {
             // Intermediate redirect without code/error yet.
             // Do not fail/cancel here; continue waiting for the actual callback.
-            std::cout << "[AAD] Redirect/navigation without code or error yet, continuing flow" << std::endl;
-            std::cout << "[AAD] URL: " << url << std::endl;
+            LOG_DEBUG("AAD", "Redirect/navigation without code or error yet, continuing flow");
+            LOG_DEBUG("AAD", "URL: " << url);
             return;
         }
         
         m_pending = false;
         m_cv.notify_all();
-        std::cerr << "[AAD-DIAG] process_navigation: cv.notify_all() called, m_pending=false" << std::endl;
+        LOG_DEBUG("AAD", "process_navigation: cv.notify_all() called, m_pending=false");
         
         // Don't close the window here — it will be cleaned up by
         // handle_authenticate() after m_cv.wait_for() returns.
@@ -401,15 +366,15 @@ void AADAuthHandler::process_navigation(const std::string& url) {
 }
 
 void AADAuthHandler::handle_disconnected() {
-    std::cout << "[AAD] DISCONNECTED event received" << std::endl;
+    LOG_DEBUG("AAD", "DISCONNECTED event received");
     // Check if we're navigating to OAuth - disconnect is expected in that case
     if (m_navigating_to_oauth) {
-        std::cout << "[AAD] Expected disconnect during OAuth flow - waiting for callback" << std::endl;
+        LOG_DEBUG("AAD", "Expected disconnect during OAuth flow - waiting for callback");
         // Don't cancel the flow - we're waiting for the OAuth callback
         return;
     }
     
-    std::cout << "[AAD] Window closed by user" << std::endl;
+    LOG_INFO("AAD", "Window closed by user");
     
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_pending) {
@@ -433,16 +398,16 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     m_callback_complete = false;     // Reset completion barrier
     m_result = {false, "", ""};
     
-    std::cout << "[AAD] ============================================" << std::endl;
-    std::cout << "[AAD] AUTHENTICATION REQUESTED" << std::endl;
-    std::cout << "[AAD] ============================================" << std::endl;
-    std::cout << "[AAD] Type: " << (request.type == AADAuthRequest::RDS_AAD ? "RDS_AAD" : "AVD") << std::endl;
-    std::cout << "[AAD] Auth URL: " << request.auth_url << std::endl;
+    LOG_INFO("AAD", "============================================");
+    LOG_INFO("AAD", "AUTHENTICATION REQUESTED");
+    LOG_INFO("AAD", "============================================");
+    LOG_INFO("AAD", "Type: " << (request.type == AADAuthRequest::Type::RDS_AAD ? "RDS_AAD" : "AVD"));
+    LOG_DEBUG("AAD", "Auth URL: " << request.auth_url);
     
     // Extract and store the original redirect URI for later reconstruction
     m_original_redirect_uri = extract_redirect_uri(request.auth_url);
-    std::cout << "[AAD] Original redirect URI: " << m_original_redirect_uri << std::endl;
-    std::cout << "[AAD] ============================================" << std::endl;
+    LOG_DEBUG("AAD", "Original redirect URI: " << m_original_redirect_uri);
+    LOG_INFO("AAD", "============================================");
 
     // Verbose debug: parse and display all auth URL parameters
     if (s_aad_debug) {
@@ -454,7 +419,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         return handle_manual_code_flow(request, lock);
     }
     
-    std::cout << "[AAD] Opening native window..." << std::endl;
+    LOG_DEBUG("AAD", "Opening native window...");
     
     // Note: webui::set_timeout(0) is set globally at startup so the
     // server-thread never auto-exits on WebSocket disconnects.  No per-
@@ -462,7 +427,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     
     // Notify the main window about AAD auth (for UI feedback)
     if (m_main_window) {
-        std::string type_str = (request.type == AADAuthRequest::RDS_AAD) ? "RDS_AAD" : "AVD";
+        std::string type_str = (request.type == AADAuthRequest::Type::RDS_AAD) ? "RDS_AAD" : "AVD";
         std::string js = "showToast('Azure AD authentication required (" + type_str + "). Opening login window...', 'info', 5000);";
         m_main_window->run(js);
     }
@@ -503,7 +468,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            std::cout << "[AAD] Setting up auth callback server..." << std::endl;
+            LOG_DEBUG("AAD", "Setting up auth callback server...");
             
             // First, start the server by showing a placeholder page
             // We need to get the port before we can create the proper redirect URL
@@ -568,7 +533,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             bool shown = m_window->show(placeholder_html);
             
             if (!shown) {
-                std::cerr << "[AAD] Failed to show auth window" << std::endl;
+                LOG_ERROR("AAD", "Failed to show auth window");
                 m_result = {false, "", ""};
                 m_pending = false;
                 return m_result;
@@ -576,10 +541,10 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             
             // Get the port now that the server is running
             port = m_window->get_port();
-            std::cout << "[AAD] Auth callback server on port: " << port << std::endl;
+            LOG_DEBUG("AAD", "Auth callback server on port: " << port);
             
             if (port == 0) {
-                std::cerr << "[AAD] Failed to get server port" << std::endl;
+                LOG_ERROR("AAD", "Failed to get server port");
                 m_result = {false, "", ""};
                 m_pending = false;
                 return m_result;
@@ -593,7 +558,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
                 m_actual_redirect_uri = m_original_redirect_uri;
             }
             
-            std::cout << "[AAD] Using redirect URI: " << m_actual_redirect_uri << std::endl;
+            LOG_DEBUG("AAD", "Using redirect URI: " << m_actual_redirect_uri);
             if (s_aad_debug) {
                 log_url_details(modified_auth_url, "Auth URL (effective redirect)");
             }
@@ -609,16 +574,16 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            std::cout << "[AAD] Navigating webview to auth URL..." << std::endl;
+            LOG_DEBUG("AAD", "Navigating webview to auth URL...");
             if (s_aad_debug) {
-                std::cout << "[AAD-DBG] Using navigate() for auth URL" << std::endl;
+                LOG_DEBUG("AAD", "Using navigate() for auth URL");
             }
             // Set flag BEFORE navigation — the WebSocket will disconnect when the
             // webview leaves localhost, and we must not treat that as user cancellation.
             m_navigating_to_oauth = true;
             m_window->navigate(modified_auth_url);
         } else {
-            std::cerr << "[AAD] Window closed before navigation" << std::endl;
+            LOG_ERROR("AAD", "Window closed before navigation");
             m_result = {false, "", ""};
             m_pending = false;
             return m_result;
@@ -626,11 +591,11 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     }
         
     // Wait for the window to complete (with timeout for OAuth flow)
-    std::cerr << "[AAD-DIAG] Entering cv.wait_for (releasing m_mutex)..." << std::endl;
+    LOG_DEBUG("AAD", "Entering cv.wait_for (releasing m_mutex)...");
     auto status = m_cv.wait_for(lock, AUTH_TIMEOUT, [this] {
         return !m_pending.load();
     });
-    std::cerr << "[AAD-DIAG] cv.wait_for returned, status=" << status << std::endl;
+    LOG_DEBUG("AAD", "cv.wait_for returned, status=" << status);
     
     // Wait for the WebUI callback (s_handle_window_events) to fully return
     // before destroying the window. Without this, handle_authenticate() can
@@ -644,7 +609,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
             lock.lock();
             wait_count++;
         }
-        std::cerr << "[AAD-DIAG] Completion barrier done after " << wait_count << " iterations" << std::endl;
+        LOG_DEBUG("AAD", "Completion barrier done after " << wait_count << " iterations");
         // Brief grace period for WebUI's internal event loop to finish
         // processing after the callback returned
         lock.unlock();
@@ -659,7 +624,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     {
         std::lock_guard<std::mutex> win_lock(m_window_mutex);
         if (m_window) {
-            std::cerr << "[AAD-DIAG] Closing auth window (no destroy to avoid SEGFAULT)..." << std::endl;
+            LOG_DEBUG("AAD", "Closing auth window (no destroy to avoid SEGFAULT)...");
             m_window->close();
             // Intentionally leak the window object — destroy() is unsafe
             m_window.release();
@@ -670,7 +635,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
     // calls webui::exit() to terminate the app when the user closes it.
     
     if (!status) {
-        std::cerr << "[AAD] Auth timed out" << std::endl;
+        LOG_ERROR("AAD", "Auth timed out");
         // Notify main window about timeout
         if (m_main_window) {
             m_main_window->run("onAADAuthComplete(false);");
@@ -684,7 +649,7 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         m_main_window->run(js);
     }
     
-    std::cerr << "[AAD-DIAG] handle_authenticate returning, success=" << m_result.success << std::endl;
+    LOG_DEBUG("AAD", "handle_authenticate returning, success=" << m_result.success);
     return m_result;
 }
 
@@ -696,26 +661,25 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
                                                         std::unique_lock<std::mutex>& lock) {
     // This method is called with lock already held
     
-    std::string type_str = (request.type == AADAuthRequest::RDS_AAD) ? "RDS_AAD" : "AVD";
+    std::string type_str = (request.type == AADAuthRequest::Type::RDS_AAD) ? "RDS_AAD" : "AVD";
     
-    std::cout << std::endl;
-    std::cout << "============================================" << std::endl;
-    std::cout << "  MANUAL AZURE AD AUTHENTICATION" << std::endl;
-    std::cout << "  Type: " << type_str << std::endl;
-    std::cout << "============================================" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Please open the following URL in your browser:" << std::endl;
-    std::cout << std::endl;
-    std::cout << request.auth_url << std::endl;
-    std::cout << std::endl;
-    std::cout << "After completing authentication, you will be redirected to a URL" << std::endl;
-    std::cout << "starting with: " << m_original_redirect_uri << std::endl;
-    std::cout << std::endl;
-    std::cout << "Copy the ENTIRE redirect URL (including the ?code=... or ?error=... part)" << std::endl;
-    std::cout << "and paste it below, then press Enter:" << std::endl;
-    std::cout << std::endl;
-    std::cout << "> ";
-    std::cout.flush();
+    LOG_RAW("\n");
+    LOG_RAW("============================================\n");
+    LOG_RAW("  MANUAL AZURE AD AUTHENTICATION\n");
+    LOG_RAW("  Type: " << type_str << "\n");
+    LOG_RAW("============================================\n");
+    LOG_RAW("\n");
+    LOG_RAW("Please open the following URL in your browser:\n");
+    LOG_RAW("\n");
+    LOG_RAW(request.auth_url << "\n");
+    LOG_RAW("\n");
+    LOG_RAW("After completing authentication, you will be redirected to a URL\n");
+    LOG_RAW("starting with: " << m_original_redirect_uri << "\n");
+    LOG_RAW("\n");
+    LOG_RAW("Copy the ENTIRE redirect URL (including the ?code=... or ?error=... part)\n");
+    LOG_RAW("and paste it below, then press Enter:\n");
+    LOG_RAW("\n");
+    LOG_RAW("> ");
     
     // Notify main window about manual auth (for UI feedback)
     if (m_main_window) {
@@ -741,7 +705,7 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
     }
     
     if (redirect_url.empty()) {
-        std::cout << "[AAD] No URL provided, authentication cancelled" << std::endl;
+        LOG_WARN("AAD", "No URL provided, authentication cancelled");
         m_result = {false, "", ""};
         m_pending = false;
         return m_result;
@@ -749,20 +713,20 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
     
     // Process the redirect URL
     if (redirect_url.find("code=") != std::string::npos) {
-        std::cout << "[AAD] Authorization code received" << std::endl;
+        LOG_INFO("AAD", "Authorization code received");
         if (s_aad_debug) {
             log_url_details(redirect_url, "Manual code flow redirect");
         }
         // In manual mode, the user navigated with the original redirect_uri
         m_result = {true, redirect_url, m_original_redirect_uri};
     } else if (redirect_url.find("error=") != std::string::npos) {
-        std::cout << "[AAD] Error in redirect URL" << std::endl;
+        LOG_WARN("AAD", "Error in redirect URL");
         if (s_aad_debug) {
             log_url_details(redirect_url, "Manual code flow error redirect");
         }
         m_result = {false, "", ""};
     } else {
-        std::cout << "[AAD] Invalid redirect URL (no code= or error= parameter)" << std::endl;
+        LOG_WARN("AAD", "Invalid redirect URL (no code= or error= parameter)");
         m_result = {false, "", ""};
     }
     

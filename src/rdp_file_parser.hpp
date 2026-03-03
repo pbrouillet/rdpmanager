@@ -9,6 +9,7 @@
  */
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <optional>
 
@@ -85,21 +86,21 @@ struct RDPFileData {
     std::string signature;                 // signature:s:
     
     // Helper methods
-    bool is_avd_connection() const {
+    [[nodiscard]] constexpr bool is_avd_connection() const {
         return !wvd_endpoint_pool.empty() || !arm_path.empty() || 
                !load_balance_info.empty() || enable_rds_aad_auth;
     }
     
-    bool uses_gateway() const {
+    [[nodiscard]] constexpr bool uses_gateway() const {
         return !gateway_hostname.empty() && gateway_usage_method > 0;
     }
     
-    bool requires_aad_auth() const {
+    [[nodiscard]] constexpr bool requires_aad_auth() const {
         return target_is_aad_joined || enable_rds_aad_auth;
     }
     
     // Get the effective hostname (gateway for AVD, full address otherwise)
-    std::string get_connection_host() const {
+    [[nodiscard]] std::string get_connection_host() const {
         if (is_avd_connection() && uses_gateway()) {
             // For AVD, we connect through the gateway
             return gateway_hostname;
@@ -108,7 +109,7 @@ struct RDPFileData {
     }
     
     // Get the display name for UI
-    std::string get_display_name() const {
+    [[nodiscard]] std::string get_display_name() const {
         if (!remote_desktop_name.empty()) {
             return remote_desktop_name;
         }
@@ -126,21 +127,21 @@ public:
      * @param filepath Path to the .rdp or .rdpw file
      * @return Parsed RDP file data, or nullopt on failure
      */
-    static std::optional<RDPFileData> parse_file(const std::string& filepath);
+    [[nodiscard]] static std::optional<RDPFileData> parse_file(std::string_view filepath);
     
     /**
      * Parse RDP file content from a string
      * @param content The RDP file content as a string
      * @return Parsed RDP file data, or nullopt on failure
      */
-    static std::optional<RDPFileData> parse_content(const std::string& content);
+    [[nodiscard]] static std::optional<RDPFileData> parse_content(std::string_view content);
     
     /**
      * Get a JSON representation of the parsed RDP file data
      * @param data The parsed RDP file data
      * @return JSON string representation
      */
-    static std::string to_json(const RDPFileData& data);
+    [[nodiscard]] static std::string to_json(const RDPFileData& data);
     
 private:
     /**
@@ -160,9 +161,4 @@ private:
      * Unescape special characters in RDP values
      */
     static std::string unescape_value(const std::string& value);
-    
-    /**
-     * Escape string for JSON output
-     */
-    static std::string escape_json(const std::string& str);
 };

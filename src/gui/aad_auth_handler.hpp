@@ -5,8 +5,7 @@
  * interception for Azure AD, AVD, and RDS AAD authentication.
  */
 
-#ifndef AAD_AUTH_HANDLER_HPP
-#define AAD_AUTH_HANDLER_HPP
+#pragma once
 
 #include <webui.hpp>
 #include <mutex>
@@ -16,7 +15,7 @@
 #include <string>
 #include <chrono>
 
-#include "../rdp_launcher.hpp"  // For AADAuthRequest, AADAuthResponse, AADAuthCallback
+#include "../connection_types.hpp"  // For AADAuthRequest, AADAuthResponse, AADAuthCallback
 
 /**
  * AADAuthHandler manages the OAuth authentication flow for Azure AD.
@@ -167,4 +166,4 @@ private:
     static void log_url_details(const std::string& url, const std::string& context);
 };
 
-#endif // AAD_AUTH_HANDLER_HPP
+

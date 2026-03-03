@@ -7,6 +7,8 @@
  * Directly integrates with the X11 FreeRDP client for popup windows.
  */
 
+#include "connection_types.hpp"
+
 #include <string>
 #include <memory>
 #include <vector>
@@ -23,93 +25,6 @@ struct rdp_settings;
 typedef struct rdp_settings rdpSettings;
 struct rdp_freerdp;
 typedef struct rdp_freerdp freerdp;
-
-/**
- * Certificate information for verification dialogs
- */
-struct CertificateInfo {
-    std::string host;
-    uint16_t port;
-    std::string common_name;
-    std::string subject;
-    std::string issuer;
-    std::string fingerprint;
-    bool is_changed;           // true if certificate changed from stored one
-    std::string old_fingerprint;  // Previous fingerprint if changed
-};
-
-/**
- * Certificate verification result
- */
-enum class CertificateAcceptance {
-    Reject = 0,              // Don't accept the certificate
-    AcceptPermanently = 1,   // Accept and store for future connections
-    AcceptTemporarily = 2    // Accept for this session only
-};
-
-/**
- * Authentication request information
- */
-struct AuthRequest {
-    std::string hostname;
-    bool is_gateway;         // true if this is for gateway authentication
-    std::string current_username;
-    std::string current_domain;
-};
-
-/**
- * Authentication response
- */
-struct AuthResponse {
-    bool success;
-    std::string username;
-    std::string password;
-    std::string domain;
-};
-
-/**
- * AAD Authentication request - for OAuth2 code flow
- */
-struct AADAuthRequest {
-    enum Type {
-        RDS_AAD,        // RDS AAD authentication (ACCESS_TOKEN_TYPE_AAD)
-        AVD             // Azure Virtual Desktop (ACCESS_TOKEN_TYPE_AVD)
-    };
-    Type type;
-    std::string auth_url;      // URL to present to user for login
-    std::string scope;         // OAuth scope (for RDS_AAD)
-    std::string req_cnf;       // Request confirmation (for RDS_AAD)
-};
-
-/**
- * AAD Authentication response
- */
-struct AADAuthResponse {
-    bool success;
-    std::string redirect_url;  // The redirect URL containing the authorization code
-    std::string actual_redirect_uri;  // The redirect_uri actually used in the auth request (localhost)
-};
-
-/**
- * Callback types for interactive dialogs
- * These allow the UI to handle certificate verification and credential prompts
- */
-using CertificateVerifyCallback = std::function<CertificateAcceptance(const CertificateInfo& info)>;
-using AuthenticateCallback = std::function<AuthResponse(const AuthRequest& request)>;
-
-/**
- * Callback for AAD authentication - allows UI to handle OAuth flow
- * Return AADAuthResponse with success=true and the redirect_url containing the authorization code
- */
-using AADAuthCallback = std::function<AADAuthResponse(const AADAuthRequest& request)>;
-
-using TokenCacheLookupCallback =
-    std::function<std::optional<std::string>(const std::string& hostname, const std::string& cache_kind)>;
-using TokenCacheStoreCallback =
-    std::function<bool(const std::string& hostname,
-                       const std::string& cache_kind,
-                       const std::string& token,
-                       int64_t expires_at_epoch)>;
 
 /**
  * RDP Connection Parameters
@@ -194,13 +109,13 @@ struct RDPConnectionParams {
     int audio_capture_mode = 0;            // Audio capture
     
     // Helper to check if this is an AVD/Dev Box connection
-    bool is_avd_connection() const {
+    [[nodiscard]] constexpr bool is_avd_connection() const {
         return !wvd_endpoint_pool.empty() || !arm_path.empty() || 
                !load_balance_info.empty() || enable_rds_aad_auth;
     }
     
     // Helper to check if gateway is required
-    bool uses_gateway() const {
+    [[nodiscard]] constexpr bool uses_gateway() const {
         return !gateway_hostname.empty() && gateway_usage_method > 0;
     }
 };
@@ -234,19 +149,19 @@ public:
     RDPSession& operator=(const RDPSession&) = delete;
     
     // Start the RDP session
-    bool start();
+    [[nodiscard]] bool start();
     
     // Stop the session
     void stop();
     
     // Check if session is active
-    bool is_active() const;
+    [[nodiscard]] bool is_active() const;
     
     // Get session state
-    RDPConnectionState get_state() const;
+    [[nodiscard]] RDPConnectionState get_state() const;
     
     // Get the process ID (for subprocess approach)
-    int get_pid() const { return m_pid; }
+    [[nodiscard]] int get_pid() const { return m_pid; }
     
     // Set callbacks for interactive dialogs (must be set before start())
     void set_certificate_callback(CertificateVerifyCallback callback);
@@ -312,28 +227,28 @@ public:
      * @param params Connection parameters
      * @return true if launch was successful
      */
-    bool launch(const RDPConnectionParams& params);
+    [[nodiscard]] bool launch(const RDPConnectionParams& params);
     
     /**
      * Launch using the FreeRDP library API (embedded window)
      * More complex but allows tighter integration
      */
-    bool launch_embedded(const RDPConnectionParams& params);
+    [[nodiscard]] bool launch_embedded(const RDPConnectionParams& params);
     
     /**
      * Get the last error message
      */
-    std::string get_last_error() const;
+    [[nodiscard]] std::string get_last_error() const;
     
     /**
      * Get FreeRDP version string
      */
-    std::string get_freerdp_version() const;
+    [[nodiscard]] std::string get_freerdp_version() const;
     
     /**
      * Get list of active sessions
      */
-    std::vector<std::shared_ptr<RDPSession>> get_active_sessions() const;
+    [[nodiscard]] std::vector<std::shared_ptr<RDPSession>> get_active_sessions() const;
     
     /**
      * Set callback for connection state changes

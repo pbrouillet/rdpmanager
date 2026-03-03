@@ -1,7 +1,7 @@
 project('webui-rdp-client', 'cpp', 'c',
   version: '0.1.0',
   default_options: [
-    'cpp_std=c++17',
+    'cpp_std=c++23',
     'c_std=c11',
     'warning_level=2',
     'buildtype=debugoptimized',
@@ -243,13 +243,34 @@ endif
 # ============================================================================
 # Install UI assets
 # ============================================================================
-if npm.found() and node.found()
-  # React UI dist is installed after build via install_subdir pointing at build output.
-  # meson install_subdir only works with source-tree dirs, so we use install_data with a
-  # script instead. For now, the compiled UI_PATH points to the build dir for dev runs.
-  # For proper install, run: cp -r builddir/ui-dist $PREFIX/share/webui-rdp-client/ui
+embed_ui = get_option('embed_ui')
+python = find_program('python3', required: embed_ui)
+
+if embed_ui and npm.found() and node.found()
+  # VFS mode: generate a C++ header with all UI assets embedded as byte arrays.
+  # This produces a single-binary deployment where the executable serves files
+  # from compiled-in data instead of reading them from disk.
+  #
+  # The custom_target 'output' is relative to the build dir.
+  # We write the generated header into the build dir, then add the build dir
+  # to the compiler include path so `#include "embedded_ui.hpp"` finds it.
+  vfs_gen = custom_target('vfs-header',
+    output: 'embedded_ui.hpp',
+    depends: ui_build,
+    command: [
+      python,
+      meson.current_source_dir() / 'scripts' / 'generate_vfs.py',
+      ui_react_dist,
+      '@OUTPUT@',
+    ],
+    console: true,
+  )
+  message('Embedded UI mode: assets will be compiled into the executable')
+elif npm.found() and node.found()
+  vfs_gen = []
   message('Install the React UI manually: cp -r ' + ui_react_dist + ' to your prefix')
 else
+  vfs_gen = []
   install_subdir('src/ui', install_dir: get_option('datadir') / meson.project_name())
 endif
 
@@ -262,9 +283,27 @@ xcb_dep = dependency('xcb', required: false)
 # ============================================================================
 # Main executable
 # ============================================================================
+
+# Build the cpp_args list based on configuration
+app_cpp_args = [
+  '-DUI_PATH="' + ui_path + '"',
+]
+if embed_ui
+  app_cpp_args += '-DEMBED_UI'
+endif
+
+# Include directories — add the build dir for generated headers (embedded_ui.hpp)
+app_inc_dirs = [inc_dirs]
+
+# Source files — include VFS generated header as a dependency so meson builds it first
+app_extra_sources = []
+if embed_ui and npm.found() and node.found()
+  app_extra_sources += vfs_gen
+endif
+
 executable('webui-rdp-client',
-  sources,
-  include_directories: inc_dirs,
+  sources, app_extra_sources,
+  include_directories: app_inc_dirs,
   dependencies: [
     thread_dep,
     webui_dep,
@@ -282,10 +321,7 @@ executable('webui-rdp-client',
   ],
   link_depends: ui_build,
   install: true,
-  # Embed the UI path for runtime (React build output or plain HTML fallback)
-  cpp_args: [
-    '-DUI_PATH="' + ui_path + '"',
-  ],
+  cpp_args: app_cpp_args,
 )
 
 # Summary
@@ -293,4 +329,5 @@ summary({
   'Platform': host_system,
   'Build type': get_option('buildtype'),
   'C++ standard': get_option('cpp_std'),
+  'Embed UI': embed_ui,
 }, section: 'Configuration')

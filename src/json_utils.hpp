@@ -5,19 +5,38 @@
  * using the Jansson library.
  */
 
-#ifndef JSON_UTILS_HPP
-#define JSON_UTILS_HPP
+#pragma once
 
 #include <string>
+#include <string_view>
+#include <format>
+#include <memory>
+#include <cstdlib>
 #include <jansson.h>
 
 namespace json_utils {
+
+// ============================================================================
+// RAII wrappers for Jansson C API
+// ============================================================================
+
+/// RAII wrapper for json_t* — automatically calls json_decref on destruction.
+struct JsonDeleter {
+    void operator()(json_t* p) const noexcept { if (p) json_decref(p); }
+};
+using JsonPtr = std::unique_ptr<json_t, JsonDeleter>;
+
+/// RAII wrapper for json_dumps() result (char* owned by malloc).
+struct FreeDeleter {
+    void operator()(char* p) const noexcept { std::free(p); }
+};
+using MallocPtr = std::unique_ptr<char, FreeDeleter>;
 
 /**
  * Escape a string for JSON output
  * Handles special characters like quotes, backslashes, and control characters
  */
-inline std::string escape_string(const std::string& s) {
+[[nodiscard]] inline std::string escape_string(std::string_view s) {
     std::string result;
     result.reserve(s.size() * 2);
     for (char c : s) {
@@ -31,9 +50,7 @@ inline std::string escape_string(const std::string& s) {
             case '\t': result += "\\t"; break;
             default:
                 if (c < 0x20) {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)c);
-                    result += buf;
+                    result += std::format("\\u{:04x}", static_cast<unsigned char>(c));
                 } else {
                     result += c;
                 }
@@ -49,13 +66,13 @@ inline std::string escape_string(const std::string& s) {
  * @param default_val The default value if key doesn't exist or isn't a string
  * @return The string value or default
  */
-inline std::string get_string(json_t* obj, const char* key, const std::string& default_val = "") {
+[[nodiscard]] inline std::string get_string(json_t* obj, const char* key, std::string_view default_val = "") {
     json_t* val = json_object_get(obj, key);
     if (val && json_is_string(val)) {
         const char* strValue = json_string_value(val);
         return strValue;
     }
-    return default_val;
+    return std::string{default_val};
 }
 
 /**
@@ -65,11 +82,10 @@ inline std::string get_string(json_t* obj, const char* key, const std::string& d
  * @param default_val The default value if key doesn't exist or isn't an integer
  * @return The integer value or default
  */
-inline int get_int(json_t* obj, const char* key, int default_val = 0) {
+[[nodiscard]] inline int get_int(json_t* obj, const char* key, int default_val = 0) {
     json_t* val = json_object_get(obj, key);
     if (val && json_is_integer(val)) {
-        int intValue = static_cast<int>(json_integer_value(val));
-        return intValue;
+        return static_cast<int>(json_integer_value(val));
     }
     return default_val;
 }
@@ -81,17 +97,14 @@ inline int get_int(json_t* obj, const char* key, int default_val = 0) {
  * @param default_val The default value if key doesn't exist or isn't a boolean
  * @return The boolean value or default
  */
-inline bool get_bool(json_t* obj, const char* key, bool default_val = false) {
+[[nodiscard]] inline bool get_bool(json_t* obj, const char* key, bool default_val = false) {
     json_t* val = json_object_get(obj, key);
-    if (val) {
-        if (json_is_boolean(val)) {
-            bool boolValue = json_is_true(val);
-            return boolValue;
-        }
+    if (val && json_is_boolean(val)) {
+        return json_is_true(val);
     }
     return default_val;
 }
 
 } // namespace json_utils
 
-#endif // JSON_UTILS_HPP
+

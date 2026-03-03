@@ -7,6 +7,7 @@
  */
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <optional>
 #include <filesystem>
@@ -84,77 +85,77 @@ public:
     /**
      * Load connections from config file
      */
-    bool load();
+    [[nodiscard]] bool load();
     
     /**
      * Save connections to config file
      */
-    bool save();
+    [[nodiscard]] bool save();
     
     /**
      * Save a single connection profile
      */
-    bool save_connection(const ConnectionProfile& profile);
+    [[nodiscard]] bool save_connection(const ConnectionProfile& profile);
     
     /**
      * Delete a connection by name
      */
-    bool delete_connection(const std::string& name);
+    [[nodiscard]] bool delete_connection(std::string_view name);
 
     /**
      * Create a new database file (or open if it already exists)
      */
-    bool create_database(const std::string& path);
+    [[nodiscard]] bool create_database(std::string_view path);
 
     /**
      * Open an existing database file
      */
-    bool open_database(const std::string& path);
+    [[nodiscard]] bool open_database(std::string_view path);
 
     /**
      * Clone a database file to a new path and open the clone
      */
-    bool clone_database(const std::string& source_path, const std::string& target_path);
+    [[nodiscard]] bool clone_database(std::string_view source_path, std::string_view target_path);
 
     /**
      * Close the current database
      */
-    bool close_database();
+    [[nodiscard]] bool close_database();
 
     /**
      * Get whether a database is currently open
      */
-    bool has_open_database() const;
+    [[nodiscard]] bool has_open_database() const;
 
     /**
      * Get current database path (empty string if none)
      */
-    std::string get_database_path() const;
+    [[nodiscard]] std::string get_database_path() const;
 
     /**
      * Create/register a folder path
      */
-    bool create_folder(const std::string& folder);
+    [[nodiscard]] bool create_folder(std::string_view folder);
 
     /**
      * Move folder under a new parent folder (empty parent means root)
      */
-    bool move_folder(const std::string& source_folder, const std::string& target_parent_folder);
+    [[nodiscard]] bool move_folder(std::string_view source_folder, std::string_view target_parent_folder);
 
     /**
      * Rename a folder (renames all nested paths too)
      */
-    bool rename_folder(const std::string& source_folder, const std::string& new_name);
+    [[nodiscard]] bool rename_folder(std::string_view source_folder, std::string_view new_name);
 
     /**
      * Delete a folder, all subfolders, and all contained connections
      */
-    bool delete_folder(const std::string& folder);
+    [[nodiscard]] bool delete_folder(std::string_view folder);
 
     /**
      * Get folders as JSON array
      */
-    std::string get_folders_json() const;
+    [[nodiscard]] std::string get_folders_json() const;
 
     /**
      * Lookup cached AAD token by hostname and cache kind (e.g. gateway/machine)
@@ -179,17 +180,17 @@ public:
     /**
      * Get connection by name
      */
-    std::optional<ConnectionProfile> get_connection(const std::string& name) const;
+    [[nodiscard]] std::optional<ConnectionProfile> get_connection(std::string_view name) const;
     
     /**
      * Get all connections as JSON string (for frontend)
      */
-    std::string get_connections_json() const;
+    [[nodiscard]] std::string get_connections_json() const;
     
     /**
      * Get list of all connection profiles
      */
-    const std::vector<ConnectionProfile>& get_connections() const { return m_connections; }
+    [[nodiscard]] const std::vector<ConnectionProfile>& get_connections() const { return m_connections; }
 
     // ========================================================================
     // Feed Account Management
@@ -198,27 +199,27 @@ public:
     /**
      * Add a new feed account
      */
-    bool add_feed_account(const FeedAccount& account);
+    [[nodiscard]] bool add_feed_account(const FeedAccount& account);
 
     /**
      * Update an existing feed account
      */
-    bool update_feed_account(const FeedAccount& account);
+    [[nodiscard]] bool update_feed_account(const FeedAccount& account);
 
     /**
      * Delete a feed account by id
      */
-    bool delete_feed_account(const std::string& id);
+    [[nodiscard]] bool delete_feed_account(std::string_view id);
 
     /**
      * Get all feed accounts
      */
-    std::vector<FeedAccount> get_feed_accounts() const;
+    [[nodiscard]] std::vector<FeedAccount> get_feed_accounts() const;
 
     /**
      * Get all feed accounts as JSON string
      */
-    std::string get_feed_accounts_json() const;
+    [[nodiscard]] std::string get_feed_accounts_json() const;
     
 private:
     std::vector<ConnectionProfile> m_connections;

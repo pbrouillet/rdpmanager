@@ -5,8 +5,7 @@
  * configuration manager, dialog manager, and AAD authentication handler.
  */
 
-#ifndef MAIN_WINDOW_HPP
-#define MAIN_WINDOW_HPP
+#pragma once
 
 #include <webui.hpp>
 #include <memory>
@@ -50,13 +49,13 @@ public:
      * Initialize the window and all dependencies
      * @return true on success, false on failure
      */
-    bool initialize();
+    [[nodiscard]] bool initialize();
 
     /**
      * Show the window
      * @return true on success, false on failure
      */
-    bool show();
+    [[nodiscard]] bool show();
 
     /**
      * Get the underlying WebUI window (for advanced use)
@@ -138,4 +137,4 @@ private:
     std::atomic<bool> m_exit_scheduled{false};
 };
 
-#endif // MAIN_WINDOW_HPP
+

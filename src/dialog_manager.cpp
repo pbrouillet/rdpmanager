@@ -7,6 +7,9 @@
 
 #include "dialog_manager.hpp"
 #include "json_utils.hpp"
+#include "logger.hpp"
+
+#include <format>
 
 void DialogManager::set_main_window(webui::window* window) {
     m_main_window = window;
@@ -34,7 +37,7 @@ void DialogManager::on_certificate_response(int choice) {
     m_cert_dialog_pending = false;
     m_dialog_cv.notify_all();
     
-    std::cout << "[RDPMAN] Certificate response: " << choice << std::endl;
+    LOG_DEBUG("DialogMgr", "Certificate response: " << choice);
 }
 
 void DialogManager::on_auth_response(bool success, const std::string& username,
@@ -44,7 +47,7 @@ void DialogManager::on_auth_response(bool success, const std::string& username,
     m_auth_dialog_pending = false;
     m_dialog_cv.notify_all();
     
-    std::cout << "[RDPMAN] Auth response: " << (success ? "submitted" : "cancelled") << std::endl;
+    LOG_DEBUG("DialogMgr", "Auth response: " << (success ? "submitted" : "cancelled"));
 }
 
 // ============================================================================
@@ -61,17 +64,16 @@ CertificateAcceptance DialogManager::handle_certificate_verify(const Certificate
     
     // Call JavaScript to show the certificate dialog
     if (m_main_window) {
-        std::string js = "showCertificateDialog(" +
-            std::string("{") +
-            "\"host\":\"" + json_utils::escape_string(info.host) + "\"," +
-            "\"port\":" + std::to_string(info.port) + "," +
-            "\"commonName\":\"" + json_utils::escape_string(info.common_name) + "\"," +
-            "\"subject\":\"" + json_utils::escape_string(info.subject) + "\"," +
-            "\"issuer\":\"" + json_utils::escape_string(info.issuer) + "\"," +
-            "\"fingerprint\":\"" + json_utils::escape_string(info.fingerprint) + "\"," +
-            "\"isChanged\":" + (info.is_changed ? "true" : "false") + "," +
-            "\"oldFingerprint\":\"" + json_utils::escape_string(info.old_fingerprint) + "\"" +
-            "});";
+        auto js = std::format(
+            R"(showCertificateDialog({{"host":"{}","port":{},"commonName":"{}","subject":"{}","issuer":"{}","fingerprint":"{}","isChanged":{},"oldFingerprint":"{}"}}))",
+            json_utils::escape_string(info.host), info.port,
+            json_utils::escape_string(info.common_name),
+            json_utils::escape_string(info.subject),
+            json_utils::escape_string(info.issuer),
+            json_utils::escape_string(info.fingerprint),
+            info.is_changed ? "true" : "false",
+            json_utils::escape_string(info.old_fingerprint)
+        );
         m_main_window->run(js);
     }
     
@@ -81,7 +83,7 @@ CertificateAcceptance DialogManager::handle_certificate_verify(const Certificate
     });
     
     if (!status) {
-        std::cerr << "[RDPMAN] Certificate dialog timed out" << std::endl;
+        LOG_ERROR("DialogMgr", "Certificate dialog timed out");
         return CertificateAcceptance::Reject;
     }
     
@@ -98,13 +100,13 @@ AuthResponse DialogManager::handle_authenticate(const AuthRequest& request) {
     
     // Call JavaScript to show the auth dialog
     if (m_main_window) {
-        std::string js = "showAuthDialog(" +
-            std::string("{") +
-            "\"hostname\":\"" + json_utils::escape_string(request.hostname) + "\"," +
-            "\"isGateway\":" + (request.is_gateway ? "true" : "false") + "," +
-            "\"currentUsername\":\"" + json_utils::escape_string(request.current_username) + "\"," +
-            "\"currentDomain\":\"" + json_utils::escape_string(request.current_domain) + "\"" +
-            "});";
+        auto js = std::format(
+            R"(showAuthDialog({{"hostname":"{}","isGateway":{},"currentUsername":"{}","currentDomain":"{}"}}))",
+            json_utils::escape_string(request.hostname),
+            request.is_gateway ? "true" : "false",
+            json_utils::escape_string(request.current_username),
+            json_utils::escape_string(request.current_domain)
+        );
         m_main_window->run(js);
     }
     
@@ -114,7 +116,7 @@ AuthResponse DialogManager::handle_authenticate(const AuthRequest& request) {
     });
     
     if (!status) {
-        std::cerr << "[RDPMAN] Auth dialog timed out" << std::endl;
+        LOG_ERROR("DialogMgr", "Auth dialog timed out");
         return {false, "", "", ""};
     }
     
