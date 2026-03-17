@@ -590,8 +590,10 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     }
     
     LOG_INFO("RDPSession", "AAD authentication: received redirect URL");
-    LOG_INFO("RDPSession", "  Redirect URL: " << response.redirect_url);
-    LOG_INFO("RDPSession", "  Actual redirect_uri used: " << response.actual_redirect_uri);
+#ifdef VERBOSE_SECRETS
+    LOG_DEBUG("RDPSession", "  Redirect URL: " << response.redirect_url);
+    LOG_DEBUG("RDPSession", "  Actual redirect_uri used: " << response.actual_redirect_uri);
+#endif
     
     // Extract authorization code from redirect URL
     std::string code = extract_code_from_url(response.redirect_url);
@@ -610,11 +612,15 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_TOKEN_REQUEST,
                                                        scope.c_str(), code.c_str(), req_cnf.c_str());
             if (token_request_raw) {
-                LOG_INFO("RDPSession", "RDS_AAD Token request (original): " << token_request_raw);
+#ifdef VERBOSE_SECRETS
+                LOG_DEBUG("RDPSession", "RDS_AAD Token request (original): " << token_request_raw);
+#endif
                 // The token request redirect_uri must match the one used in the auth request.
                 // FreeRDP builds it with the original URI (ms-appx-web), but we used localhost.
                 token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
-                LOG_INFO("RDPSession", "RDS_AAD Token request (final): " << token_request);
+#ifdef VERBOSE_SECRETS
+                LOG_DEBUG("RDPSession", "RDS_AAD Token request (final): " << token_request);
+#endif
                 free(token_request_raw);
             }
             break;
@@ -622,9 +628,13 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
             token_request_raw = freerdp_client_get_aad_url(cctx, FREERDP_CLIENT_AAD_AVD_TOKEN_REQUEST,
                                                        code.c_str());
             if (token_request_raw) {
-                LOG_INFO("RDPSession", "AVD Token request (original): " << token_request_raw);
+#ifdef VERBOSE_SECRETS
+                LOG_DEBUG("RDPSession", "AVD Token request (original): " << token_request_raw);
+#endif
                 token_request = replace_redirect_uri_in_request(token_request_raw, response.actual_redirect_uri);
-                LOG_INFO("RDPSession", "AVD Token request (final): " << token_request);
+#ifdef VERBOSE_SECRETS
+                LOG_DEBUG("RDPSession", "AVD Token request (final): " << token_request);
+#endif
                 free(token_request_raw);
             }
             break;
@@ -662,10 +672,11 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
         LOG_INFO("RDPSession", "AAD authentication: successfully obtained access token");
         if (*token) {
             size_t tlen = strlen(*token);
-            LOG_DEBUG("RDPSession", "AAD-TOKEN type=" << tokenType
-                      << " len=" << tlen
-                      << " first80=" << std::string(*token, std::min(tlen, (size_t)80))
+            LOG_INFO("RDPSession", "AAD-TOKEN type=" << tokenType << " len=" << tlen);
+#ifdef VERBOSE_SECRETS
+            LOG_DEBUG("RDPSession", "AAD-TOKEN in full" << std::string(*token, tlen)
                       << "...");
+#endif
 
             if (session->m_token_cache_store_callback && !cache_hostname.empty()) {
                 const auto expires_at = utils::jwt_extract_expiration(*token);

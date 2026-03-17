@@ -33,3 +33,9 @@ option('embed_ui',
   value: false,
   description: 'Embed UI assets into the executable via WebUI VFS (single-binary deployment)'
 )
+
+option('verbose_secrets',
+  type: 'boolean',
+  value: false,
+  description: 'Log actual token values in token cache operations (security risk, debug only)'
+)

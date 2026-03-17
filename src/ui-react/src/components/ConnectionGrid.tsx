@@ -87,7 +87,7 @@ const useStyles = makeStyles({
   },
 });
 
-interface ConnectionGridProps {
+export interface ConnectionGridProps {
   connections: ConnectionProfile[];
   selectedIndex: number | null;
   onSelect: (index: number) => void;

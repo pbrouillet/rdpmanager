@@ -165,7 +165,8 @@ private:
      */
     bool import_resource(const FeedResource& resource,
                          const std::string& workspace_name,
-                         const std::string& rdp_content);
+                         const std::string& rdp_content,
+                         const std::string& account_id = "");
 
     /**
      * Send a progress notification to the main window

@@ -136,6 +136,7 @@ static ConnectionProfile profile_from_json(json_t* obj) {
     p.arm_path            = json_utils::get_string(obj, "arm_path");
     p.remote_application_program = json_utils::get_string(obj, "remote_application_program");
     p.aad_tenant_id   = json_utils::get_string(obj, "aad_tenant_id");
+    p.source_account_id = json_utils::get_string(obj, "source_account_id");
 
     // Clamp defaults
     if (p.port   <= 0) p.port   = 3389;
@@ -186,6 +187,7 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "arm_path",            json_string(c.arm_path.c_str()));
     json_object_set_new(obj, "remote_application_program", json_string(c.remote_application_program.c_str()));
     json_object_set_new(obj, "aad_tenant_id",     json_string(c.aad_tenant_id.c_str()));
+    json_object_set_new(obj, "source_account_id", json_string(c.source_account_id.c_str()));
     return obj;
 }
 
@@ -976,13 +978,17 @@ std::string ConfigManager::get_folders_json() const {
 
 std::optional<std::string> ConfigManager::get_cached_token(const std::string& hostname,
                                                            const std::string& cache_kind) const {
+    LOG_INFO("TokenCache", "LOOKUP host=" << hostname << " kind=" << cache_kind);
+
     if (!m_db) {
+        LOG_INFO("TokenCache", "LOOKUP MISS (no database open)");
         return std::nullopt;
     }
 
     const std::string host_key = normalize_token_cache_key(hostname);
     const std::string kind_key = normalize_token_cache_key(cache_kind);
     if (host_key.empty() || kind_key.empty()) {
+        LOG_INFO("TokenCache", "LOOKUP MISS (empty key after normalization)");
         return std::nullopt;
     }
 
@@ -990,7 +996,7 @@ std::optional<std::string> ConfigManager::get_cached_token(const std::string& ho
         "SELECT access_token, expires_at FROM \"token-cache\" WHERE hostname = ? AND cache_kind = ?";
     SqliteStmt stmt(m_db, sql);
     if (!stmt) {
-        LOG_ERROR("ConfigMgr", "Failed to prepare token cache SELECT: "
+        LOG_ERROR("TokenCache", "LOOKUP ERROR preparing SELECT: "
                   << sqlite3_errmsg(m_db));
         return std::nullopt;
     }
@@ -1010,9 +1016,22 @@ std::optional<std::string> ConfigManager::get_cached_token(const std::string& ho
 
         if (token && expires_at > (now + 30)) {
             result = std::string(token);
+            LOG_INFO("TokenCache", "LOOKUP HIT host=" << host_key
+                      << " kind=" << kind_key
+                      << " ttl=" << (expires_at - now) << "s"
+                      << " len=" << result->size());
+#ifdef VERBOSE_SECRETS
+            LOG_DEBUG("TokenCache", "LOOKUP HIT token=" << result->substr(0, 80) << "...");
+#endif
         } else {
+            LOG_INFO("TokenCache", "LOOKUP EXPIRED host=" << host_key
+                      << " kind=" << kind_key
+                      << " expired_ago=" << (now - expires_at) << "s");
             return std::nullopt;
         }
+    } else {
+        LOG_INFO("TokenCache", "LOOKUP MISS host=" << host_key
+                  << " kind=" << kind_key << " (no row)");
     }
 
     return result;
@@ -1022,13 +1041,21 @@ bool ConfigManager::set_cached_token(const std::string& hostname,
                                      const std::string& cache_kind,
                                      const std::string& token,
                                      int64_t expires_at_epoch) {
+    LOG_INFO("TokenCache", "STORE host=" << hostname << " kind=" << cache_kind
+              << " expires_at=" << expires_at_epoch << " len=" << token.size());
+#ifdef VERBOSE_SECRETS
+    LOG_DEBUG("TokenCache", "STORE token=" << token.substr(0, 80) << "...");
+#endif
+
     if (!m_db) {
+        LOG_ERROR("TokenCache", "STORE FAILED (no database open)");
         return false;
     }
 
     const std::string host_key = normalize_token_cache_key(hostname);
     const std::string kind_key = normalize_token_cache_key(cache_kind);
     if (host_key.empty() || kind_key.empty() || token.empty() || expires_at_epoch <= 0) {
+        LOG_ERROR("TokenCache", "STORE FAILED (invalid parameters)");
         return false;
     }
 
@@ -1045,7 +1072,7 @@ bool ConfigManager::set_cached_token(const std::string& hostname,
 
     SqliteStmt stmt(m_db, sql);
     if (!stmt) {
-        LOG_ERROR("ConfigMgr", "Failed to prepare token cache UPSERT: "
+        LOG_ERROR("TokenCache", "STORE ERROR preparing UPSERT: "
                   << sqlite3_errmsg(m_db));
         return false;
     }
@@ -1057,9 +1084,12 @@ bool ConfigManager::set_cached_token(const std::string& hostname,
     sqlite3_bind_int64(stmt, 5, now);
 
     const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
-    if (!ok) {
-        LOG_ERROR("ConfigMgr", "Failed to save token cache entry: "
-                  << sqlite3_errmsg(m_db));
+    if (ok) {
+        LOG_INFO("TokenCache", "STORE OK host=" << host_key << " kind=" << kind_key
+                  << " ttl=" << (expires_at_epoch - now) << "s");
+    } else {
+        LOG_ERROR("TokenCache", "STORE FAILED host=" << host_key << " kind=" << kind_key
+                  << ": " << sqlite3_errmsg(m_db));
     }
 
     return ok;
@@ -1067,20 +1097,24 @@ bool ConfigManager::set_cached_token(const std::string& hostname,
 
 bool ConfigManager::delete_cached_token(const std::string& hostname,
                                         const std::string& cache_kind) {
+    LOG_INFO("TokenCache", "DELETE host=" << hostname << " kind=" << cache_kind);
+
     if (!m_db) {
+        LOG_ERROR("TokenCache", "DELETE FAILED (no database open)");
         return false;
     }
 
     const std::string host_key = normalize_token_cache_key(hostname);
     const std::string kind_key = normalize_token_cache_key(cache_kind);
     if (host_key.empty() || kind_key.empty()) {
+        LOG_ERROR("TokenCache", "DELETE FAILED (empty key after normalization)");
         return false;
     }
 
     const char* sql = "DELETE FROM \"token-cache\" WHERE hostname = ? AND cache_kind = ?";
     SqliteStmt stmt(m_db, sql);
     if (!stmt) {
-        LOG_ERROR("ConfigMgr", "Failed to prepare token cache DELETE: "
+        LOG_ERROR("TokenCache", "DELETE ERROR preparing statement: "
                   << sqlite3_errmsg(m_db));
         return false;
     }
@@ -1089,6 +1123,14 @@ bool ConfigManager::delete_cached_token(const std::string& hostname,
     sqlite3_bind_text(stmt, 2, kind_key.c_str(), -1, SQLITE_TRANSIENT);
 
     const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (ok) {
+        const int changes = sqlite3_changes(m_db);
+        LOG_INFO("TokenCache", "DELETE OK host=" << host_key << " kind=" << kind_key
+                  << " rows_removed=" << changes);
+    } else {
+        LOG_ERROR("TokenCache", "DELETE FAILED host=" << host_key << " kind=" << kind_key
+                  << ": " << sqlite3_errmsg(m_db));
+    }
     return ok;
 }
 
@@ -1170,6 +1212,70 @@ bool ConfigManager::delete_feed_account(std::string_view id) {
     sqlite3_bind_text(stmt, 1, std::string{id}.c_str(), -1, SQLITE_TRANSIENT);
     const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     return ok;
+}
+
+bool ConfigManager::clear_tokens_for_account(std::string_view account_id) {
+    if (!m_db || account_id.empty()) {
+        return false;
+    }
+
+    LOG_INFO("TokenCache", "CLEAR_FOR_ACCOUNT id=" << account_id);
+
+    // Find all connections belonging to this account and delete their cached tokens
+    int cleared = 0;
+    for (const auto& conn : m_connections) {
+        if (conn.source_account_id != account_id) continue;
+
+        if (!conn.hostname.empty()) {
+            delete_cached_token(conn.hostname, "machine");
+            cleared++;
+        }
+        if (!conn.gateway_hostname.empty()) {
+            delete_cached_token(conn.gateway_hostname, "gateway");
+            cleared++;
+        }
+    }
+
+    // Clear the account's refresh_token
+    const char* sql = "UPDATE feed_accounts SET refresh_token = '' WHERE id = ?";
+    SqliteStmt stmt(m_db, sql);
+    if (stmt) {
+        sqlite3_bind_text(stmt, 1, std::string{account_id}.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+    }
+
+    LOG_INFO("TokenCache", "CLEAR_FOR_ACCOUNT id=" << account_id
+              << " token_entries_cleared=" << cleared);
+    return true;
+}
+
+bool ConfigManager::forget_account(std::string_view account_id) {
+    if (!m_db || account_id.empty()) {
+        return false;
+    }
+
+    LOG_INFO("ConfigMgr", "FORGET_ACCOUNT id=" << account_id);
+
+    // Step 1: Clear cached tokens for this account's connections
+    clear_tokens_for_account(account_id);
+
+    // Step 2: Delete all connections imported by this account
+    std::vector<std::string> to_delete;
+    for (const auto& conn : m_connections) {
+        if (conn.source_account_id == account_id) {
+            to_delete.push_back(conn.name);
+        }
+    }
+    for (const auto& name : to_delete) {
+        (void)delete_connection(name);
+    }
+    LOG_INFO("ConfigMgr", "FORGET_ACCOUNT deleted " << to_delete.size() << " connections");
+
+    // Step 3: Delete the feed account record
+    (void)delete_feed_account(account_id);
+
+    LOG_INFO("ConfigMgr", "FORGET_ACCOUNT complete id=" << account_id);
+    return true;
 }
 
 std::vector<FeedAccount> ConfigManager::get_feed_accounts() const {

@@ -61,6 +61,7 @@ struct ConnectionProfile {
     std::string arm_path;              // Azure Resource Manager path
     std::string remote_application_program; // Remote application program (e.g. ||<GUID>)
     std::string aad_tenant_id;             // AAD tenant ID for Azure authentication
+    std::string source_account_id;         // Feed account ID that imported this connection
 };
 
 /**
@@ -210,6 +211,18 @@ public:
      * Delete a feed account by id
      */
     [[nodiscard]] bool delete_feed_account(std::string_view id);
+
+    /**
+     * Clear cached tokens for all connections belonging to a feed account.
+     * Also clears the account's refresh_token.
+     */
+    bool clear_tokens_for_account(std::string_view account_id);
+
+    /**
+     * Forget (fully remove) a feed account: clear its cached tokens,
+     * delete all connections imported by it, and remove the account record.
+     */
+    bool forget_account(std::string_view account_id);
 
     /**
      * Get all feed accounts

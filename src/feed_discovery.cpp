@@ -416,7 +416,8 @@ std::string FeedDiscoveryManager::fetch_rdp_content(const std::string& rdp_url,
 
 bool FeedDiscoveryManager::import_resource(const FeedResource& resource,
                                             const std::string& workspace_name,
-                                            const std::string& rdp_content) {
+                                            const std::string& rdp_content,
+                                            const std::string& account_id) {
     if (rdp_content.empty()) {
         return false;
     }
@@ -454,6 +455,9 @@ bool FeedDiscoveryManager::import_resource(const FeedResource& resource,
     profile.workspace_id = rdp.workspace_id;
     profile.arm_path = rdp.arm_path.empty() ? resource.arm_path : rdp.arm_path;
     profile.remote_application_program = rdp.remote_application_program;
+
+    // Link this connection back to the feed account that imported it
+    profile.source_account_id = account_id;
 
     // Display settings
     profile.dynamic_resolution = rdp.dynamic_resolution;
@@ -894,7 +898,7 @@ FeedDiscoveryResult FeedDiscoveryManager::discover_and_import(
                 continue;
             }
 
-            if (import_resource(resource, tenant.workspace_name, rdp_content)) {
+            if (import_resource(resource, tenant.workspace_name, rdp_content, account.id)) {
                 imported++;
                 LOG_INFO("FeedDiscovery", "Imported: " << resource.title
                           << " into Feeds/" << tenant.workspace_name);

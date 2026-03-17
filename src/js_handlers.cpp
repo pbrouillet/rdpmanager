@@ -179,6 +179,8 @@ void JSHandlers::bind_all(webui::window& window) {
     window.bind("getFeedAccounts", s_get_feed_accounts);
     window.bind("deleteFeedAccount", s_delete_feed_account);
     window.bind("discoverFeeds", s_discover_feeds);
+    window.bind("logOffAccount", s_log_off_account);
+    window.bind("forgetAccount", s_forget_account);
 }
 
 // ============================================================================
@@ -640,4 +642,20 @@ void JSHandlers::s_discover_feeds(webui::window::event* e) {
         json_utils::escape_string(result.account_display_name)
     );
     e->return_string(json);
+}
+
+void JSHandlers::s_log_off_account(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string id = e->get_string(0);
+    bool success = s_instance->m_config_manager.clear_tokens_for_account(id);
+    e->return_bool(success);
+}
+
+void JSHandlers::s_forget_account(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string id = e->get_string(0);
+    bool success = s_instance->m_config_manager.forget_account(id);
+    e->return_bool(success);
 }

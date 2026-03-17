@@ -18,6 +18,7 @@ import type {
   AppInfo,
   DatabaseStatus,
   FeedAccount,
+  ViewMode,
 } from './types';
 import { defaultConnectionProfile } from './types';
 import {
@@ -44,16 +45,20 @@ import {
   apiGetFeedAccounts,
   apiDeleteFeedAccount,
   apiDiscoverFeeds,
+  apiLogOffAccount,
+  apiForgetAccount,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
 import { Toolbar } from './components/Toolbar';
 import { ConnectionGrid } from './components/ConnectionGrid';
+import { ConnectionTable } from './components/ConnectionTable';
 import { FolderTree } from './components/FolderTree';
 import { ConnectionEditorDialog } from './components/ConnectionEditorDialog';
 import { CertificateDialog } from './components/CertificateDialog';
 import { AuthDialog } from './components/AuthDialog';
 import { DeleteDialog } from './components/DeleteDialog';
+import { AccountActionDialog, type AccountAction } from './components/AccountActionDialog';
 import { getFluentTheme, type ThemeMode } from './theme';
 
 const useStyles = makeStyles({
@@ -115,6 +120,11 @@ export function App() {
     return saved === 'light' ? 'light' : 'dark';
   });
 
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const saved = window.localStorage.getItem('rdpmanager-view-mode');
+    return saved === 'table' ? 'table' : 'grid';
+  });
+
   // State
   const [connections, setConnections] = useState<ConnectionProfile[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -147,6 +157,11 @@ export function App() {
   // Feed discovery state
   const [feedAccounts, setFeedAccounts] = useState<FeedAccount[]>([]);
   const [discoveryInProgress, setDiscoveryInProgress] = useState(false);
+
+  // Account action dialog state
+  const [accountActionOpen, setAccountActionOpen] = useState(false);
+  const [accountAction, setAccountAction] = useState<AccountAction>('logoff');
+  const [accountActionTarget, setAccountActionTarget] = useState<{ id: string; name: string }>({ id: '', name: '' });
 
   // Ref to track imported RDP data for connection params
   const importedRdpDataRef = useRef<Record<string, unknown> | null>(null);
@@ -927,16 +942,17 @@ export function App() {
               showToast(result.error || 'Feed discovery failed', 'error');
             }
           }}
-          onDeleteAccount={async (id) => {
-            const confirmed = window.confirm('Delete this feed account?');
-            if (!confirmed) return;
-            const success = await apiDeleteFeedAccount(id);
-            if (success) {
-              showToast('Account deleted', 'info');
-              await loadFeedAccounts();
-            } else {
-              showToast('Failed to delete account', 'error');
-            }
+          onLogOffAccount={(id) => {
+            const acct = feedAccounts.find(a => a.id === id);
+            setAccountAction('logoff');
+            setAccountActionTarget({ id, name: acct?.display_name ?? id });
+            setAccountActionOpen(true);
+          }}
+          onForgetAccount={(id) => {
+            const acct = feedAccounts.find(a => a.id === id);
+            setAccountAction('forget');
+            setAccountActionTarget({ id, name: acct?.display_name ?? id });
+            setAccountActionOpen(true);
           }}
           onDiscoverFeeds={async (account) => {
             setDiscoveryInProgress(true);
@@ -950,6 +966,11 @@ export function App() {
             }
           }}
           discoveryInProgress={discoveryInProgress}
+          viewMode={viewMode}
+          onViewModeChange={(mode) => {
+            setViewMode(mode);
+            window.localStorage.setItem('rdpmanager-view-mode', mode);
+          }}
         />
         <DatabaseTabs
           databases={openDatabases}
@@ -987,16 +1008,29 @@ export function App() {
               aria-label="Resize folder tree"
             />
             <div className={styles.contentPane}>
-              <ConnectionGrid
-                connections={visibleConnections}
-                selectedIndex={selectedIndex}
-                onSelect={setSelectedIndex}
-                onDoubleClick={handleDoubleClick}
-                onConnect={handleContextConnect}
-                onEdit={handleEditConnection}
-                onDelete={handleRequestDelete}
-                onDragStartConnection={setDraggingConnectionName}
-              />
+              {viewMode === 'table' ? (
+                <ConnectionTable
+                  connections={visibleConnections}
+                  selectedIndex={selectedIndex}
+                  onSelect={setSelectedIndex}
+                  onDoubleClick={handleDoubleClick}
+                  onConnect={handleContextConnect}
+                  onEdit={handleEditConnection}
+                  onDelete={handleRequestDelete}
+                  onDragStartConnection={setDraggingConnectionName}
+                />
+              ) : (
+                <ConnectionGrid
+                  connections={visibleConnections}
+                  selectedIndex={selectedIndex}
+                  onSelect={setSelectedIndex}
+                  onDoubleClick={handleDoubleClick}
+                  onConnect={handleContextConnect}
+                  onEdit={handleEditConnection}
+                  onDelete={handleRequestDelete}
+                  onDragStartConnection={setDraggingConnectionName}
+                />
+              )}
             </div>
           </div>
         )}
@@ -1032,6 +1066,36 @@ export function App() {
           connectionName={deleteTargetName}
           onConfirm={() => handleDeleteConnection(deleteTargetName)}
           onCancel={() => setDeleteDialogOpen(false)}
+        />
+
+        <AccountActionDialog
+          open={accountActionOpen}
+          action={accountAction}
+          accountName={accountActionTarget.name}
+          onCancel={() => setAccountActionOpen(false)}
+          onConfirm={async () => {
+            setAccountActionOpen(false);
+            const { id } = accountActionTarget;
+            if (accountAction === 'logoff') {
+              const success = await apiLogOffAccount(id);
+              if (success) {
+                showToast('Logged off — cached tokens cleared', 'info');
+                await loadFeedAccounts();
+              } else {
+                showToast('Failed to log off account', 'error');
+              }
+            } else {
+              const success = await apiForgetAccount(id);
+              if (success) {
+                showToast('Account forgotten', 'info');
+                await loadFeedAccounts();
+                await loadConnections();
+                await loadFolders();
+              } else {
+                showToast('Failed to forget account', 'error');
+              }
+            }
+          }}
         />
       </div>
     </FluentProvider>

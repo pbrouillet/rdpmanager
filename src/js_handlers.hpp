@@ -78,6 +78,8 @@ private:
     static void s_get_feed_accounts(webui::window::event* e);
     static void s_delete_feed_account(webui::window::event* e);
     static void s_discover_feeds(webui::window::event* e);
+    static void s_log_off_account(webui::window::event* e);
+    static void s_forget_account(webui::window::event* e);
 
     // Global instance pointer for static callbacks
     static JSHandlers* s_instance;

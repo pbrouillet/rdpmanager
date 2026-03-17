@@ -291,6 +291,9 @@ app_cpp_args = [
 if embed_ui
   app_cpp_args += '-DEMBED_UI'
 endif
+if get_option('verbose_secrets')
+  app_cpp_args += '-DVERBOSE_SECRETS'
+endif
 
 # Include directories — add the build dir for generated headers (embedded_ui.hpp)
 app_inc_dirs = [inc_dirs]

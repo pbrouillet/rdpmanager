@@ -3,6 +3,7 @@ import {
   makeStyles,
   tokens,
   Button,
+  ToggleButton,
   Menu,
   MenuTrigger,
   MenuPopover,
@@ -11,6 +12,7 @@ import {
   MenuDivider,
   Spinner,
   Text,
+  Tooltip,
 } from '@fluentui/react-components';
 import {
   Add24Regular,
@@ -20,8 +22,11 @@ import {
   ArrowSync24Regular,
   Delete24Regular,
   PersonAdd24Regular,
+  SignOut24Regular,
+  Grid24Regular,
+  TextBulletListLtr24Regular,
 } from '@fluentui/react-icons';
-import type { FeedAccount } from '../types';
+import type { FeedAccount, ViewMode } from '../types';
 
 const useStyles = makeStyles({
   toolbar: {
@@ -41,6 +46,11 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase100,
     color: tokens.colorNeutralForeground4,
   },
+  viewToggle: {
+    marginLeft: 'auto',
+    display: 'flex',
+    gap: '2px',
+  },
 });
 
 interface ToolbarProps {
@@ -53,9 +63,12 @@ interface ToolbarProps {
   // Feed discovery
   feedAccounts: FeedAccount[];
   onAddAccount: () => void;
-  onDeleteAccount: (id: string) => void;
+  onLogOffAccount: (id: string) => void;
+  onForgetAccount: (id: string) => void;
   onDiscoverFeeds: (account: FeedAccount) => void;
   discoveryInProgress: boolean;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 export function Toolbar({
@@ -67,9 +80,12 @@ export function Toolbar({
   databaseOpen,
   feedAccounts,
   onAddAccount,
-  onDeleteAccount,
+  onLogOffAccount,
+  onForgetAccount,
   onDiscoverFeeds,
   discoveryInProgress,
+  viewMode,
+  onViewModeChange,
 }: ToolbarProps) {
   const styles = useStyles();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -160,10 +176,16 @@ export function Toolbar({
                     </MenuItem>
                     <MenuDivider />
                     <MenuItem
-                      icon={<Delete24Regular />}
-                      onClick={() => onDeleteAccount(account.id)}
+                      icon={<SignOut24Regular />}
+                      onClick={() => onLogOffAccount(account.id)}
                     >
-                      Delete Account
+                      Log Off
+                    </MenuItem>
+                    <MenuItem
+                      icon={<Delete24Regular />}
+                      onClick={() => onForgetAccount(account.id)}
+                    >
+                      Forget Account
                     </MenuItem>
                   </MenuList>
                 </MenuPopover>
@@ -180,6 +202,26 @@ export function Toolbar({
           </MenuList>
         </MenuPopover>
       </Menu>
+      <div className={styles.viewToggle}>
+        <Tooltip content="Grid view" relationship="label">
+          <ToggleButton
+            appearance="subtle"
+            icon={<Grid24Regular />}
+            checked={viewMode === 'grid'}
+            onClick={() => onViewModeChange('grid')}
+            size="small"
+          />
+        </Tooltip>
+        <Tooltip content="Table view" relationship="label">
+          <ToggleButton
+            appearance="subtle"
+            icon={<TextBulletListLtr24Regular />}
+            checked={viewMode === 'table'}
+            onClick={() => onViewModeChange('table')}
+            size="small"
+          />
+        </Tooltip>
+      </div>
     </div>
   );
 }

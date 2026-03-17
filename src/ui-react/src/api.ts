@@ -216,3 +216,19 @@ export async function apiDiscoverFeeds(accountId: string): Promise<DiscoverResul
     return { success: false, error: String(error), imported_count: 0, tenant_count: 0, account_id: '', account_display_name: '' };
   }
 }
+
+export async function apiLogOffAccount(id: string): Promise<boolean> {
+  try {
+    return await logOffAccount(id);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiForgetAccount(id: string): Promise<boolean> {
+  try {
+    return await forgetAccount(id);
+  } catch {
+    return false;
+  }
+}

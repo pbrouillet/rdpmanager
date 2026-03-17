@@ -114,6 +114,8 @@ export interface DiscoverResult {
   account_display_name: string;
 }
 
+export type ViewMode = 'grid' | 'table';
+
 export function defaultConnectionProfile(): ConnectionProfile {
   return {
     name: '',

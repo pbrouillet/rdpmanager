@@ -45,3 +45,5 @@ declare function aadAuthResponse(
 declare function getFeedAccounts(): Promise<string>;
 declare function deleteFeedAccount(id: string): Promise<boolean>;
 declare function discoverFeeds(accountId: string): Promise<string>;
+declare function logOffAccount(id: string): Promise<boolean>;
+declare function forgetAccount(id: string): Promise<boolean>;
