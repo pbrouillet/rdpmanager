@@ -79,6 +79,7 @@ struct RDPConnectionParams {
     // Azure AD Authentication
     bool target_is_aad_joined = false;     // Target is Azure AD joined
     bool enable_rds_aad_auth = false;      // Enable RDS AAD authentication
+    bool use_manual_code_flow = false;     // Use UI manual code flow for AAD auth
     std::string aad_tenant_id;             // Azure AD tenant ID
     
     // Gateway settings (for AVD/WVD)

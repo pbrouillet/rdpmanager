@@ -129,6 +129,7 @@ static ConnectionProfile profile_from_json(json_t* obj) {
     p.enable_rds_aad_auth  = json_utils::get_bool(obj, "enable_rds_aad_auth");
     p.target_is_aad_joined = json_utils::get_bool(obj, "target_is_aad_joined");
     p.load_balance_info    = json_utils::get_string(obj, "load_balance_info");
+    p.use_manual_code_flow = json_utils::get_bool(obj, "use_manual_code_flow");
 
     // AVD/Dev Box fields
     p.remote_desktop_name = json_utils::get_string(obj, "remote_desktop_name");
@@ -200,6 +201,7 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "enable_rds_aad_auth",  json_boolean(c.enable_rds_aad_auth));
     json_object_set_new(obj, "target_is_aad_joined", json_boolean(c.target_is_aad_joined));
     json_object_set_new(obj, "load_balance_info",    json_string(c.load_balance_info.c_str()));
+    json_object_set_new(obj, "use_manual_code_flow", json_boolean(c.use_manual_code_flow));
     // AVD/Dev Box fields
     json_object_set_new(obj, "remote_desktop_name", json_string(c.remote_desktop_name.c_str()));
     json_object_set_new(obj, "wvd_endpoint_pool",   json_string(c.wvd_endpoint_pool.c_str()));
@@ -251,6 +253,7 @@ static json_t* folder_settings_to_json(const FolderSettings& s) {
     set_opt_bool("enable_rds_aad_auth", s.enable_rds_aad_auth);
     set_opt_bool("target_is_aad_joined", s.target_is_aad_joined);
     set_opt_str("load_balance_info", s.load_balance_info);
+    set_opt_bool("use_manual_code_flow", s.use_manual_code_flow);
     return obj;
 }
 
@@ -291,6 +294,7 @@ static FolderSettings folder_settings_from_json(json_t* obj) {
     s.enable_rds_aad_auth = get_opt_bool("enable_rds_aad_auth");
     s.target_is_aad_joined = get_opt_bool("target_is_aad_joined");
     s.load_balance_info = get_opt_str("load_balance_info");
+    s.use_manual_code_flow = get_opt_bool("use_manual_code_flow");
     return s;
 }
 
@@ -315,6 +319,7 @@ static FolderSettings merge_folder_settings(const FolderSettings& base, const Fo
     merge(merged.enable_rds_aad_auth, top.enable_rds_aad_auth);
     merge(merged.target_is_aad_joined, top.target_is_aad_joined);
     merge(merged.load_balance_info, top.load_balance_info);
+    merge(merged.use_manual_code_flow, top.use_manual_code_flow);
     return merged;
 }
 
@@ -1038,6 +1043,7 @@ ConnectionProfile ConfigManager::resolve_effective_profile(const ConnectionProfi
     apply_bool("enable_rds_aad_auth", result.enable_rds_aad_auth, folder_resolved.enable_rds_aad_auth);
     apply_bool("target_is_aad_joined", result.target_is_aad_joined, folder_resolved.target_is_aad_joined);
     apply_str("load_balance_info", result.load_balance_info, folder_resolved.load_balance_info);
+    apply_bool("use_manual_code_flow", result.use_manual_code_flow, folder_resolved.use_manual_code_flow);
 
     return result;
 }

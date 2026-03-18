@@ -49,6 +49,7 @@ import {
   apiForgetAccount,
   apiSaveFolderSettings,
   apiGetEffectiveConnectionProfile,
+  apiAadAuthResponse,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
@@ -62,6 +63,7 @@ import { AuthDialog } from './components/AuthDialog';
 import { DeleteDialog } from './components/DeleteDialog';
 import { AccountActionDialog, type AccountAction } from './components/AccountActionDialog';
 import { FolderSettingsDialog } from './components/FolderSettingsDialog';
+import { ManualCodeFlowDialog, type ManualCodeFlowInfo } from './components/ManualCodeFlowDialog';
 import { getFluentTheme, type ThemeMode } from './theme';
 
 const useStyles = makeStyles({
@@ -153,6 +155,9 @@ export function App() {
 
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [authRequest, setAuthRequest] = useState<AuthRequest | null>(null);
+
+  const [manualCodeFlowOpen, setManualCodeFlowOpen] = useState(false);
+  const [manualCodeFlowInfo, setManualCodeFlowInfo] = useState<ManualCodeFlowInfo | null>(null);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTargetName, setDeleteTargetName] = useState('');
@@ -760,6 +765,11 @@ export function App() {
       setAuthDialogOpen(true);
     };
 
+    (window as unknown as Record<string, unknown>).showManualCodeFlowDialog = (info: ManualCodeFlowInfo) => {
+      setManualCodeFlowInfo(info);
+      setManualCodeFlowOpen(true);
+    };
+
     (window as unknown as Record<string, unknown>).onAADAuthComplete = (success: boolean) => {
       if (success) {
         dispatchToast(
@@ -1073,6 +1083,19 @@ export function App() {
           authRequest={authRequest}
           onSubmit={handleAuthSubmit}
           onCancel={handleAuthCancel}
+        />
+
+        <ManualCodeFlowDialog
+          open={manualCodeFlowOpen}
+          info={manualCodeFlowInfo}
+          onSubmit={(redirectUrl) => {
+            setManualCodeFlowOpen(false);
+            apiAadAuthResponse(true, redirectUrl);
+          }}
+          onCancel={() => {
+            setManualCodeFlowOpen(false);
+            apiAadAuthResponse(false, '');
+          }}
         />
 
         <DeleteDialog

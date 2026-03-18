@@ -305,6 +305,7 @@ export function FolderSettingsDialog({
                 </div>
                 {boolSetting('enable_rds_aad_auth', 'AAD Auth')}
                 {boolSetting('target_is_aad_joined', 'AAD Joined')}
+                {boolSetting('use_manual_code_flow', 'Manual Code Flow')}
                 {/* Load balance info */}
                 <div className={styles.settingRow}>
                   <Tooltip

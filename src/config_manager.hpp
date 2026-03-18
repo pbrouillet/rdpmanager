@@ -57,6 +57,7 @@ struct ConnectionProfile {
     bool enable_rds_aad_auth = false;  // Enable RDS AAD authentication
     bool target_is_aad_joined = false; // Target is Azure AD joined
     std::string load_balance_info;     // Load balance info string
+    bool use_manual_code_flow = false;  // Use UI manual code flow for AAD auth
     
     // AVD/Dev Box specific fields
     std::string remote_desktop_name;   // Display name for the connection

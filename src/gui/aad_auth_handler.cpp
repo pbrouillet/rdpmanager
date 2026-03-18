@@ -419,6 +419,11 @@ AADAuthResponse AADAuthHandler::handle_authenticate(const AADAuthRequest& reques
         return handle_manual_code_flow(request, lock);
     }
     
+    // If per-connection UI manual code flow is enabled, show dialog in main window
+    if (request.use_ui_manual_code_flow && m_main_window) {
+        return handle_ui_manual_code_flow(request, lock);
+    }
+    
     LOG_DEBUG("AAD", "Opening native window...");
     
     // Note: webui::set_timeout(0) is set globally at startup so the
@@ -736,6 +741,76 @@ AADAuthResponse AADAuthHandler::handle_manual_code_flow(const AADAuthRequest& re
     if (m_main_window) {
         std::string js = "onAADAuthComplete(" + std::string(m_result.success ? "true" : "false") + ");";
         m_main_window->run(js);
+    }
+    
+    return m_result;
+}
+
+// ============================================================================
+// UI-based manual code flow handler
+// ============================================================================
+
+AADAuthResponse AADAuthHandler::handle_ui_manual_code_flow(const AADAuthRequest& request,
+                                                           std::unique_lock<std::mutex>& lock) {
+    // This method is called with lock already held
+    
+    std::string type_str = (request.type == AADAuthRequest::Type::RDS_AAD) ? "RDS_AAD" : "AVD";
+    
+    LOG_INFO("AAD", "UI manual code flow for " << type_str
+             << " (step " << request.step_current << "/" << request.step_total
+             << ": " << request.step_label << ")");
+    
+    // Build JSON payload for the frontend dialog.
+    // Escape auth_url and step_label for safe embedding in JSON string.
+    auto escape_json_str = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 16);
+        for (char c : s) {
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:   out += c;      break;
+            }
+        }
+        return out;
+    };
+    
+    std::string json = "{";
+    json += "\"auth_url\":\"" + escape_json_str(request.auth_url) + "\",";
+    json += "\"type\":\"" + type_str + "\",";
+    json += "\"step_current\":" + std::to_string(request.step_current) + ",";
+    json += "\"step_total\":" + std::to_string(request.step_total) + ",";
+    json += "\"step_label\":\"" + escape_json_str(request.step_label) + "\",";
+    json += "\"redirect_uri\":\"" + escape_json_str(m_original_redirect_uri) + "\"";
+    json += "}";
+    
+    // Send to the main window
+    std::string js = "showManualCodeFlowDialog(" + json + ");";
+    m_main_window->run(js);
+    
+    // Wait for the response (on_response will be called from the JS side)
+    bool got_response = m_cv.wait_for(lock, AUTH_TIMEOUT, [this]() {
+        return !m_pending.load();
+    });
+    
+    if (!got_response) {
+        LOG_WARN("AAD", "UI manual code flow timed out");
+        m_result = {false, "", ""};
+        m_pending = false;
+    }
+    
+    // In UI manual mode, the user navigated with the original redirect_uri
+    if (m_result.success && m_result.actual_redirect_uri.empty()) {
+        m_result.actual_redirect_uri = m_original_redirect_uri;
+    }
+    
+    // Notify main window about the result
+    if (m_main_window) {
+        std::string notify_js = "onAADAuthComplete(" + std::string(m_result.success ? "true" : "false") + ");";
+        m_main_window->run(notify_js);
     }
     
     return m_result;

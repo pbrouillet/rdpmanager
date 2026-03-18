@@ -24,6 +24,7 @@ export interface ConnectionProfile {
   enable_rds_aad_auth: boolean;
   target_is_aad_joined: boolean;
   load_balance_info: string;
+  use_manual_code_flow: boolean;
   // AVD-specific fields
   remote_desktop_name: string;
   wvd_endpoint_pool: string;
@@ -58,6 +59,7 @@ export interface FolderSettings {
   enable_rds_aad_auth?: boolean;
   target_is_aad_joined?: boolean;
   load_balance_info?: string;
+  use_manual_code_flow?: boolean;
 }
 
 /** All field names that support folder→connection inheritance */
@@ -67,7 +69,7 @@ export const INHERITABLE_FIELDS: (keyof FolderSettings)[] = [
   'audio_pulse', 'prevent_session_lock',
   'auto_reconnect', 'auto_reconnect_max_retries',
   'gateway_hostname', 'enable_rds_aad_auth', 'target_is_aad_joined',
-  'load_balance_info',
+  'load_balance_info', 'use_manual_code_flow',
 ];
 
 export interface ConnectionParams extends ConnectionProfile {
@@ -178,6 +180,7 @@ export function defaultConnectionProfile(): ConnectionProfile {
     enable_rds_aad_auth: false,
     target_is_aad_joined: false,
     load_balance_info: '',
+    use_manual_code_flow: false,
     remote_desktop_name: '',
     wvd_endpoint_pool: '',
     workspace_id: '',

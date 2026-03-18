@@ -242,6 +242,7 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
         bool enable_rds_aad_auth = json_utils::get_bool(root.get(), "enable_rds_aad_auth");
         bool target_is_aad_joined = json_utils::get_bool(root.get(), "target_is_aad_joined");
         std::string load_balance_info = json_utils::get_string(root.get(), "load_balance_info");
+        bool use_manual_code_flow = json_utils::get_bool(root.get(), "use_manual_code_flow");
         
         // Additional AVD parameters
         std::string aad_tenant_id = json_utils::get_string(root.get(), "aad_tenant_id");
@@ -302,6 +303,7 @@ void JSHandlers::s_connect_rdp(webui::window::event* e) {
         params.enable_rds_aad_auth = enable_rds_aad_auth;
         params.target_is_aad_joined = target_is_aad_joined;
         params.load_balance_info = load_balance_info;
+        params.use_manual_code_flow = use_manual_code_flow;
         
         // Additional AVD fields
         params.aad_tenant_id = aad_tenant_id;
@@ -417,6 +419,7 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
         profile.enable_rds_aad_auth = json_utils::get_bool(root.get(), "enable_rds_aad_auth");
         profile.target_is_aad_joined = json_utils::get_bool(root.get(), "target_is_aad_joined");
         profile.load_balance_info = json_utils::get_string(root.get(), "load_balance_info");
+        profile.use_manual_code_flow = json_utils::get_bool(root.get(), "use_manual_code_flow");
         profile.aad_tenant_id = json_utils::get_string(root.get(), "aad_tenant_id");
         
         // Inheritance tracking
@@ -751,6 +754,7 @@ void JSHandlers::s_save_folder_settings(webui::window::event* e) {
         settings.enable_rds_aad_auth = get_opt_bool("enable_rds_aad_auth");
         settings.target_is_aad_joined = get_opt_bool("target_is_aad_joined");
         settings.load_balance_info = get_opt_str("load_balance_info");
+        settings.use_manual_code_flow = get_opt_bool("use_manual_code_flow");
 
         bool success = s_instance->m_config_manager.save_folder_settings(path, settings);
         e->return_bool(success);

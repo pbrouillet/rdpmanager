@@ -99,6 +99,13 @@ private:
                                            std::unique_lock<std::mutex>& lock);
 
     /**
+     * Handle UI-based manual code flow - shows dialog in main window
+     * Called when per-connection manual code flow is enabled
+     */
+    AADAuthResponse handle_ui_manual_code_flow(const AADAuthRequest& request,
+                                              std::unique_lock<std::mutex>& lock);
+
+    /**
      * Static event handler for WebUI callbacks
      */
     static void s_handle_window_events(webui::window::event* e);

@@ -440,6 +440,7 @@ export function ConnectionEditorDialog({
                         })()}
                         {inheritableCheckbox('enable_rds_aad_auth', 'AAD Auth')}
                         {inheritableCheckbox('target_is_aad_joined', 'AAD Joined')}
+                        {inheritableCheckbox('use_manual_code_flow', 'Manual Code Flow')}
                         {/* Load balance info with override toggle */}
                         {(form.enable_rds_aad_auth || form.target_is_aad_joined ||
                           inherited.enable_rds_aad_auth || inherited.target_is_aad_joined) && (() => {

@@ -56,6 +56,9 @@ struct FolderSettings {
     std::optional<bool> enable_rds_aad_auth;
     std::optional<bool> target_is_aad_joined;
     std::optional<std::string> load_balance_info;
+
+    // Authentication
+    std::optional<bool> use_manual_code_flow;
 };
 
 // List of all inheritable field names (used for backward compat and validation)
@@ -66,7 +69,8 @@ inline const std::vector<std::string>& inheritable_field_names() {
         "audio_pulse", "prevent_session_lock",
         "auto_reconnect", "auto_reconnect_max_retries",
         "gateway_hostname", "enable_rds_aad_auth", "target_is_aad_joined",
-        "load_balance_info"
+        "load_balance_info",
+        "use_manual_code_flow"
     };
     return names;
 }
@@ -138,6 +142,12 @@ struct AADAuthRequest {
     std::string auth_url;      // URL to present to user for login
     std::string scope;         // OAuth scope (for RDS_AAD)
     std::string req_cnf;       // Request confirmation (for RDS_AAD)
+
+    // UI manual code flow support
+    bool use_ui_manual_code_flow = false;  // Show dialog instead of WebView
+    int step_current = 1;                  // Current step (1-based)
+    int step_total = 1;                    // Total steps in the auth chain
+    std::string step_label;                // Human-readable step label
 };
 
 /**

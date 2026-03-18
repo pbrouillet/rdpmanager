@@ -495,6 +495,10 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
     switch (aadTokenType) {
         case ACCESS_TOKEN_TYPE_AAD: {
             request.type = AADAuthRequest::Type::RDS_AAD;
+            request.use_ui_manual_code_flow = session->m_params.use_manual_code_flow;
+            request.step_current = 1;
+            request.step_total = 1;
+            request.step_label = "Authentication";
             if (count >= 2) {
                 const char* scope_arg = va_arg(ap, const char*);
                 const char* req_cnf_arg = va_arg(ap, const char*);
@@ -518,6 +522,14 @@ int RDPSession::get_access_token_callback(freerdp* instance, int tokenType, char
         }
         case ACCESS_TOKEN_TYPE_AVD: {
             request.type = AADAuthRequest::Type::AVD;
+            request.use_ui_manual_code_flow = session->m_params.use_manual_code_flow;
+            // m_avd_token_requests_seen was already incremented; current value = step number
+            {
+                const int step = session->m_avd_token_requests_seen.load();
+                request.step_current = step;
+                request.step_total = 2;  // AVD: gateway + VM
+                request.step_label = (step <= 1) ? "Gateway" : "VM";
+            }
             
             // Debug: Print AVD-related settings
             rdpSettings* settings = instance->context->settings;
