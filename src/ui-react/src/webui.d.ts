@@ -47,3 +47,9 @@ declare function deleteFeedAccount(id: string): Promise<boolean>;
 declare function discoverFeeds(accountId: string): Promise<string>;
 declare function logOffAccount(id: string): Promise<boolean>;
 declare function forgetAccount(id: string): Promise<boolean>;
+
+// Folder settings (parameter inheritance)
+declare function getFolderSettings(path: string): Promise<string>;
+declare function saveFolderSettings(path: string, settingsJson: string): Promise<boolean>;
+declare function getEffectiveFolderSettings(path: string): Promise<string>;
+declare function getEffectiveConnectionProfile(name: string): Promise<string>;

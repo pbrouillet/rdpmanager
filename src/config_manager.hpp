@@ -6,10 +6,14 @@
  * Handles saving and loading RDP connection profiles.
  */
 
+#include "connection_types.hpp"
+
 #include <string>
 #include <string_view>
 #include <vector>
 #include <optional>
+#include <set>
+#include <unordered_map>
 #include <filesystem>
 #include <cstdint>
 
@@ -62,6 +66,12 @@ struct ConnectionProfile {
     std::string remote_application_program; // Remote application program (e.g. ||<GUID>)
     std::string aad_tenant_id;             // AAD tenant ID for Azure authentication
     std::string source_account_id;         // Feed account ID that imported this connection
+
+    // Inheritance tracking: which inheritable fields are explicitly set on this connection.
+    // If empty AND profile was loaded from an old DB (no overridden_fields key in JSON),
+    // all inheritable fields are considered overridden for backward compatibility.
+    std::set<std::string> overridden_fields;
+    bool legacy_profile = false;  // true when loaded from old DB without overridden_fields
 };
 
 /**
@@ -158,6 +168,36 @@ public:
      */
     [[nodiscard]] std::string get_folders_json() const;
 
+    // ========================================================================
+    // Folder Settings (parameter inheritance)
+    // ========================================================================
+
+    /**
+     * Save folder-level default settings (sparse: only explicitly set fields)
+     */
+    [[nodiscard]] bool save_folder_settings(const std::string& folder_path, const FolderSettings& settings);
+
+    /**
+     * Get a folder's own settings (sparse, not resolved)
+     */
+    [[nodiscard]] FolderSettings get_folder_settings(const std::string& folder_path) const;
+
+    /**
+     * Get a folder's own settings as JSON string
+     */
+    [[nodiscard]] std::string get_folder_settings_json(const std::string& folder_path) const;
+
+    /**
+     * Get effective (cascade-resolved) folder settings as JSON string.
+     * Walks the ancestor chain from root to the given folder, merging at each level.
+     */
+    [[nodiscard]] std::string get_effective_folder_settings_json(const std::string& folder_path) const;
+
+    /**
+     * Get a fully resolved connection profile (folder chain + connection overrides)
+     */
+    [[nodiscard]] std::string get_effective_connection_profile_json(const std::string& connection_name) const;
+
     /**
      * Lookup cached AAD token by hostname and cache kind (e.g. gateway/machine)
      */
@@ -237,6 +277,7 @@ public:
 private:
     std::vector<ConnectionProfile> m_connections;
     std::vector<std::string> m_folders;
+    std::unordered_map<std::string, FolderSettings> m_folder_settings;
     fs::path m_config_path;
     fs::path m_settings_path;
     fs::path m_database_path;
@@ -250,6 +291,13 @@ private:
     bool ensure_schema();
     bool load_folders();
     bool save_folders();
+    bool load_folder_settings();
+    bool save_all_folder_settings();
+
+    // Cascade resolution helpers
+    static std::vector<std::string> get_ancestor_paths(const std::string& path);
+    FolderSettings resolve_folder_settings(const std::string& folder_path) const;
+    ConnectionProfile resolve_effective_profile(const ConnectionProfile& conn) const;
     bool load_legacy_json();
     bool load_settings();
     bool save_settings() const;

@@ -10,6 +10,7 @@ import type {
   DatabaseStatus,
   FeedAccount,
   DiscoverResult,
+  FolderSettings,
 } from './types';
 
 export async function apiGetConnections(): Promise<ConnectionProfile[]> {
@@ -230,5 +231,44 @@ export async function apiForgetAccount(id: string): Promise<boolean> {
     return await forgetAccount(id);
   } catch {
     return false;
+  }
+}
+
+// ============================================================================
+// Folder Settings (parameter inheritance)
+// ============================================================================
+
+export async function apiGetFolderSettings(path: string): Promise<FolderSettings> {
+  try {
+    const result = await getFolderSettings(path);
+    return result ? (JSON.parse(result) as FolderSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function apiSaveFolderSettings(path: string, settings: FolderSettings): Promise<boolean> {
+  try {
+    return await saveFolderSettings(path, JSON.stringify(settings));
+  } catch {
+    return false;
+  }
+}
+
+export async function apiGetEffectiveFolderSettings(path: string): Promise<FolderSettings> {
+  try {
+    const result = await getEffectiveFolderSettings(path);
+    return result ? (JSON.parse(result) as FolderSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function apiGetEffectiveConnectionProfile(name: string): Promise<ConnectionProfile | null> {
+  try {
+    const result = await getEffectiveConnectionProfile(name);
+    return result ? (JSON.parse(result) as ConnectionProfile) : null;
+  } catch {
+    return null;
   }
 }

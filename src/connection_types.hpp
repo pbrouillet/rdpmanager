@@ -17,6 +17,59 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <set>
+#include <vector>
+
+// ============================================================================
+// Folder settings for parameter inheritance
+// ============================================================================
+
+/**
+ * Sparse settings that can be attached to a folder.
+ * Only fields with a value set will override the inherited defaults.
+ * Fields left as std::nullopt are inherited from the parent folder chain.
+ */
+struct FolderSettings {
+    // Features
+    std::optional<bool> home_drive;
+    std::optional<bool> clipboard;
+    std::optional<bool> cert_tofu;
+    std::optional<bool> usb_auto;
+    std::optional<bool> floatbar;
+
+    // Performance
+    std::optional<bool> dynamic_resolution;
+    std::optional<bool> network_auto;
+    std::optional<bool> gfx_avc420;
+    std::optional<bool> compression;
+
+    // Audio & Session
+    std::optional<bool> audio_pulse;
+    std::optional<bool> prevent_session_lock;
+
+    // Security & Reconnection
+    std::optional<bool> auto_reconnect;
+    std::optional<int> auto_reconnect_max_retries;
+
+    // Gateway
+    std::optional<std::string> gateway_hostname;
+    std::optional<bool> enable_rds_aad_auth;
+    std::optional<bool> target_is_aad_joined;
+    std::optional<std::string> load_balance_info;
+};
+
+// List of all inheritable field names (used for backward compat and validation)
+inline const std::vector<std::string>& inheritable_field_names() {
+    static const std::vector<std::string> names = {
+        "home_drive", "clipboard", "cert_tofu", "usb_auto", "floatbar",
+        "dynamic_resolution", "network_auto", "gfx_avc420", "compression",
+        "audio_pulse", "prevent_session_lock",
+        "auto_reconnect", "auto_reconnect_max_retries",
+        "gateway_hostname", "enable_rds_aad_auth", "target_is_aad_joined",
+        "load_balance_info"
+    };
+    return names;
+}
 
 // ============================================================================
 // Certificate verification types

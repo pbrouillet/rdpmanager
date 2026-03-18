@@ -18,6 +18,7 @@ import {
   ArrowExportRtl24Regular,
   Edit24Regular,
   Delete24Regular,
+  Settings24Regular,
 } from '@fluentui/react-icons';
 import type { ConnectionProfile } from '../types';
 
@@ -146,6 +147,7 @@ interface FolderTreeProps {
   onDropFolderToFolder: (sourceFolder: string, targetParentFolder: string) => void;
   onRenameFolder: (folderPath: string) => void;
   onDeleteFolder: (folderPath: string) => void;
+  onEditFolderDefaults: (folderPath: string) => void;
 }
 
 export function FolderTree({
@@ -158,6 +160,7 @@ export function FolderTree({
   onDropFolderToFolder,
   onRenameFolder,
   onDeleteFolder,
+  onEditFolderDefaults,
 }: FolderTreeProps) {
   const styles = useStyles();
   const [dropTargetFolder, setDropTargetFolder] = useState<string | null>(null);
@@ -260,6 +263,9 @@ export function FolderTree({
                 </MenuTrigger>
                 <MenuPopover>
                   <MenuList>
+                    <MenuItem icon={<Settings24Regular />} onClick={() => onEditFolderDefaults(node.path)}>
+                      Edit Defaults
+                    </MenuItem>
                     <MenuItem icon={<Edit24Regular />} onClick={() => onRenameFolder(node.path)}>
                       Rename Folder
                     </MenuItem>

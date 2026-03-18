@@ -181,6 +181,12 @@ void JSHandlers::bind_all(webui::window& window) {
     window.bind("discoverFeeds", s_discover_feeds);
     window.bind("logOffAccount", s_log_off_account);
     window.bind("forgetAccount", s_forget_account);
+
+    // Folder settings (parameter inheritance)
+    window.bind("getFolderSettings", s_get_folder_settings);
+    window.bind("saveFolderSettings", s_save_folder_settings);
+    window.bind("getEffectiveFolderSettings", s_get_effective_folder_settings);
+    window.bind("getEffectiveConnectionProfile", s_get_effective_connection_profile);
 }
 
 // ============================================================================
@@ -412,6 +418,25 @@ void JSHandlers::s_save_connection(webui::window::event* e) {
         profile.target_is_aad_joined = json_utils::get_bool(root.get(), "target_is_aad_joined");
         profile.load_balance_info = json_utils::get_string(root.get(), "load_balance_info");
         profile.aad_tenant_id = json_utils::get_string(root.get(), "aad_tenant_id");
+        
+        // Inheritance tracking
+        json_t* overrides_arr = json_object_get(root.get(), "overridden_fields");
+        if (overrides_arr && json_is_array(overrides_arr)) {
+            profile.legacy_profile = false;
+            size_t idx;
+            json_t* val;
+            json_array_foreach(overrides_arr, idx, val) {
+                if (json_is_string(val)) {
+                    profile.overridden_fields.insert(json_string_value(val));
+                }
+            }
+        } else {
+            // No overridden_fields from frontend — treat as legacy (all overridden)
+            profile.legacy_profile = true;
+            for (const auto& name : inheritable_field_names()) {
+                profile.overridden_fields.insert(name);
+            }
+        }
         
         bool success = s_instance->m_config_manager.save_connection(profile);
         
@@ -658,4 +683,93 @@ void JSHandlers::s_forget_account(webui::window::event* e) {
     std::string id = e->get_string(0);
     bool success = s_instance->m_config_manager.forget_account(id);
     e->return_bool(success);
+}
+
+// ============================================================================
+// Folder Settings Handlers (parameter inheritance)
+// ============================================================================
+
+void JSHandlers::s_get_folder_settings(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string path = e->get_string(0);
+    e->return_string(s_instance->m_config_manager.get_folder_settings_json(path));
+}
+
+void JSHandlers::s_save_folder_settings(webui::window::event* e) {
+    if (!s_instance) return;
+
+    try {
+        std::string path = e->get_string(0);
+        std::string json_str = e->get_string(1);
+
+        if (json_str.empty()) {
+            e->return_bool(false);
+            return;
+        }
+
+        json_error_t error;
+        json_utils::JsonPtr root{json_loads(json_str.c_str(), 0, &error)};
+        if (!root) {
+            LOG_ERROR("RDPMAN", "saveFolderSettings JSON parse error: " << error.text);
+            e->return_bool(false);
+            return;
+        }
+
+        // Build FolderSettings from parsed JSON using the same static helper used internally
+        FolderSettings settings;
+        auto get_opt_bool = [&](const char* key) -> std::optional<bool> {
+            json_t* val = json_object_get(root.get(), key);
+            if (val && json_is_boolean(val)) return json_is_true(val);
+            return std::nullopt;
+        };
+        auto get_opt_int = [&](const char* key) -> std::optional<int> {
+            json_t* val = json_object_get(root.get(), key);
+            if (val && json_is_integer(val)) return static_cast<int>(json_integer_value(val));
+            return std::nullopt;
+        };
+        auto get_opt_str = [&](const char* key) -> std::optional<std::string> {
+            json_t* val = json_object_get(root.get(), key);
+            if (val && json_is_string(val)) return std::string(json_string_value(val));
+            return std::nullopt;
+        };
+
+        settings.home_drive = get_opt_bool("home_drive");
+        settings.clipboard = get_opt_bool("clipboard");
+        settings.cert_tofu = get_opt_bool("cert_tofu");
+        settings.usb_auto = get_opt_bool("usb_auto");
+        settings.floatbar = get_opt_bool("floatbar");
+        settings.dynamic_resolution = get_opt_bool("dynamic_resolution");
+        settings.network_auto = get_opt_bool("network_auto");
+        settings.gfx_avc420 = get_opt_bool("gfx_avc420");
+        settings.compression = get_opt_bool("compression");
+        settings.audio_pulse = get_opt_bool("audio_pulse");
+        settings.prevent_session_lock = get_opt_bool("prevent_session_lock");
+        settings.auto_reconnect = get_opt_bool("auto_reconnect");
+        settings.auto_reconnect_max_retries = get_opt_int("auto_reconnect_max_retries");
+        settings.gateway_hostname = get_opt_str("gateway_hostname");
+        settings.enable_rds_aad_auth = get_opt_bool("enable_rds_aad_auth");
+        settings.target_is_aad_joined = get_opt_bool("target_is_aad_joined");
+        settings.load_balance_info = get_opt_str("load_balance_info");
+
+        bool success = s_instance->m_config_manager.save_folder_settings(path, settings);
+        e->return_bool(success);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("RDPMAN", "Exception in saveFolderSettings: " << ex.what());
+        e->return_bool(false);
+    }
+}
+
+void JSHandlers::s_get_effective_folder_settings(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string path = e->get_string(0);
+    e->return_string(s_instance->m_config_manager.get_effective_folder_settings_json(path));
+}
+
+void JSHandlers::s_get_effective_connection_profile(webui::window::event* e) {
+    if (!s_instance) return;
+
+    std::string name = e->get_string(0);
+    e->return_string(s_instance->m_config_manager.get_effective_connection_profile_json(name));
 }

@@ -31,7 +31,44 @@ export interface ConnectionProfile {
   arm_path: string;
   aad_tenant_id: string;
   remote_application_program: string;
+  // Inheritance tracking
+  overridden_fields?: string[];
 }
+
+/**
+ * Sparse folder settings for parameter inheritance.
+ * Only fields explicitly set at this folder level are present;
+ * absent fields are inherited from the parent folder chain.
+ */
+export interface FolderSettings {
+  home_drive?: boolean;
+  clipboard?: boolean;
+  cert_tofu?: boolean;
+  usb_auto?: boolean;
+  floatbar?: boolean;
+  dynamic_resolution?: boolean;
+  network_auto?: boolean;
+  gfx_avc420?: boolean;
+  compression?: boolean;
+  audio_pulse?: boolean;
+  prevent_session_lock?: boolean;
+  auto_reconnect?: boolean;
+  auto_reconnect_max_retries?: number;
+  gateway_hostname?: string;
+  enable_rds_aad_auth?: boolean;
+  target_is_aad_joined?: boolean;
+  load_balance_info?: string;
+}
+
+/** All field names that support folder→connection inheritance */
+export const INHERITABLE_FIELDS: (keyof FolderSettings)[] = [
+  'home_drive', 'clipboard', 'cert_tofu', 'usb_auto', 'floatbar',
+  'dynamic_resolution', 'network_auto', 'gfx_avc420', 'compression',
+  'audio_pulse', 'prevent_session_lock',
+  'auto_reconnect', 'auto_reconnect_max_retries',
+  'gateway_hostname', 'enable_rds_aad_auth', 'target_is_aad_joined',
+  'load_balance_info',
+];
 
 export interface ConnectionParams extends ConnectionProfile {
 }
@@ -147,5 +184,6 @@ export function defaultConnectionProfile(): ConnectionProfile {
     arm_path: '',
     aad_tenant_id: '',
     remote_application_program: '',
+    overridden_fields: [],
   };
 }

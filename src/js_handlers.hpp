@@ -81,6 +81,12 @@ private:
     static void s_log_off_account(webui::window::event* e);
     static void s_forget_account(webui::window::event* e);
 
+    // Folder settings (parameter inheritance)
+    static void s_get_folder_settings(webui::window::event* e);
+    static void s_save_folder_settings(webui::window::event* e);
+    static void s_get_effective_folder_settings(webui::window::event* e);
+    static void s_get_effective_connection_profile(webui::window::event* e);
+
     // Global instance pointer for static callbacks
     static JSHandlers* s_instance;
 };

@@ -19,6 +19,7 @@
 #include <set>
 #include <chrono>
 #include <format>
+#include <unordered_map>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -138,6 +139,25 @@ static ConnectionProfile profile_from_json(json_t* obj) {
     p.aad_tenant_id   = json_utils::get_string(obj, "aad_tenant_id");
     p.source_account_id = json_utils::get_string(obj, "source_account_id");
 
+    // Inheritance tracking
+    json_t* overrides_arr = json_object_get(obj, "overridden_fields");
+    if (overrides_arr && json_is_array(overrides_arr)) {
+        p.legacy_profile = false;
+        size_t idx;
+        json_t* val;
+        json_array_foreach(overrides_arr, idx, val) {
+            if (json_is_string(val)) {
+                p.overridden_fields.insert(json_string_value(val));
+            }
+        }
+    } else {
+        // Old profile without overridden_fields: treat all inheritable fields as overridden
+        p.legacy_profile = true;
+        for (const auto& name : inheritable_field_names()) {
+            p.overridden_fields.insert(name);
+        }
+    }
+
     // Clamp defaults
     if (p.port   <= 0) p.port   = 3389;
     if (p.width  <= 0) p.width  = 1920;
@@ -188,7 +208,114 @@ static json_t* profile_to_json(const ConnectionProfile& c) {
     json_object_set_new(obj, "remote_application_program", json_string(c.remote_application_program.c_str()));
     json_object_set_new(obj, "aad_tenant_id",     json_string(c.aad_tenant_id.c_str()));
     json_object_set_new(obj, "source_account_id", json_string(c.source_account_id.c_str()));
+
+    // Inheritance tracking
+    json_t* overrides_arr = json_array();
+    for (const auto& field : c.overridden_fields) {
+        json_array_append_new(overrides_arr, json_string(field.c_str()));
+    }
+    json_object_set_new(obj, "overridden_fields", overrides_arr);
+
     return obj;
+}
+
+// ============================================================================
+// Helper: serialize/deserialize FolderSettings to/from JSON
+// ============================================================================
+static json_t* folder_settings_to_json(const FolderSettings& s) {
+    json_t* obj = json_object();
+    auto set_opt_bool = [&](const char* key, const std::optional<bool>& val) {
+        if (val.has_value()) json_object_set_new(obj, key, json_boolean(*val));
+    };
+    auto set_opt_int = [&](const char* key, const std::optional<int>& val) {
+        if (val.has_value()) json_object_set_new(obj, key, json_integer(*val));
+    };
+    auto set_opt_str = [&](const char* key, const std::optional<std::string>& val) {
+        if (val.has_value()) json_object_set_new(obj, key, json_string(val->c_str()));
+    };
+
+    set_opt_bool("home_drive", s.home_drive);
+    set_opt_bool("clipboard", s.clipboard);
+    set_opt_bool("cert_tofu", s.cert_tofu);
+    set_opt_bool("usb_auto", s.usb_auto);
+    set_opt_bool("floatbar", s.floatbar);
+    set_opt_bool("dynamic_resolution", s.dynamic_resolution);
+    set_opt_bool("network_auto", s.network_auto);
+    set_opt_bool("gfx_avc420", s.gfx_avc420);
+    set_opt_bool("compression", s.compression);
+    set_opt_bool("audio_pulse", s.audio_pulse);
+    set_opt_bool("prevent_session_lock", s.prevent_session_lock);
+    set_opt_bool("auto_reconnect", s.auto_reconnect);
+    set_opt_int("auto_reconnect_max_retries", s.auto_reconnect_max_retries);
+    set_opt_str("gateway_hostname", s.gateway_hostname);
+    set_opt_bool("enable_rds_aad_auth", s.enable_rds_aad_auth);
+    set_opt_bool("target_is_aad_joined", s.target_is_aad_joined);
+    set_opt_str("load_balance_info", s.load_balance_info);
+    return obj;
+}
+
+static FolderSettings folder_settings_from_json(json_t* obj) {
+    FolderSettings s;
+    if (!obj || !json_is_object(obj)) return s;
+
+    auto get_opt_bool = [&](const char* key) -> std::optional<bool> {
+        json_t* val = json_object_get(obj, key);
+        if (val && json_is_boolean(val)) return json_is_true(val);
+        return std::nullopt;
+    };
+    auto get_opt_int = [&](const char* key) -> std::optional<int> {
+        json_t* val = json_object_get(obj, key);
+        if (val && json_is_integer(val)) return static_cast<int>(json_integer_value(val));
+        return std::nullopt;
+    };
+    auto get_opt_str = [&](const char* key) -> std::optional<std::string> {
+        json_t* val = json_object_get(obj, key);
+        if (val && json_is_string(val)) return std::string(json_string_value(val));
+        return std::nullopt;
+    };
+
+    s.home_drive = get_opt_bool("home_drive");
+    s.clipboard = get_opt_bool("clipboard");
+    s.cert_tofu = get_opt_bool("cert_tofu");
+    s.usb_auto = get_opt_bool("usb_auto");
+    s.floatbar = get_opt_bool("floatbar");
+    s.dynamic_resolution = get_opt_bool("dynamic_resolution");
+    s.network_auto = get_opt_bool("network_auto");
+    s.gfx_avc420 = get_opt_bool("gfx_avc420");
+    s.compression = get_opt_bool("compression");
+    s.audio_pulse = get_opt_bool("audio_pulse");
+    s.prevent_session_lock = get_opt_bool("prevent_session_lock");
+    s.auto_reconnect = get_opt_bool("auto_reconnect");
+    s.auto_reconnect_max_retries = get_opt_int("auto_reconnect_max_retries");
+    s.gateway_hostname = get_opt_str("gateway_hostname");
+    s.enable_rds_aad_auth = get_opt_bool("enable_rds_aad_auth");
+    s.target_is_aad_joined = get_opt_bool("target_is_aad_joined");
+    s.load_balance_info = get_opt_str("load_balance_info");
+    return s;
+}
+
+/// Merge layers: overlay `top` onto `base`. Fields set in `top` override `base`.
+static FolderSettings merge_folder_settings(const FolderSettings& base, const FolderSettings& top) {
+    FolderSettings merged = base;
+    auto merge = [](auto& dst, const auto& src) { if (src.has_value()) dst = src; };
+    merge(merged.home_drive, top.home_drive);
+    merge(merged.clipboard, top.clipboard);
+    merge(merged.cert_tofu, top.cert_tofu);
+    merge(merged.usb_auto, top.usb_auto);
+    merge(merged.floatbar, top.floatbar);
+    merge(merged.dynamic_resolution, top.dynamic_resolution);
+    merge(merged.network_auto, top.network_auto);
+    merge(merged.gfx_avc420, top.gfx_avc420);
+    merge(merged.compression, top.compression);
+    merge(merged.audio_pulse, top.audio_pulse);
+    merge(merged.prevent_session_lock, top.prevent_session_lock);
+    merge(merged.auto_reconnect, top.auto_reconnect);
+    merge(merged.auto_reconnect_max_retries, top.auto_reconnect_max_retries);
+    merge(merged.gateway_hostname, top.gateway_hostname);
+    merge(merged.enable_rds_aad_auth, top.enable_rds_aad_auth);
+    merge(merged.target_is_aad_joined, top.target_is_aad_joined);
+    merge(merged.load_balance_info, top.load_balance_info);
+    return merged;
 }
 
 static std::string normalize_token_cache_key(std::string_view value) {
@@ -591,7 +718,11 @@ bool ConfigManager::open_database_internal(const fs::path& path) {
         return false;
     }
 
-    return load_folders();
+    if (!load_folders()) {
+        return false;
+    }
+
+    return load_folder_settings();
 }
 
 bool ConfigManager::ensure_schema() {
@@ -621,6 +752,10 @@ bool ConfigManager::ensure_schema() {
             email TEXT NOT NULL DEFAULT '',
             refresh_token TEXT NOT NULL DEFAULT '',
             last_synced INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS folder_settings (
+            path TEXT PRIMARY KEY NOT NULL,
+            settings_json TEXT NOT NULL DEFAULT '{}'
         )
     )SQL";
 
@@ -701,6 +836,222 @@ bool ConfigManager::save_folders() {
     }
 
     return ok;
+}
+
+// ============================================================================
+// Folder Settings persistence
+// ============================================================================
+
+bool ConfigManager::load_folder_settings() {
+    m_folder_settings.clear();
+
+    if (!m_db) {
+        return true;
+    }
+
+    const char* sql = "SELECT path, settings_json FROM folder_settings";
+    SqliteStmt stmt(m_db, sql);
+    if (!stmt) {
+        LOG_ERROR("ConfigMgr", "Failed to prepare folder_settings SELECT: "
+                  << sqlite3_errmsg(m_db));
+        return false;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* json_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        if (!path || !json_str) continue;
+
+        json_error_t error;
+        json_utils::JsonPtr root{json_loads(json_str, 0, &error)};
+        if (root) {
+            m_folder_settings[path] = folder_settings_from_json(root.get());
+        }
+    }
+
+    LOG_INFO("ConfigMgr", "Loaded folder settings for " << m_folder_settings.size() << " folders");
+    return true;
+}
+
+bool ConfigManager::save_all_folder_settings() {
+    if (!m_db) {
+        return false;
+    }
+
+    if (sqlite3_exec(m_db, "DELETE FROM folder_settings", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        LOG_ERROR("ConfigMgr", "Failed to clear folder_settings table: " << sqlite3_errmsg(m_db));
+        return false;
+    }
+
+    const char* sql = "INSERT INTO folder_settings(path, settings_json) VALUES(?, ?)";
+    SqliteStmt stmt(m_db, sql);
+    if (!stmt) {
+        LOG_ERROR("ConfigMgr", "Failed to prepare folder_settings INSERT: "
+                  << sqlite3_errmsg(m_db));
+        return false;
+    }
+
+    for (const auto& [path, settings] : m_folder_settings) {
+        json_utils::JsonPtr obj{folder_settings_to_json(settings)};
+        json_utils::MallocPtr dump{json_dumps(obj.get(), JSON_COMPACT)};
+        if (!dump) continue;
+
+        sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, dump.get(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            LOG_ERROR("ConfigMgr", "Failed to persist folder_settings for " << path);
+        }
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+    }
+
+    return true;
+}
+
+bool ConfigManager::save_folder_settings(const std::string& folder_path, const FolderSettings& settings) {
+    if (!m_db) {
+        return false;
+    }
+
+    m_folder_settings[folder_path] = settings;
+
+    const char* sql = "INSERT INTO folder_settings(path, settings_json) VALUES(?, ?) "
+                      "ON CONFLICT(path) DO UPDATE SET settings_json=excluded.settings_json";
+    SqliteStmt stmt(m_db, sql);
+    if (!stmt) {
+        LOG_ERROR("ConfigMgr", "Failed to prepare folder_settings UPSERT: "
+                  << sqlite3_errmsg(m_db));
+        return false;
+    }
+
+    json_utils::JsonPtr obj{folder_settings_to_json(settings)};
+    json_utils::MallocPtr dump{json_dumps(obj.get(), JSON_COMPACT)};
+    if (!dump) return false;
+
+    sqlite3_bind_text(stmt, 1, folder_path.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, dump.get(), -1, SQLITE_TRANSIENT);
+
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!ok) {
+        LOG_ERROR("ConfigMgr", "Failed to save folder_settings for " << folder_path);
+    }
+    return ok;
+}
+
+FolderSettings ConfigManager::get_folder_settings(const std::string& folder_path) const {
+    auto it = m_folder_settings.find(folder_path);
+    if (it != m_folder_settings.end()) {
+        return it->second;
+    }
+    return {};
+}
+
+std::string ConfigManager::get_folder_settings_json(const std::string& folder_path) const {
+    FolderSettings settings = get_folder_settings(folder_path);
+    json_utils::JsonPtr obj{folder_settings_to_json(settings)};
+    json_utils::MallocPtr dump{json_dumps(obj.get(), JSON_COMPACT)};
+    return std::string(dump ? dump.get() : "{}");
+}
+
+// ============================================================================
+// Cascade resolution
+// ============================================================================
+
+std::vector<std::string> ConfigManager::get_ancestor_paths(const std::string& path) {
+    std::vector<std::string> ancestors;
+    ancestors.push_back("");  // root level (global defaults)
+    if (path.empty()) return ancestors;
+
+    std::string current;
+    size_t start = 0;
+    while (start < path.size()) {
+        size_t pos = path.find('/', start);
+        if (pos == std::string::npos) {
+            current = path;
+            ancestors.push_back(current);
+            break;
+        }
+        current = path.substr(0, pos);
+        ancestors.push_back(current);
+        start = pos + 1;
+    }
+    return ancestors;
+}
+
+FolderSettings ConfigManager::resolve_folder_settings(const std::string& folder_path) const {
+    auto ancestors = get_ancestor_paths(folder_path);
+
+    FolderSettings resolved;
+    for (const auto& ancestor : ancestors) {
+        auto it = m_folder_settings.find(ancestor);
+        if (it != m_folder_settings.end()) {
+            resolved = merge_folder_settings(resolved, it->second);
+        }
+    }
+    return resolved;
+}
+
+std::string ConfigManager::get_effective_folder_settings_json(const std::string& folder_path) const {
+    FolderSettings resolved = resolve_folder_settings(folder_path);
+    json_utils::JsonPtr obj{folder_settings_to_json(resolved)};
+    json_utils::MallocPtr dump{json_dumps(obj.get(), JSON_COMPACT)};
+    return std::string(dump ? dump.get() : "{}");
+}
+
+ConnectionProfile ConfigManager::resolve_effective_profile(const ConnectionProfile& conn) const {
+    ConnectionProfile result = conn;
+
+    // Resolve folder chain settings
+    FolderSettings folder_resolved = resolve_folder_settings(conn.folder);
+
+    // Apply folder settings to connection for fields NOT overridden by the connection
+    auto apply_bool = [&](const char* name, bool& field, const std::optional<bool>& folder_val) {
+        if (conn.overridden_fields.count(name) == 0 && folder_val.has_value()) {
+            field = *folder_val;
+        }
+    };
+    auto apply_int = [&](const char* name, int& field, const std::optional<int>& folder_val) {
+        if (conn.overridden_fields.count(name) == 0 && folder_val.has_value()) {
+            field = *folder_val;
+        }
+    };
+    auto apply_str = [&](const char* name, std::string& field, const std::optional<std::string>& folder_val) {
+        if (conn.overridden_fields.count(name) == 0 && folder_val.has_value()) {
+            field = *folder_val;
+        }
+    };
+
+    apply_bool("home_drive", result.home_drive, folder_resolved.home_drive);
+    apply_bool("clipboard", result.clipboard, folder_resolved.clipboard);
+    apply_bool("cert_tofu", result.cert_tofu, folder_resolved.cert_tofu);
+    apply_bool("usb_auto", result.usb_auto, folder_resolved.usb_auto);
+    apply_bool("floatbar", result.floatbar, folder_resolved.floatbar);
+    apply_bool("dynamic_resolution", result.dynamic_resolution, folder_resolved.dynamic_resolution);
+    apply_bool("network_auto", result.network_auto, folder_resolved.network_auto);
+    apply_bool("gfx_avc420", result.gfx_avc420, folder_resolved.gfx_avc420);
+    apply_bool("compression", result.compression, folder_resolved.compression);
+    apply_bool("audio_pulse", result.audio_pulse, folder_resolved.audio_pulse);
+    apply_bool("prevent_session_lock", result.prevent_session_lock, folder_resolved.prevent_session_lock);
+    apply_bool("auto_reconnect", result.auto_reconnect, folder_resolved.auto_reconnect);
+    apply_int("auto_reconnect_max_retries", result.auto_reconnect_max_retries, folder_resolved.auto_reconnect_max_retries);
+    apply_str("gateway_hostname", result.gateway_hostname, folder_resolved.gateway_hostname);
+    apply_bool("enable_rds_aad_auth", result.enable_rds_aad_auth, folder_resolved.enable_rds_aad_auth);
+    apply_bool("target_is_aad_joined", result.target_is_aad_joined, folder_resolved.target_is_aad_joined);
+    apply_str("load_balance_info", result.load_balance_info, folder_resolved.load_balance_info);
+
+    return result;
+}
+
+std::string ConfigManager::get_effective_connection_profile_json(const std::string& connection_name) const {
+    auto conn_opt = get_connection(connection_name);
+    if (!conn_opt.has_value()) {
+        return "{}";
+    }
+
+    ConnectionProfile resolved = resolve_effective_profile(*conn_opt);
+    json_utils::JsonPtr obj{profile_to_json(resolved)};
+    json_utils::MallocPtr dump{json_dumps(obj.get(), JSON_COMPACT)};
+    return std::string(dump ? dump.get() : "{}");
 }
 
 bool ConfigManager::load_legacy_json() {
@@ -878,11 +1229,20 @@ bool ConfigManager::move_folder(std::string_view source_folder, std::string_view
         conn.folder = rewrite(conn.folder);
     }
 
+    // Rewrite folder_settings paths
+    std::unordered_map<std::string, FolderSettings> new_settings;
+    for (auto& [path, settings] : m_folder_settings) {
+        new_settings[rewrite(path)] = std::move(settings);
+    }
+    m_folder_settings = std::move(new_settings);
+
     if (!save()) {
         return false;
     }
-
-    return save_folders();
+    if (!save_folders()) {
+        return false;
+    }
+    return save_all_folder_settings();
 }
 
 bool ConfigManager::rename_folder(std::string_view source_folder, std::string_view new_name) {
@@ -932,11 +1292,20 @@ bool ConfigManager::rename_folder(std::string_view source_folder, std::string_vi
         conn.folder = rewrite(conn.folder);
     }
 
+    // Rewrite folder_settings paths
+    std::unordered_map<std::string, FolderSettings> new_settings;
+    for (auto& [path, settings] : m_folder_settings) {
+        new_settings[rewrite(path)] = std::move(settings);
+    }
+    m_folder_settings = std::move(new_settings);
+
     if (!save()) {
         return false;
     }
-
-    return save_folders();
+    if (!save_folders()) {
+        return false;
+    }
+    return save_all_folder_settings();
 }
 
 bool ConfigManager::delete_folder(std::string_view folder) {
@@ -959,11 +1328,22 @@ bool ConfigManager::delete_folder(std::string_view folder) {
             [&](const ConnectionProfile& conn) { return in_deleted_tree(conn.folder); }),
         m_connections.end());
 
+    // Delete folder_settings for deleted folders
+    for (auto it = m_folder_settings.begin(); it != m_folder_settings.end(); ) {
+        if (in_deleted_tree(it->first)) {
+            it = m_folder_settings.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     if (!save()) {
         return false;
     }
-
-    return save_folders();
+    if (!save_folders()) {
+        return false;
+    }
+    return save_all_folder_settings();
 }
 
 std::string ConfigManager::get_folders_json() const {

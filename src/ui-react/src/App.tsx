@@ -20,7 +20,7 @@ import type {
   FeedAccount,
   ViewMode,
 } from './types';
-import { defaultConnectionProfile } from './types';
+import { defaultConnectionProfile, INHERITABLE_FIELDS } from './types';
 import {
   apiGetConnections,
   apiGetAppInfo,
@@ -47,6 +47,8 @@ import {
   apiDiscoverFeeds,
   apiLogOffAccount,
   apiForgetAccount,
+  apiSaveFolderSettings,
+  apiGetEffectiveConnectionProfile,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
@@ -59,6 +61,7 @@ import { CertificateDialog } from './components/CertificateDialog';
 import { AuthDialog } from './components/AuthDialog';
 import { DeleteDialog } from './components/DeleteDialog';
 import { AccountActionDialog, type AccountAction } from './components/AccountActionDialog';
+import { FolderSettingsDialog } from './components/FolderSettingsDialog';
 import { getFluentTheme, type ThemeMode } from './theme';
 
 const useStyles = makeStyles({
@@ -163,6 +166,10 @@ export function App() {
   const [accountAction, setAccountAction] = useState<AccountAction>('logoff');
   const [accountActionTarget, setAccountActionTarget] = useState<{ id: string; name: string }>({ id: '', name: '' });
 
+  // Folder settings dialog state
+  const [folderSettingsOpen, setFolderSettingsOpen] = useState(false);
+  const [folderSettingsPath, setFolderSettingsPath] = useState('');
+
   // Ref to track imported RDP data for connection params
   const importedRdpDataRef = useRef<Record<string, unknown> | null>(null);
   importedRdpDataRef.current = importedRdpData;
@@ -225,8 +232,10 @@ export function App() {
         return;
       }
 
+      // Resolve effective profile (applies folder inheritance) before connecting
+      const resolved = await apiGetEffectiveConnectionProfile(conn.name);
       const params: ConnectionParams = {
-        ...conn,
+        ...(resolved || conn),
       };
 
       const result = await apiConnect(params);
@@ -309,6 +318,7 @@ export function App() {
         arm_path: rdp.arm_path || '',
         aad_tenant_id: rdp.aad_tenant_id || '',
         remote_application_program: rdp.remote_application_program || '',
+        overridden_fields: [...INHERITABLE_FIELDS],  // Imported profiles override all fields
       };
       setEditorProfile(profile);
       setEditorIsNew(true);
@@ -996,6 +1006,10 @@ export function App() {
                 onDropFolderToFolder={handleDropFolderToFolder}
                 onRenameFolder={handleRenameFolder}
                 onDeleteFolder={handleDeleteFolder}
+                onEditFolderDefaults={(path) => {
+                  setFolderSettingsPath(path);
+                  setFolderSettingsOpen(true);
+                }}
               />
             </div>
             <div
@@ -1096,6 +1110,21 @@ export function App() {
               }
             }
           }}
+        />
+
+        <FolderSettingsDialog
+          open={folderSettingsOpen}
+          folderPath={folderSettingsPath}
+          onSave={async (path, settings) => {
+            const success = await apiSaveFolderSettings(path, settings);
+            if (success) {
+              showToast('Folder defaults saved', 'success');
+            } else {
+              showToast('Failed to save folder defaults', 'error');
+            }
+            setFolderSettingsOpen(false);
+          }}
+          onCancel={() => setFolderSettingsOpen(false)}
         />
       </div>
     </FluentProvider>

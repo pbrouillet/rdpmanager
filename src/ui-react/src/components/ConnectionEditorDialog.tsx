@@ -11,6 +11,7 @@ import {
   Label,
   Checkbox,
   SpinButton,
+  Switch,
   makeStyles,
   tokens,
   Accordion,
@@ -19,9 +20,12 @@ import {
   AccordionPanel,
   Divider,
   Text,
+  Tooltip,
 } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
-import type { ConnectionProfile } from '../types';
+import type { ConnectionProfile, FolderSettings } from '../types';
+import { INHERITABLE_FIELDS } from '../types';
+import { apiGetEffectiveFolderSettings } from '../api';
 
 const useStyles = makeStyles({
   form: {
@@ -75,6 +79,21 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalXS,
     paddingBottom: tokens.spacingVerticalS,
   },
+  settingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    minHeight: '32px',
+    paddingBottom: tokens.spacingVerticalXXS,
+  },
+  setSwitch: {
+    flexShrink: 0,
+  },
+  inheritedHint: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    fontStyle: 'italic',
+  },
 });
 
 interface ConnectionEditorDialogProps {
@@ -94,10 +113,33 @@ export function ConnectionEditorDialog({
 }: ConnectionEditorDialogProps) {
   const styles = useStyles();
   const [form, setForm] = useState<ConnectionProfile>(profile);
+  const [overrides, setOverrides] = useState<Set<string>>(new Set());
+  const [inherited, setInherited] = useState<FolderSettings>({});
 
   useEffect(() => {
-    if (open) setForm({ ...profile });
+    if (!open) return;
+    setForm({ ...profile });
+    // Initialize overrides from profile (backward compat: old profiles have all fields overridden)
+    const initial = profile.overridden_fields
+      ? new Set(profile.overridden_fields)
+      : new Set(INHERITABLE_FIELDS as string[]);
+    setOverrides(initial);
+    // Fetch effective folder settings for this connection's folder
+    (async () => {
+      const eff = await apiGetEffectiveFolderSettings(profile.folder || '');
+      setInherited(eff);
+    })();
   }, [open, profile]);
+
+  // Re-fetch inherited settings when folder changes
+  const prevFolder = form.folder;
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const eff = await apiGetEffectiveFolderSettings(prevFolder || '');
+      setInherited(eff);
+    })();
+  }, [open, prevFolder]);
 
   const update = useCallback(
     <K extends keyof ConnectionProfile>(key: K, value: ConnectionProfile[K]) => {
@@ -106,7 +148,53 @@ export function ConnectionEditorDialog({
     []
   );
 
-  const handleSave = () => onSave(form);
+  const toggleOverride = useCallback((field: string, enable: boolean) => {
+    setOverrides((prev) => {
+      const next = new Set(prev);
+      if (enable) {
+        next.add(field);
+      } else {
+        next.delete(field);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSave = () => {
+    onSave({ ...form, overridden_fields: Array.from(overrides) });
+  };
+
+  /** Render an inheritable boolean checkbox with override toggle */
+  const inheritableCheckbox = (field: keyof FolderSettings & keyof ConnectionProfile, label: string) => {
+    const isOverridden = overrides.has(field);
+    const effectiveValue = isOverridden ? form[field] : (inherited[field] ?? false);
+    return (
+      <div className={styles.settingRow}>
+        <Tooltip content={isOverridden ? 'Overridden — click to inherit from folder' : 'Inherited — click to override'} relationship="label">
+          <Switch
+            className={styles.setSwitch}
+            checked={isOverridden}
+            onChange={(_, d) => {
+              toggleOverride(field, d.checked);
+              if (d.checked) {
+                // When starting to override, use the inherited value as starting point
+                update(field, (inherited[field] ?? false) as ConnectionProfile[typeof field]);
+              }
+            }}
+          />
+        </Tooltip>
+        <Checkbox
+          label={label}
+          checked={!!effectiveValue}
+          disabled={!isOverridden}
+          onChange={(_, d) => update(field, !!d.checked as ConnectionProfile[typeof field])}
+        />
+        {!isOverridden && inherited[field] !== undefined && (
+          <Text className={styles.inheritedHint}>(inherited)</Text>
+        )}
+      </div>
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) onCancel(); }}>
@@ -246,142 +334,146 @@ export function ConnectionEditorDialog({
                       {/* Features */}
                       <div className={styles.group}>
                         <Text className={styles.groupTitle}>Features</Text>
-                        <div className={styles.checkboxGrid}>
-                          <Checkbox
-                            label="Home Drive"
-                            checked={form.home_drive}
-                            onChange={(_, d) => update('home_drive', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Clipboard"
-                            checked={form.clipboard}
-                            onChange={(_, d) => update('clipboard', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="USB Auto"
-                            checked={form.usb_auto}
-                            onChange={(_, d) => update('usb_auto', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Float Bar"
-                            checked={form.floatbar}
-                            onChange={(_, d) => update('floatbar', !!d.checked)}
-                          />
-                        </div>
+                        {inheritableCheckbox('home_drive', 'Home Drive')}
+                        {inheritableCheckbox('clipboard', 'Clipboard')}
+                        {inheritableCheckbox('usb_auto', 'USB Auto')}
+                        {inheritableCheckbox('floatbar', 'Float Bar')}
                       </div>
 
                       {/* Performance */}
                       <div className={styles.group}>
                         <Text className={styles.groupTitle}>Performance</Text>
-                        <div className={styles.checkboxGrid}>
-                          <Checkbox
-                            label="Dynamic Resolution"
-                            checked={form.dynamic_resolution}
-                            onChange={(_, d) => update('dynamic_resolution', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Network Auto"
-                            checked={form.network_auto}
-                            onChange={(_, d) => update('network_auto', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="GFX AVC420"
-                            checked={form.gfx_avc420}
-                            onChange={(_, d) => update('gfx_avc420', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Compression"
-                            checked={form.compression}
-                            onChange={(_, d) => update('compression', !!d.checked)}
-                          />
-                        </div>
+                        {inheritableCheckbox('dynamic_resolution', 'Dynamic Resolution')}
+                        {inheritableCheckbox('network_auto', 'Network Auto')}
+                        {inheritableCheckbox('gfx_avc420', 'GFX AVC420')}
+                        {inheritableCheckbox('compression', 'Compression')}
                       </div>
 
                       {/* Audio & Session */}
                       <div className={styles.group}>
                         <Text className={styles.groupTitle}>Audio & Session</Text>
-                        <div className={styles.checkboxGrid}>
-                          <Checkbox
-                            label="PulseAudio"
-                            checked={form.audio_pulse}
-                            onChange={(_, d) => update('audio_pulse', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Prevent Lock"
-                            checked={form.prevent_session_lock}
-                            onChange={(_, d) => update('prevent_session_lock', !!d.checked)}
-                          />
-                        </div>
+                        {inheritableCheckbox('audio_pulse', 'PulseAudio')}
+                        {inheritableCheckbox('prevent_session_lock', 'Prevent Lock')}
                       </div>
 
                       {/* Security & Reconnection */}
                       <div className={styles.group}>
                         <Text className={styles.groupTitle}>Security & Reconnection</Text>
-                        <div className={styles.checkboxGrid}>
-                          <Checkbox
-                            label="Cert TOFU"
-                            checked={form.cert_tofu}
-                            onChange={(_, d) => update('cert_tofu', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="Auto Reconnect"
-                            checked={form.auto_reconnect}
-                            onChange={(_, d) => update('auto_reconnect', !!d.checked)}
-                          />
-                        </div>
-                        {form.auto_reconnect && (
-                          <div className={styles.row} style={{ marginTop: tokens.spacingVerticalS }}>
-                            <div className={styles.fieldSmall}>
-                              <Label htmlFor="conn-retries">Max Retries</Label>
-                              <SpinButton
-                                id="conn-retries"
-                                value={form.auto_reconnect_max_retries}
-                                min={1}
-                                max={10}
-                                onChange={(_, d) =>
-                                  update('auto_reconnect_max_retries', d.value ?? 3)
-                                }
-                              />
+                        {inheritableCheckbox('cert_tofu', 'Cert TOFU')}
+                        {inheritableCheckbox('auto_reconnect', 'Auto Reconnect')}
+                        {/* Max retries with override toggle */}
+                        {(() => {
+                          const isOverridden = overrides.has('auto_reconnect_max_retries');
+                          const effectiveValue = isOverridden
+                            ? form.auto_reconnect_max_retries
+                            : (inherited.auto_reconnect_max_retries ?? 3);
+                          return (
+                            <div className={styles.settingRow}>
+                              <Tooltip content={isOverridden ? 'Overridden — click to inherit' : 'Inherited — click to override'} relationship="label">
+                                <Switch
+                                  className={styles.setSwitch}
+                                  checked={isOverridden}
+                                  onChange={(_, d) => {
+                                    toggleOverride('auto_reconnect_max_retries', d.checked);
+                                    if (d.checked) {
+                                      update('auto_reconnect_max_retries', inherited.auto_reconnect_max_retries ?? 3);
+                                    }
+                                  }}
+                                />
+                              </Tooltip>
+                              <div className={styles.fieldSmall}>
+                                <Label htmlFor="conn-retries">Max Retries</Label>
+                                <SpinButton
+                                  id="conn-retries"
+                                  value={effectiveValue}
+                                  min={1}
+                                  max={10}
+                                  disabled={!isOverridden}
+                                  onChange={(_, d) =>
+                                    update('auto_reconnect_max_retries', d.value ?? 3)
+                                  }
+                                />
+                              </div>
+                              {!isOverridden && inherited.auto_reconnect_max_retries !== undefined && (
+                                <Text className={styles.inheritedHint}>(inherited)</Text>
+                              )}
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
 
                       {/* Gateway / AVD */}
                       <div className={styles.group}>
                         <Text className={styles.groupTitle}>RD Gateway / Azure Virtual Desktop</Text>
-                        <div className={styles.field}>
-                          <Label htmlFor="conn-gw">Gateway Hostname</Label>
-                          <Input
-                            id="conn-gw"
-                            placeholder="gateway.example.com:443"
-                            value={form.gateway_hostname}
-                            onChange={(_, d) => update('gateway_hostname', d.value)}
-                          />
-                        </div>
-                        <div className={styles.checkboxGrid} style={{ marginTop: tokens.spacingVerticalS }}>
-                          <Checkbox
-                            label="AAD Auth"
-                            checked={form.enable_rds_aad_auth}
-                            onChange={(_, d) => update('enable_rds_aad_auth', !!d.checked)}
-                          />
-                          <Checkbox
-                            label="AAD Joined"
-                            checked={form.target_is_aad_joined}
-                            onChange={(_, d) => update('target_is_aad_joined', !!d.checked)}
-                          />
-                        </div>
-                        {(form.enable_rds_aad_auth || form.target_is_aad_joined) && (
-                          <div className={styles.field} style={{ marginTop: tokens.spacingVerticalS }}>
-                            <Label htmlFor="conn-lb">Load Balance Info (AVD)</Label>
-                            <Input
-                              id="conn-lb"
-                              placeholder="mth://..."
-                              value={form.load_balance_info}
-                              onChange={(_, d) => update('load_balance_info', d.value)}
-                            />
-                          </div>
-                        )}
+                        {/* Gateway hostname with override toggle */}
+                        {(() => {
+                          const isOverridden = overrides.has('gateway_hostname');
+                          return (
+                            <div className={styles.settingRow}>
+                              <Tooltip content={isOverridden ? 'Overridden — click to inherit' : 'Inherited — click to override'} relationship="label">
+                                <Switch
+                                  className={styles.setSwitch}
+                                  checked={isOverridden}
+                                  onChange={(_, d) => {
+                                    toggleOverride('gateway_hostname', d.checked);
+                                    if (d.checked) {
+                                      update('gateway_hostname', inherited.gateway_hostname ?? '');
+                                    }
+                                  }}
+                                />
+                              </Tooltip>
+                              <div className={styles.field}>
+                                <Label htmlFor="conn-gw">Gateway Hostname</Label>
+                                <Input
+                                  id="conn-gw"
+                                  placeholder="gateway.example.com:443"
+                                  value={isOverridden ? form.gateway_hostname : (inherited.gateway_hostname ?? '')}
+                                  disabled={!isOverridden}
+                                  onChange={(_, d) => update('gateway_hostname', d.value)}
+                                />
+                              </div>
+                              {!isOverridden && inherited.gateway_hostname !== undefined && (
+                                <Text className={styles.inheritedHint}>(inherited)</Text>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {inheritableCheckbox('enable_rds_aad_auth', 'AAD Auth')}
+                        {inheritableCheckbox('target_is_aad_joined', 'AAD Joined')}
+                        {/* Load balance info with override toggle */}
+                        {(form.enable_rds_aad_auth || form.target_is_aad_joined ||
+                          inherited.enable_rds_aad_auth || inherited.target_is_aad_joined) && (() => {
+                          const isOverridden = overrides.has('load_balance_info');
+                          return (
+                            <div className={styles.settingRow}>
+                              <Tooltip content={isOverridden ? 'Overridden — click to inherit' : 'Inherited — click to override'} relationship="label">
+                                <Switch
+                                  className={styles.setSwitch}
+                                  checked={isOverridden}
+                                  onChange={(_, d) => {
+                                    toggleOverride('load_balance_info', d.checked);
+                                    if (d.checked) {
+                                      update('load_balance_info', inherited.load_balance_info ?? '');
+                                    }
+                                  }}
+                                />
+                              </Tooltip>
+                              <div className={styles.field}>
+                                <Label htmlFor="conn-lb">Load Balance Info (AVD)</Label>
+                                <Input
+                                  id="conn-lb"
+                                  placeholder="mth://..."
+                                  value={isOverridden ? form.load_balance_info : (inherited.load_balance_info ?? '')}
+                                  disabled={!isOverridden}
+                                  onChange={(_, d) => update('load_balance_info', d.value)}
+                                />
+                              </div>
+                              {!isOverridden && inherited.load_balance_info !== undefined && (
+                                <Text className={styles.inheritedHint}>(inherited)</Text>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </AccordionPanel>
