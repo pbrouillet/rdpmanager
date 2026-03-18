@@ -56,15 +56,41 @@ jobs:
           SKIP_LIBS+="|libblkid|libmount|libnuma"
           SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
           SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
+          bundle_lib() {
+            local src="$1"
+            local name
+            name=$(basename "$src")
+            if [ ! -f "dist/rdpmanager/lib/$name" ]; then
+              cp -L "$src" "dist/rdpmanager/lib/$name"
+              return 0
+            fi
+            return 1
+          }
+
+          # Pass 1: bundle direct dependencies of the binary
           ldd "$BUILD/webui-rdp-client" \
             | grep -v "not found" \
             | grep "=> /" \
             | grep -Ev "$SKIP_LIBS" \
             | awk '{print $3}' \
             | sort -u \
-            | while read -r lib; do
-                cp -L "$lib" dist/rdpmanager/lib/
-              done
+            | while read -r lib; do bundle_lib "$lib" || true; done
+
+          # Pass 2: recursively bundle transitive deps of bundled libs
+          # (catches e.g. libjxl deps pulled in via libavcodec)
+          prev_count=0
+          curr_count=$(ls dist/rdpmanager/lib/ | wc -l)
+          while [ "$curr_count" -gt "$prev_count" ]; do
+            prev_count=$curr_count
+            for bundled in dist/rdpmanager/lib/*.so*; do
+              ldd "$bundled" 2>/dev/null \
+                | grep "=> /" \
+                | grep -Ev "$SKIP_LIBS" \
+                | awk '{print $3}' \
+                | while read -r dep; do bundle_lib "$dep" || true; done
+            done
+            curr_count=$(ls dist/rdpmanager/lib/ | wc -l)
+          done
 
           # Set RPATH so the binary finds bundled libs at $ORIGIN/lib
           patchelf --set-rpath '$ORIGIN/lib' dist/rdpmanager/webui-rdp-client
