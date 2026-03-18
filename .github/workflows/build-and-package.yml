@@ -41,9 +41,7 @@ jobs:
 
           cp "$BUILD/webui-rdp-client" dist/rdpmanager/
 
-          # Bundle only the shared libraries the binary actually needs that
-          # are NOT part of the standard Linux desktop base (X11, ICU, glibc,
-          # C++ runtime, systemd, etc. are expected on the target system).
+          # Libraries expected on any Linux desktop — never bundle these.
           SKIP_LIBS="linux-vdso|ld-linux"
           SKIP_LIBS+="|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libmvec\.so|libresolv\.so"
           SKIP_LIBS+="|libstdc\+\+|libgcc_s|libatomic|libgomp"
@@ -56,41 +54,47 @@ jobs:
           SKIP_LIBS+="|libblkid|libmount|libnuma"
           SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
           SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
-          bundle_lib() {
-            local src="$1"
-            local name
-            name=$(basename "$src")
-            if [ ! -f "dist/rdpmanager/lib/$name" ]; then
-              cp -L "$src" "dist/rdpmanager/lib/$name"
-              return 0
-            fi
-            return 1
+
+          # Extract resolved lib paths from ldd output using awk (always exits 0,
+          # unlike grep which returns 1 on no match and breaks pipefail).
+          resolved_libs() {
+            ldd "$1" 2>/dev/null | awk -v skip="$SKIP_LIBS" \
+              '/=>/ && $3 ~ /^\// && $1 !~ skip {print $3}' | sort -u
           }
 
-          # Pass 1: bundle direct dependencies of the binary
-          ( ldd "$BUILD/webui-rdp-client" \
-            | { grep -v "not found" || true; } \
-            | { grep "=> /" || true; } \
-            | { grep -Ev "$SKIP_LIBS" || true; } \
-            | awk '{print $3}' \
-            | sort -u \
-            | while read -r lib; do bundle_lib "$lib" || true; done ) || true
+          # Pass 1: bundle direct + transitive deps shown by ldd on the binary
+          resolved_libs "$BUILD/webui-rdp-client" > /tmp/libs_to_bundle.txt
+          echo "Pass 1: $(wc -l < /tmp/libs_to_bundle.txt) libs from binary"
 
-          # Pass 2: recursively bundle transitive deps of bundled libs
-          # (catches e.g. libjxl deps pulled in via libavcodec)
+          while IFS= read -r lib; do
+            name=$(basename "$lib")
+            cp -L "$lib" "dist/rdpmanager/lib/$name"
+            echo "  Bundled: $name"
+          done < /tmp/libs_to_bundle.txt
+
+          # Pass 2: recursively scan bundled libs for THEIR deps
           prev_count=0
           curr_count=$(ls dist/rdpmanager/lib/ | wc -l)
+          pass=2
           while [ "$curr_count" -gt "$prev_count" ]; do
             prev_count=$curr_count
+            new_libs=0
             for bundled in dist/rdpmanager/lib/*.so*; do
-              ( ldd "$bundled" 2>/dev/null \
-                | { grep "=> /" || true; } \
-                | { grep -Ev "$SKIP_LIBS" || true; } \
-                | awk '{print $3}' \
-                | while read -r dep; do bundle_lib "$dep" || true; done ) || true
+              resolved_libs "$bundled" | while IFS= read -r dep; do
+                name=$(basename "$dep")
+                if [ ! -f "dist/rdpmanager/lib/$name" ]; then
+                  cp -L "$dep" "dist/rdpmanager/lib/$name"
+                  echo "  Bundled (transitive): $name"
+                fi
+              done
             done
             curr_count=$(ls dist/rdpmanager/lib/ | wc -l)
+            echo "Pass $pass: $(( curr_count - prev_count )) new libs"
+            pass=$(( pass + 1 ))
           done
+
+          echo ""
+          echo "Total bundled: $(ls dist/rdpmanager/lib/ | wc -l) libraries"
 
           # Set RPATH so the binary finds bundled libs at $ORIGIN/lib
           patchelf --set-rpath '$ORIGIN/lib' dist/rdpmanager/webui-rdp-client
@@ -109,16 +113,50 @@ jobs:
 
       - name: Validate bundled libraries
         run: |
-          echo "=== Checking for missing shared libraries ==="
-          MISSING=$(LD_LIBRARY_PATH=dist/rdpmanager/lib ldd dist/rdpmanager/webui-rdp-client | grep "not found" || true)
-          if [ -n "$MISSING" ]; then
-            echo "ERROR: Missing shared libraries detected:"
-            echo "$MISSING"
+          set -euo pipefail
+
+          # Same SKIP_LIBS as the packaging step
+          SKIP_LIBS="linux-vdso|ld-linux"
+          SKIP_LIBS+="|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libmvec\.so|libresolv\.so"
+          SKIP_LIBS+="|libstdc\+\+|libgcc_s|libatomic|libgomp"
+          SKIP_LIBS+="|libX[a-z0-9]|libxcb|libxkbfile|libxshmfence|libSM|libICE"
+          SKIP_LIBS+="|libsystemd|libudev|libdbus"
+          SKIP_LIBS+="|libicu"
+          SKIP_LIBS+="|libffi|libpcre|libselinux|libcap|libgpg-error|libgcrypt|liblzma|libelf"
+          SKIP_LIBS+="|libgio|libglib|libgobject|libgmodule"
+          SKIP_LIBS+="|libz\.so|libbz2|libexpat|libxml2"
+          SKIP_LIBS+="|libblkid|libmount|libnuma"
+          SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
+          SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
+
+          echo "=== Verifying every non-system dep is bundled ==="
+          MISSING=0
+          # Check every lib the binary needs (and every bundled lib needs)
+          all_bins="dist/rdpmanager/webui-rdp-client"
+          for so in dist/rdpmanager/lib/*.so*; do all_bins="$all_bins $so"; done
+
+          for bin in $all_bins; do
+            ldd "$bin" 2>/dev/null | awk '/=>/ && $3 ~ /^\// {print $1, $3}' | while read -r soname path; do
+              if echo "$soname" | grep -qE "$SKIP_LIBS"; then
+                continue
+              fi
+              if [ ! -f "dist/rdpmanager/lib/$soname" ]; then
+                echo "MISSING: $soname (needed by $(basename "$bin"), resolved to $path)"
+                # Signal missing via a marker file (subshell can't set parent vars)
+                touch /tmp/.bundle_missing
+              fi
+            done
+          done
+
+          if [ -f /tmp/.bundle_missing ]; then
+            echo ""
+            echo "ERROR: Some required libraries are not in the bundle!"
+            echo "The artifact will fail on systems without these libraries."
             exit 1
           fi
-          echo "✓ All shared libraries resolved"
+          echo "✓ All non-system libraries are bundled"
           echo ""
-          echo "=== Bundled libraries ==="
+          echo "=== Bundled libraries ($(ls dist/rdpmanager/lib/ | wc -l)) ==="
           ls -lhS dist/rdpmanager/lib/
           echo ""
           echo "=== Package size ==="
