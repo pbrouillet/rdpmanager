@@ -22,8 +22,13 @@ jobs:
       - name: Install dependencies
         run: ./setup-deps.sh
 
-      - name: Build application
+      - name: Build application (setup + debug build)
         run: ./init.sh
+
+      - name: Build release with embedded UI
+        run: |
+          meson setup build-release --buildtype=release -Dembed_ui=true
+          ninja -C build-release
 
       - name: Install patchelf
         run: sudo apt-get install -y -qq patchelf
@@ -31,15 +36,27 @@ jobs:
       - name: Package artifact
         run: |
           set -euo pipefail
+          BUILD=build-release
           mkdir -p dist/rdpmanager/lib
 
-          cp build/webui-rdp-client dist/rdpmanager/
-          cp -r build/ui-dist dist/rdpmanager/
+          cp "$BUILD/webui-rdp-client" dist/rdpmanager/
 
-          # Bundle shared libraries that aren't part of the base Linux system.
-          # We skip the core C runtime libs that every distro ships.
-          SKIP_LIBS="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libmvec\.so|libresolv\.so"
-          ldd build/webui-rdp-client \
+          # Bundle only the shared libraries the binary actually needs that
+          # are NOT part of the standard Linux desktop base (X11, ICU, glibc,
+          # C++ runtime, systemd, etc. are expected on the target system).
+          SKIP_LIBS="linux-vdso|ld-linux"
+          SKIP_LIBS+="|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libmvec\.so|libresolv\.so"
+          SKIP_LIBS+="|libstdc\+\+|libgcc_s|libatomic|libgomp"
+          SKIP_LIBS+="|libX[a-z0-9]|libxcb|libxkbfile|libxshmfence|libSM|libICE"
+          SKIP_LIBS+="|libsystemd|libudev|libdbus"
+          SKIP_LIBS+="|libicu"
+          SKIP_LIBS+="|libffi|libpcre|libselinux|libcap|libgpg-error|libgcrypt|liblzma|libelf"
+          SKIP_LIBS+="|libgio|libglib|libgobject|libgmodule"
+          SKIP_LIBS+="|libz\.so|libbz2|libexpat|libxml2"
+          SKIP_LIBS+="|libblkid|libmount|libnuma"
+          SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
+          SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
+          ldd "$BUILD/webui-rdp-client" \
             | grep -v "not found" \
             | grep "=> /" \
             | grep -Ev "$SKIP_LIBS" \
@@ -63,6 +80,23 @@ jobs:
           chmod +x dist/rdpmanager/rdpmanager.sh
 
           tar -czf dist/rdpmanager-linux-x86_64.tar.gz -C dist rdpmanager
+
+      - name: Validate bundled libraries
+        run: |
+          echo "=== Checking for missing shared libraries ==="
+          MISSING=$(LD_LIBRARY_PATH=dist/rdpmanager/lib ldd dist/rdpmanager/webui-rdp-client | grep "not found" || true)
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: Missing shared libraries detected:"
+            echo "$MISSING"
+            exit 1
+          fi
+          echo "✓ All shared libraries resolved"
+          echo ""
+          echo "=== Bundled libraries ==="
+          ls -lhS dist/rdpmanager/lib/
+          echo ""
+          echo "=== Package size ==="
+          du -sh dist/rdpmanager-linux-x86_64.tar.gz
 
       - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
