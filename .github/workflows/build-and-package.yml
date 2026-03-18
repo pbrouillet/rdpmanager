@@ -54,6 +54,9 @@ jobs:
           SKIP_LIBS+="|libblkid|libmount|libnuma"
           SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
           SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
+          # GTK rendering stack — must match system GTK plugins/loaders.
+          SKIP_LIBS+="|libcairo|libpango|libgdk_pixbuf|librsvg|libpixman"
+          SKIP_LIBS+="|libharfbuzz|libfontconfig|libfreetype|libfribidi|libgraphite2|libthai|libdatrie"
 
           # Extract resolved lib paths from ldd output using awk (always exits 0,
           # unlike grep which returns 1 on no match and breaks pipefail).
@@ -128,6 +131,9 @@ jobs:
           SKIP_LIBS+="|libblkid|libmount|libnuma"
           SKIP_LIBS+="|libdrm|libva|libvdpau|libOpenCL"
           SKIP_LIBS+="|libcom_err|libgssapi|libkrb5|libk5crypto|libkeyutils"
+          # GTK rendering stack — must match system GTK plugins/loaders.
+          SKIP_LIBS+="|libcairo|libpango|libgdk_pixbuf|librsvg|libpixman"
+          SKIP_LIBS+="|libharfbuzz|libfontconfig|libfreetype|libfribidi|libgraphite2|libthai|libdatrie"
 
           echo "=== Verifying every non-system dep is bundled ==="
           MISSING=0
