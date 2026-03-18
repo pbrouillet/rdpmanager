@@ -121,6 +121,9 @@ APT_DEV_PACKAGES=(
     libicu-dev
     # Compression
     libzstd-dev
+    # HTTP / XML (WVD feed discovery)
+    libcurl4-openssl-dev
+    libpugixml-dev
     # WebKit/GIO TLS backend for embedded WebView HTTPS navigation
     glib-networking
     ca-certificates
