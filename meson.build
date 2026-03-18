@@ -63,6 +63,9 @@ freerdp_opts.add_cmake_defines({
   # FFmpeg with libx264 provides H264 support
   'WITH_OPENH264': false,
   
+  # Use built-in Unicode converter (avoids ~35MB ICU runtime dependency)
+  'WITH_UNICODE_BUILTIN': true,
+  
   # Enable compression
   'WITH_BULK_COMPRESSION': true,
   

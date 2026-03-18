@@ -114,11 +114,10 @@ APT_DEV_PACKAGES=(
     libasound2-dev
     libcups2-dev
     libusb-1.0-0-dev
-    # Kerberos & ICU
+    # Kerberos
     libkrb5-dev
     krb5-multidev
     comerr-dev
-    libicu-dev
     # Compression
     libzstd-dev
     # HTTP / XML (WVD feed discovery)
