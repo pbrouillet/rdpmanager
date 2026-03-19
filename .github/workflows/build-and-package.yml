@@ -40,6 +40,7 @@ jobs:
           mkdir -p dist/rdpmanager/lib
 
           cp "$BUILD/webui-rdp-client" dist/rdpmanager/
+          cp appicon.png dist/rdpmanager/
 
           # Libraries expected on any Linux desktop — never bundle these.
           SKIP_LIBS="linux-vdso|ld-linux"
@@ -111,6 +112,18 @@ jobs:
           WRAPPER
           sed -i 's/^          //' dist/rdpmanager/rdpmanager.sh
           chmod +x dist/rdpmanager/rdpmanager.sh
+
+          # Create .desktop launcher
+          cat > dist/rdpmanager/rdpmanager.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=RDP Manager
+          Exec=SCRIPT_DIR/rdpmanager.sh
+          Icon=SCRIPT_DIR/appicon.png
+          Terminal=false
+          Categories=Network;RemoteAccess;
+          DESKTOP
+          sed -i 's/^          //' dist/rdpmanager/rdpmanager.desktop
 
           tar -czf dist/rdpmanager-linux-x86_64.tar.gz -C dist rdpmanager
 
