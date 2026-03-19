@@ -1,34 +1,41 @@
 # WebUI RDP Client
 
-A native C++ Remote Desktop client featuring a modern web-based UI powered by [WebUI](https://github.com/webui-dev/webui) and [FreeRDP](https://github.com/FreeRDP/FreeRDP).
+A native C++23 Remote Desktop client featuring a modern React-based UI powered by [WebUI](https://github.com/webui-dev/webui) and [FreeRDP](https://github.com/FreeRDP/FreeRDP).
+
+![Main Windows screenshot](./docs/main-window.png)
 
 ## Features
 
-- 🖥️ Modern, dark-themed web UI
-- 🔐 Save and manage RDP connection profiles
+- 🖥️ Modern React 19 / Fluent UI dark-themed web interface
+- 🔐 Save and manage RDP connection profiles with SQLite persistence
+- 📁 Hierarchical folder organization with cascading settings inheritance
 - 🚀 Spawn FreeRDP sessions with a single click
+- 🗄️ Multi-database support (create, open, clone databases)
+- 🔑 Azure AD / Entra ID authentication (OAuth2 code flow with popup)
+- 🌐 WVD/AVD feed discovery and import
 - 📋 Clipboard redirection support
-- 🔊 Audio redirection support
-- 🛡️ Certificate handling (TOFU model)
+- 🔊 Audio redirection support (PulseAudio)
+- 🛡️ Certificate handling (TOFU model with interactive dialogs)
+- 📄 RDP file import/parsing
+- ⚡ Advanced RDP options (USB, floatbar, dynamic resolution, gateway, compression, auto-reconnect)
+- 📦 Embedded UI mode for single-binary deployment
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Application                          │
-├─────────────────────────────────────────────────────────┤
-│  ┌───────────────┐    ┌────────────────────────────┐   │
-│  │   WebUI       │◄──►│  HTML/CSS/JS Frontend      │   │
-│  │   (Browser)   │    │  (src/ui/)                 │   │
-│  └───────┬───────┘    └────────────────────────────┘   │
-│          │                                              │
-│          ▼                                              │
-│  ┌───────────────┐    ┌────────────────────────────┐   │
-│  │  C++ Backend  │───►│  RDP Launcher              │   │
-│  │  (main.cpp)   │    │  (FreeRDP subprocess)      │   │
-│  └───────────────┘    └────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+React/Fluent UI (src/ui-react/)  ←→  JS bindings (js_handlers.cpp)  ←→  C++ backend
+                                                                          ├── RDPLauncher (FreeRDP sessions)
+                                                                          ├── ConfigManager (SQLite persistence)
+                                                                          ├── AADAuthHandler (Azure AD OAuth popup)
+                                                                          ├── FeedDiscoveryManager (WVD feed import)
+                                                                          └── DialogManager (cert/auth dialog sync)
 ```
+
+- **Frontend**: React 19 + TypeScript + Vite, styled with Microsoft Fluent UI
+- **Backend**: C++23 with RAII wrappers, connected to the frontend via WebUI's JavaScript binding layer
+- **Threading**: FreeRDP callbacks run on worker threads; dialog and auth flows use `std::mutex` + `std::condition_variable` to synchronize with the main thread
+- **Persistence**: SQLite database (`connections.db`) with tables for connections, folders, folder_settings, cached_tokens, and feed_accounts
+- **Patches**: Two local patches are applied to vendored submodules (see [PATCHES.md](PATCHES.md))
 
 ## Prerequisites
 
@@ -82,41 +89,52 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-meson \
 
 ## Building
 
-### 1. Clone and Initialize
+### First-time setup
 
 ```bash
 git clone <your-repo-url> webui-rdp-client
 cd webui-rdp-client
 
-# Initialize FreeRDP submodule
-git submodule update --init --recursive
+# Install dev packages (handles no-sudo fallback)
+source ./setup-deps.sh
+
+# Submodules → patches → npm install → meson setup → ninja build
+./init.sh
 ```
 
-### 2. Configure with Meson
+`init.sh` is idempotent and performs a clean build: it reinitializes submodules, applies patches from `patches/`, installs React UI npm dependencies, runs `meson setup`, and builds with `ninja -C build`.
+
+### Rebuilding after code changes
 
 ```bash
-# Debug build
-meson setup build --buildtype=debug
-
-# Release build
-meson setup build-release --buildtype=release
+ninja -C build            # incremental C++ build (also rebuilds React UI if changed)
 ```
 
-### 3. Build with Ninja
+### Embedded UI build (single-binary deployment)
 
 ```bash
-# Debug
-ninja -C build
-
-# Release
-ninja -C build-release
+meson setup build-embedded --buildtype=release -Dembed_ui=true
+ninja -C build-embedded
 ```
 
-### 4. Run
+This embeds all React assets as a C++ header (`embedded_ui.hpp`), producing a self-contained executable.
+
+### Run
 
 ```bash
 ./build/webui-rdp-client
 ```
+
+### Build options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `use_system_freerdp` | boolean | false | Use system-installed FreeRDP instead of submodule |
+| `use_system_webui` | boolean | false | Use system-installed WebUI instead of wrap |
+| `embed_ui` | boolean | false | Embed React assets into the binary |
+| `default_rdp_port` | integer | 3389 | Default RDP port for connections |
+| `enable_clipboard` | boolean | true | Enable clipboard redirection |
+| `enable_audio` | boolean | true | Enable audio redirection |
 
 ## VSCode Development
 
@@ -155,53 +173,80 @@ webui-rdp-client/
 │   └── extensions.json
 ├── src/
 │   ├── main.cpp            # Application entry point
-│   ├── rdp_launcher.cpp    # FreeRDP integration
-│   ├── rdp_launcher.hpp
-│   ├── config_manager.cpp  # Connection persistence
-│   ├── config_manager.hpp
+│   ├── js_handlers.cpp/hpp # WebUI ↔ C++ JS binding layer
+│   ├── rdp_launcher.cpp/hpp    # FreeRDP session management
+│   ├── config_manager.cpp/hpp  # SQLite persistence & multi-database
+│   ├── dialog_manager.cpp/hpp  # Thread-safe dialog synchronization
+│   ├── feed_discovery.cpp/hpp  # WVD/AVD feed discovery & import
+│   ├── rdp_file_parser.cpp/hpp # RDP file import/parsing
+│   ├── connection_types.hpp    # Connection & folder settings types
+│   ├── json_utils.hpp         # RAII Jansson wrapper
+│   ├── sqlite_helpers.hpp     # RAII SQLite wrapper
+│   ├── logger.hpp             # Logging utilities
+│   ├── path_utils.hpp         # Path utilities
+│   ├── utils.hpp              # General RAII helpers
+│   ├── gui/
+│   │   ├── aad_auth_handler.cpp/hpp  # Azure AD OAuth popup
+│   │   └── main_window.cpp/hpp       # Main window management
 │   ├── ui/                 # Legacy plain HTML UI (fallback)
-│   │   ├── index.html
-│   │   ├── styles.css
-│   │   └── app.js
-│   └── ui-react/           # React/TypeScript/Fluent UI frontend
+│   └── ui-react/           # React 19 / Fluent UI / TypeScript frontend
 │       ├── package.json
 │       ├── tsconfig.json
 │       ├── vite.config.ts
-│       ├── build-ui.sh     # Build script (called by Meson)
+│       ├── build-ui.sh
 │       └── src/
-│           ├── main.tsx
-│           ├── App.tsx
-│           ├── types.ts
-│           ├── api.ts
-│           ├── theme.ts
+│           ├── main.tsx, App.tsx
+│           ├── api.ts, types.ts, theme.ts
 │           └── components/
+│               ├── AppHeader.tsx
+│               ├── Toolbar.tsx
+│               ├── FolderTree.tsx
+│               ├── ConnectionGrid.tsx
+│               ├── ConnectionTable.tsx
+│               ├── ConnectionEditorDialog.tsx
+│               ├── DatabaseTabs.tsx
+│               ├── FolderSettingsDialog.tsx
+│               ├── AuthDialog.tsx
+│               ├── CertificateDialog.tsx
+│               ├── AccountActionDialog.tsx
+│               ├── ManualCodeFlowDialog.tsx
+│               └── DeleteDialog.tsx
+├── patches/
+│   ├── freerdp/            # FreeRDP patches (AAD token parsing)
+│   └── webui/              # WebUI patches (OAuth redirect passthrough)
+├── scripts/
+│   └── generate_vfs.py     # Embeds React assets for single-binary builds
 ├── subprojects/
 │   ├── freerdp/            # FreeRDP git submodule
-│   ├── webui.wrap          # WebUI wrap file
+│   ├── webui/              # WebUI (cloned by init.sh)
 │   └── packagefiles/
 │       └── webui/
 │           └── meson.build
+├── init.sh                 # Full clean build script
+├── setup-deps.sh           # Dependency installation
 ├── meson.build             # Main build configuration
 ├── meson_options.txt       # Build options
-├── .gitmodules             # Git submodules
-└── README.md
+├── PATCHES.md              # Patch documentation
+└── MODERNIZATION.md        # C++23 migration notes
 ```
 
 ## Configuration
 
-Connection profiles are stored in:
+Connection data is stored in a SQLite database:
 
-- **Linux**: `~/.config/webui-rdp-client/connections.json`
-- **Windows**: `%APPDATA%/webui-rdp-client/connections.json`
-- **macOS**: `~/.config/webui-rdp-client/connections.json`
+- **Linux**: `~/.config/webui-rdp-client/connections.db`
+- **Windows**: `%APPDATA%/webui-rdp-client/connections.db`
+- **macOS**: `~/.config/webui-rdp-client/connections.db`
+
+The application supports multiple databases — you can create, open, clone, and switch between database files.
 
 ## Keyboard Shortcuts (in UI)
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+Enter` | Connect to current server |
-| `Ctrl+S` | Save current connection |
-| `Escape` | Close modal dialogs |
+| `Ctrl+N` | New connection |
+| `F2` | Rename selected folder |
+| `Delete` | Delete selected folder |
 | `Double-click` | Connect to saved connection |
 
 ## Troubleshooting
