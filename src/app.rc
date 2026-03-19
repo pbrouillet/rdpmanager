@@ -1,0 +1,4 @@
+// Windows resource script — embeds the application icon into the executable.
+// IDI_ICON1 (1) is the first icon resource; Windows uses it as the .exe icon.
+#define IDI_ICON1 1
+IDI_ICON1 ICON "appicon.ico"

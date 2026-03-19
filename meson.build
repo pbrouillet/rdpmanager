@@ -307,6 +307,15 @@ if embed_ui and npm.found() and node.found()
   app_extra_sources += vfs_gen
 endif
 
+# Windows icon resource — embeds appicon.ico into the .exe
+if is_windows
+  windows_mod = import('windows')
+  app_extra_sources += windows_mod.compile_resources(
+    files('src' / 'app.rc'),
+    include_directories: include_directories('.'),
+  )
+endif
+
 executable('webui-rdp-client',
   sources, app_extra_sources,
   include_directories: app_inc_dirs,
