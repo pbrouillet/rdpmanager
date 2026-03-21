@@ -52,6 +52,7 @@ fn main() {
         .define("WITH_PKCS11", "OFF")
         // Enable X11 client frontend (provides RdpClientEntry / xfreerdp-client lib)
         .define("WITH_X11", "ON")
+        .define("WITH_CLIENT_INTERFACE", "ON")
         // Disable alternative client frontends
         .define("WITH_CLIENT_SDL", "OFF")
         .define("WITH_CLIENT_WAYLAND", "OFF")
@@ -98,6 +99,17 @@ fn main() {
     let lib64_dir = dst.join("lib64");
     if lib64_dir.exists() {
         println!("cargo:rustc-link-search=native={}", lib64_dir.display());
+    }
+
+    // Fallback: search the cmake build directory for libraries not installed
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let build_dir = out_dir.join("build");
+    if build_dir.exists() {
+        // xfreerdp-client is built in client/X11/
+        let x11_build = build_dir.join("client").join("X11");
+        if x11_build.exists() {
+            println!("cargo:rustc-link-search=native={}", x11_build.display());
+        }
     }
 
     // Core FreeRDP libraries
