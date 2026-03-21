@@ -99,12 +99,7 @@ fn main() {
     }
 
     // Core FreeRDP libraries
-    for lib in [
-        "freerdp3",
-        "freerdp-client3",
-        "winpr3",
-        "winpr-tools3",
-    ] {
+    for lib in ["freerdp3", "freerdp-client3", "winpr3", "winpr-tools3"] {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 

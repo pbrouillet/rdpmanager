@@ -218,7 +218,5 @@ pub type CertificateVerifyCallback =
     Box<dyn Fn(&CertificateInfo) -> CertificateAcceptance + Send + Sync>;
 pub type AuthenticateCallback = Box<dyn Fn(&AuthRequest) -> AuthResponse + Send + Sync>;
 pub type AADAuthCallback = Box<dyn Fn(&AADAuthRequest) -> AADAuthResponse + Send + Sync>;
-pub type TokenCacheLookupCallback =
-    Box<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
-pub type TokenCacheStoreCallback =
-    Box<dyn Fn(&str, &str, &str, i64) -> bool + Send + Sync>;
+pub type TokenCacheLookupCallback = Box<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
+pub type TokenCacheStoreCallback = Box<dyn Fn(&str, &str, &str, i64) -> bool + Send + Sync>;

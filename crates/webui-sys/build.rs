@@ -11,7 +11,9 @@ fn main() {
     let webui_dir = manifest_dir.join("webui");
 
     // --- Apply local patch (navigate-passthrough for OAuth flows) ---
-    let patch = manifest_dir.join("patches").join("navigate-passthrough.patch");
+    let patch = manifest_dir
+        .join("patches")
+        .join("navigate-passthrough.patch");
     if patch.exists() && webui_dir.join(".git").exists() {
         let check = Command::new("git")
             .args(["apply", "--check"])
@@ -83,10 +85,7 @@ fn main() {
     // --- Generate FFI bindings ---
     let bindings = bindgen::Builder::default()
         .header(manifest_dir.join("wrapper.h").to_str().unwrap())
-        .clang_arg(format!(
-            "-I{}",
-            webui_dir.join("include").display()
-        ))
+        .clang_arg(format!("-I{}", webui_dir.join("include").display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_function("webui_.*")
         .allowlist_type("webui_.*")
