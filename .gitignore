@@ -1,2 +1,7 @@
 src/ui-react/node_modules/
 src/ui-react/dist/
+
+# Rust build artifacts
+/target/
+crates/*/target/
+Cargo.lock

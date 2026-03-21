@@ -1,0 +1,106 @@
+diff --git a/include/webui.h b/include/webui.h
+index e755086..38588ab 100644
+--- a/include/webui.h
++++ b/include/webui.h
+@@ -820,6 +820,21 @@ WEBUI_EXPORT void webui_set_public(size_t window, bool status);
+  */
+ WEBUI_EXPORT void webui_navigate(size_t window, const char* url);
+ 
++/**
++ * @brief Enable or disable navigate passthrough mode (WebView only).
++ *
++ * When enabled, navigation events are still fired to the application callback,
++ * but the WebView is allowed to navigate freely instead of blocking. This is
++ * useful for multi-step external flows (e.g. OAuth) where the WebView must
++ * follow redirects while the app observes navigation URLs.
++ *
++ * @param window The window number
++ * @param status True to enable, False to disable
++ *
++ * @example webui_set_navigate_passthrough(myWindow, true);
++ */
++WEBUI_EXPORT void webui_set_navigate_passthrough(size_t window, bool status);
++
+ /**
+  * @brief Navigate to a specific URL. Single client.
+  *
+diff --git a/include/webui.hpp b/include/webui.hpp
+index cb41eba..91ec8bd 100644
+--- a/include/webui.hpp
++++ b/include/webui.hpp
+@@ -384,6 +384,13 @@ namespace webui {
+             webui_navigate(webui_window, url.data());
+         }
+ 
++        // Enable or disable navigate passthrough mode (WebView only).
++        // When enabled, navigation events are fired but the WebView is
++        // allowed to navigate freely instead of blocking.
++        void set_navigate_passthrough(bool status) const {
++            webui_set_navigate_passthrough(webui_window, status);
++        }
++
+         // Control if UI events coming from this window should be processed one at a time in a
+         // single blocking thread `True`, or process every event in a new non-blocking thread `False`.
+         void set_event_blocking(bool status) const {
+diff --git a/src/webui.c b/src/webui.c
+index 3d53856..2d1967a 100644
+--- a/src/webui.c
++++ b/src/webui.c
+@@ -399,6 +399,7 @@ typedef struct _webui_window_t {
+     bool allow_webview;
+     bool allow_browser;
+     bool update_webview;
++    bool navigate_passthrough; // When true, fire navigation events without blocking
+     webui_mutex_t mutex_webview_update;
+     webui_condition_t condition_webview_update;
+     #ifdef _WIN32
+@@ -3298,6 +3299,23 @@ void webui_set_public(size_t window, bool status) {
+     win->is_public = status;
+ }
+ 
++void webui_set_navigate_passthrough(size_t window, bool status) {
++
++    #ifdef WEBUI_LOG
++    _webui_log_info("[User] webui_set_navigate_passthrough([%zu], %d)\n", window, status);
++    #endif
++
++    // Initialization
++    _webui_init();
++
++    // Dereference
++    if (_webui_mutex_app_is_exit_now(WEBUI_MUTEX_GET_STATUS) || _webui.wins[window] == NULL)
++        return;
++    _webui_window_t* win = _webui.wins[window];
++
++    win->navigate_passthrough = status;
++}
++
+ void webui_send_raw_client(webui_event_t* e, const char* function, const void* raw, size_t size) {
+ 
+     #ifdef WEBUI_LOG
+@@ -12487,7 +12505,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
+                     return false;
+                 }
+ 
+-                webkit_policy_decision_ignore(decision);
++                // In passthrough mode, allow the navigation to proceed
++                // but still fire the event so the app can observe URLs.
++                if (!win->navigate_passthrough) {
++                    webkit_policy_decision_ignore(decision);
++                }
+ 
+                 int navigation_type = webkit_navigation_policy_decision_get_navigation_type(decision);
+                 void *uri_request = webkit_navigation_policy_decision_get_request(decision);
+@@ -12525,6 +12547,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
+                 // Free event
+                 _webui_free_event_inf(win, event_num);
+ 
++                // In passthrough mode, return false to let WebKit
++                // use the default policy (allow navigation).
++                if (win->navigate_passthrough) {
++                    return false;
++                }
++
+                 // Return that this event is handled.
+                 return true;
+             }

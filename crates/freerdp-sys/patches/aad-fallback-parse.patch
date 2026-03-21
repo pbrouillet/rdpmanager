@@ -1,0 +1,196 @@
+diff --git a/libfreerdp/core/aad.c b/libfreerdp/core/aad.c
+index 242891751..4e869aa1f 100644
+--- a/libfreerdp/core/aad.c
++++ b/libfreerdp/core/aad.c
+@@ -19,6 +19,7 @@
+ 
+ #include <freerdp/config.h>
+ 
++#include <errno.h>
+ #include <stdio.h>
+ #include <string.h>
+ 
+@@ -102,26 +103,6 @@ static BOOL json_get_object(wLog* wlog, WINPR_JSON* json, const char* key, WINPR
+ 	return TRUE;
+ }
+ 
+-static BOOL json_get_number(wLog* wlog, WINPR_JSON* json, const char* key, double* result)
+-{
+-	BOOL rc = FALSE;
+-	WINPR_JSON* prop = NULL;
+-	if (!json_get_object(wlog, json, key, &prop))
+-		return FALSE;
+-
+-	if (!WINPR_JSON_IsNumber(prop))
+-	{
+-		WLog_Print(wlog, WLOG_ERROR, "[json] object for key '%s' is NOT a NUMBER", key);
+-		goto fail;
+-	}
+-
+-	*result = WINPR_JSON_GetNumberValue(prop);
+-
+-	rc = TRUE;
+-fail:
+-	return rc;
+-}
+-
+ static BOOL json_get_const_string(wLog* wlog, WINPR_JSON* json, const char* key,
+                                   const char** result)
+ {
+@@ -528,6 +509,7 @@ static int aad_parse_state_initial(rdpAad* aad, wStream* s)
+ 	const char* jstr = Stream_PointerAs(s, char);
+ 	const size_t jlen = Stream_GetRemainingLength(s);
+ 	const char* ts_nonce = NULL;
++	char* ts_nonce_fallback = NULL;
+ 	int ret = -1;
+ 	WINPR_JSON* json = NULL;
+ 
+@@ -536,13 +518,44 @@ static int aad_parse_state_initial(rdpAad* aad, wStream* s)
+ 
+ 	json = WINPR_JSON_ParseWithLength(jstr, jlen);
+ 	if (!json)
++	{
++		const size_t preview = (jlen < 256) ? jlen : 256;
++		WLog_Print(aad->log, WLOG_ERROR,
++		           "Failed to parse AAD initial JSON payload (%" PRIuz " bytes): '%.*s'",
++		           jlen, (int)preview, jstr);
++
++		/* Fallback: extract ts_nonce directly from payload text. */
++		const char* key = "\"ts_nonce\":\"";
++		const char* start = strstr(jstr, key);
++		if (!start)
++			goto fail;
++		start += strlen(key);
++
++		const char* end = start;
++		while ((size_t)(end - jstr) < jlen)
++		{
++			if ((*end == '\0') || (*end == '"'))
++				break;
++			end++;
++		}
++		if ((end <= start) || ((size_t)(end - jstr) > jlen))
++			goto fail;
++
++		ts_nonce_fallback = (char*)calloc((size_t)(end - start) + 1, sizeof(char));
++		if (!ts_nonce_fallback)
++			goto fail;
++		memcpy(ts_nonce_fallback, start, (size_t)(end - start));
++		ts_nonce = ts_nonce_fallback;
++		ret = aad_send_auth_request(aad, ts_nonce);
+ 		goto fail;
++	}
+ 
+ 	if (!json_get_const_string(aad->log, json, "ts_nonce", &ts_nonce))
+ 		goto fail;
+ 
+ 	ret = aad_send_auth_request(aad, ts_nonce);
+ fail:
++	free(ts_nonce_fallback);
+ 	WINPR_JSON_Delete(json);
+ 	return ret;
+ }
+@@ -553,6 +566,7 @@ static int aad_parse_state_auth(rdpAad* aad, wStream* s)
+ 	double result = 0;
+ 	DWORD error_code = 0;
+ 	WINPR_JSON* json = NULL;
++	WINPR_JSON* auth_result_prop = NULL;
+ 	const char* jstr = Stream_PointerAs(s, char);
+ 	const size_t jlength = Stream_GetRemainingLength(s);
+ 
+@@ -561,11 +575,93 @@ static int aad_parse_state_auth(rdpAad* aad, wStream* s)
+ 
+ 	json = WINPR_JSON_ParseWithLength(jstr, jlength);
+ 	if (!json)
++	{
++		const size_t preview = (jlength < 256) ? jlength : 256;
++		WLog_Print(aad->log, WLOG_ERROR,
++		           "Failed to parse AAD auth JSON payload (%" PRIuz " bytes): '%.*s'",
++		           jlength, (int)preview, jstr);
++
++		/* Fallback: parse authentication_result directly from payload text. */
++		const char* key = "\"authentication_result\":";
++		const char* pos = strstr(jstr, key);
++		if (!pos)
++			goto fail;
++		pos += strlen(key);
++
++		while (((size_t)(pos - jstr) < jlength) && ((*pos == ' ') || (*pos == '\t')))
++			pos++;
++
++		if ((size_t)(pos - jstr) >= jlength)
++			goto fail;
++
++		if (*pos == '"')
++		{
++			pos++;
++			char* endptr = NULL;
++			errno = 0;
++			const unsigned long parsed = strtoul(pos, &endptr, 0);
++			if ((errno != 0) || (endptr == pos))
++				goto fail;
++			error_code = (DWORD)parsed;
++		}
++		else
++		{
++			char* endptr = NULL;
++			errno = 0;
++			const unsigned long parsed = strtoul(pos, &endptr, 0);
++			if ((errno != 0) || (endptr == pos))
++				goto fail;
++			error_code = (DWORD)parsed;
++		}
++
++		if (error_code != S_OK)
++		{
++			WLog_Print(aad->log, WLOG_ERROR, "Authentication result: %s (0x%08" PRIx32 ")",
++			           aad_auth_result_to_string(error_code), error_code);
++			goto fail;
++		}
++
++		aad->state = AAD_STATE_FINAL;
++		rc = 1;
++		goto fail;
++	}
++
++	if (!json_get_object(aad->log, json, "authentication_result", &auth_result_prop))
+ 		goto fail;
+ 
+-	if (!json_get_number(aad->log, json, "authentication_result", &result))
++	if (WINPR_JSON_IsNumber(auth_result_prop))
++	{
++		result = WINPR_JSON_GetNumberValue(auth_result_prop);
++		error_code = (DWORD)result;
++	}
++	else if (WINPR_JSON_IsString(auth_result_prop))
++	{
++		const char* value = WINPR_JSON_GetStringValue(auth_result_prop);
++		if (!value)
++		{
++			WLog_Print(aad->log, WLOG_ERROR,
++			           "authentication_result string value is NULL");
++			goto fail;
++		}
++
++		errno = 0;
++		char* endptr = NULL;
++		const unsigned long parsed = strtoul(value, &endptr, 0);
++		if ((errno != 0) || (endptr == value) || ((endptr != NULL) && (*endptr != '\0')))
++		{
++			WLog_Print(aad->log, WLOG_ERROR,
++			           "Failed to parse authentication_result string '%s'", value);
++			goto fail;
++		}
++
++		error_code = (DWORD)parsed;
++	}
++	else
++	{
++		WLog_Print(aad->log, WLOG_ERROR,
++		           "[json] object for key 'authentication_result' has unsupported type");
+ 		goto fail;
+-	error_code = (DWORD)result;
++	}
+ 
+ 	if (error_code != S_OK)
+ 	{

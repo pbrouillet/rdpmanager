@@ -1,3 +1,9 @@
 [submodule "subprojects/freerdp"]
 	path = subprojects/freerdp
 	url = https://github.com/FreeRDP/FreeRDP.git
+[submodule "crates/webui-sys/webui"]
+	path = crates/webui-sys/webui
+	url = https://github.com/webui-dev/webui.git
+[submodule "crates/freerdp-sys/freerdp"]
+	path = crates/freerdp-sys/freerdp
+	url = https://github.com/FreeRDP/FreeRDP.git

@@ -1,0 +1,10 @@
+[package]
+name = "freerdp-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Raw FFI bindings to FreeRDP3, built from source via CMake"
+links = "freerdp"
+
+[build-dependencies]
+cmake = "0.1"
+bindgen = "0.71"
