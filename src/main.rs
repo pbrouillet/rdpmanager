@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! rdpmanager — Native RDP client with React/Fluent UI frontend
 //!
 //! This is the Rust port of the C++23 rdpmanager application.
