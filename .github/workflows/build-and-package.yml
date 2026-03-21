@@ -2,6 +2,8 @@ name: Build And Package
 
 on:
   push:
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -30,8 +32,8 @@ jobs:
           meson setup build-release --buildtype=release -Dembed_ui=true
           ninja -C build-release
 
-      - name: Install patchelf
-        run: sudo apt-get install -y -qq patchelf
+      - name: Install packaging tools
+        run: sudo apt-get install -y -qq patchelf file
 
       - name: Package artifact
         run: |
@@ -181,9 +183,91 @@ jobs:
           echo "=== Package size ==="
           du -sh dist/rdpmanager-linux-x86_64.tar.gz
 
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+
+          # Download appimagetool
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+
+          # Create AppDir structure
+          mkdir -p AppDir/usr/bin AppDir/usr/lib AppDir/usr/share/icons/hicolor/256x256/apps
+
+          # Copy binary and bundled libraries from the existing dist
+          cp dist/rdpmanager/webui-rdp-client AppDir/usr/bin/
+          cp dist/rdpmanager/lib/*.so* AppDir/usr/lib/
+
+          # Set RPATH for AppImage ($ORIGIN/../lib from usr/bin/)
+          patchelf --set-rpath '$ORIGIN/../lib' AppDir/usr/bin/webui-rdp-client
+
+          # Icon
+          cp appicon.png AppDir/usr/share/icons/hicolor/256x256/apps/rdpmanager.png
+          cp appicon.png AppDir/rdpmanager.png
+
+          # Desktop file (must be at AppDir root)
+          cat > AppDir/rdpmanager.desktop << 'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=RDP Manager
+          Exec=webui-rdp-client
+          Icon=rdpmanager
+          Terminal=false
+          Categories=Network;RemoteAccess;
+          EOF
+          sed -i 's/^          //' AppDir/rdpmanager.desktop
+
+          # AppRun entry point
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF="$(readlink -f "$0")"
+          APPDIR="$(dirname "$SELF")"
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          exec "$APPDIR/usr/bin/webui-rdp-client" "$@"
+          EOF
+          sed -i 's/^          //' AppDir/AppRun
+          chmod +x AppDir/AppRun
+
+          # Build the AppImage (--appimage-extract-and-run avoids FUSE requirement in CI)
+          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run AppDir \
+            dist/RDPManager-x86_64.AppImage
+
+          echo ""
+          echo "=== AppImage ==="
+          ls -lh dist/RDPManager-x86_64.AppImage
+
       - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
           name: rdpmanager-linux-x86_64
           path: dist/rdpmanager-linux-x86_64.tar.gz
           if-no-files-found: error
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RDPManager-x86_64.AppImage
+          path: dist/RDPManager-x86_64.AppImage
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-linux-artifact
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/rdpmanager-linux-x86_64/rdpmanager-linux-x86_64.tar.gz
+            artifacts/RDPManager-x86_64.AppImage/RDPManager-x86_64.AppImage
