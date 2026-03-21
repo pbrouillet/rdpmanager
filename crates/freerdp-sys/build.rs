@@ -50,6 +50,8 @@ fn main() {
         .define("WITH_GSSAPI", "OFF")
         .define("WITH_KRB5", "OFF")
         .define("WITH_PKCS11", "OFF")
+        // Enable X11 client frontend (provides RdpClientEntry / xfreerdp-client lib)
+        .define("WITH_X11", "ON")
         // Disable alternative client frontends
         .define("WITH_CLIENT_SDL", "OFF")
         .define("WITH_CLIENT_WAYLAND", "OFF")
