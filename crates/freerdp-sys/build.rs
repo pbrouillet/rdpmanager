@@ -92,24 +92,50 @@ fn main() {
         .build();
 
     // --- Link static libraries ---
-    let lib_dir = dst.join("lib");
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // Recursively find all directories containing .a files in the cmake output
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let mut search_dirs = std::collections::HashSet::new();
 
-    // Also check lib64 (some distros use this)
-    let lib64_dir = dst.join("lib64");
-    if lib64_dir.exists() {
-        println!("cargo:rustc-link-search=native={}", lib64_dir.display());
+    // Standard install directories
+    for subdir in ["lib", "lib64", "lib/x86_64-linux-gnu"] {
+        let d = dst.join(subdir);
+        if d.exists() {
+            search_dirs.insert(d);
+        }
     }
 
-    // Fallback: search the cmake build directory for libraries not installed
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let build_dir = out_dir.join("build");
-    if build_dir.exists() {
-        // xfreerdp-client is built in client/X11/
-        let x11_build = build_dir.join("client").join("X11");
-        if x11_build.exists() {
-            println!("cargo:rustc-link-search=native={}", x11_build.display());
+    // Recursively search both install dir and build dir for .a files
+    fn find_static_libs(dir: &std::path::Path, dirs: &mut std::collections::HashSet<PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    find_static_libs(&path, dirs);
+                } else if path.extension().is_some_and(|e| e == "a") {
+                    if let Some(parent) = path.parent() {
+                        dirs.insert(parent.to_path_buf());
+                    }
+                }
+            }
         }
+    }
+    find_static_libs(&dst, &mut search_dirs);
+    find_static_libs(&out_dir.join("build"), &mut search_dirs);
+
+    // Diagnostic: print found library directories
+    for dir in &search_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.extension().is_some_and(|ext| ext == "a") {
+                    println!(
+                        "cargo:warning=Found static lib: {}",
+                        p.file_name().unwrap().to_string_lossy()
+                    );
+                }
+            }
+        }
+        println!("cargo:rustc-link-search=native={}", dir.display());
     }
 
     // Core FreeRDP libraries
