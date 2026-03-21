@@ -19,8 +19,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Init Rust submodules
+        run: |
+          git submodule update --init --recursive crates/webui-sys/webui
+          git submodule update --init --recursive crates/freerdp-sys/freerdp
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
