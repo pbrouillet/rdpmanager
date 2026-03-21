@@ -144,7 +144,8 @@ fn main() {
     }
 
     // X11 FreeRDP client library (provides RdpClientEntry for popup windows)
-    println!("cargo:rustc-link-lib=static=xfreerdp-client");
+    // FreeRDP 3.x appends version suffix "3" to library names
+    println!("cargo:rustc-link-lib=static=xfreerdp-client3");
 
     // System dependencies (Linux)
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
