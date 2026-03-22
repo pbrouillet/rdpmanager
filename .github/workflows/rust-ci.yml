@@ -87,3 +87,13 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdpmanager-linux-x86_64
+          path: target/release/rdpmanager
+          if-no-files-found: error
