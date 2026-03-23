@@ -301,10 +301,7 @@ impl ConfigManager {
         } else {
             format!("{target_parent}/{leaf}")
         };
-        let tx = match db.execute("BEGIN", []) {
-            Ok(_) => true,
-            Err(_) => false,
-        };
+        let tx = db.execute("BEGIN", []).is_ok();
         // Rename the folder itself
         let _ = db.execute(
             "UPDATE folders SET path = ?1 WHERE path = ?2",
