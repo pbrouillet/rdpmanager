@@ -444,7 +444,8 @@ unsafe extern "C" fn on_get_effective_folder_settings(e: *mut webui_sys::webui_e
 
 unsafe extern "C" fn on_get_effective_connection_profile(e: *mut webui_sys::webui_event_t) {
     let name = unsafe { get_string_at(e, 0) };
-    // Return the raw connection profile (no folder inheritance merge yet)
-    let json = with_config(|cm| cm.get_connection_json(&name));
-    unsafe { return_string(e, &json.unwrap_or_else(|| "null".to_string())) };
+    let json = with_config(|cm| cm.get_connection_json(&name))
+        .flatten()
+        .unwrap_or_else(|| "null".to_string());
+    unsafe { return_string(e, &json) };
 }
