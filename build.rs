@@ -46,10 +46,7 @@ fn generate_embedded_ui() {
     let mut f = fs::File::create(&dest).expect("Failed to create embedded_ui.rs");
 
     if let Some(dir) = ui_dir {
-        println!(
-            "cargo:warning=Embedding UI assets from {}",
-            dir.display()
-        );
+        println!("cargo:warning=Embedding UI assets from {}", dir.display());
         write_embedded_module(&mut f, dir);
     } else {
         println!("cargo:warning=No UI directory found — embedded UI will be empty (disk fallback)");
@@ -105,20 +102,36 @@ fn write_embedded_module(f: &mut fs::File, dir: &PathBuf) {
     writeln!(f).unwrap();
 
     // Lookup function
-    writeln!(f, "pub fn lookup(path: &str) -> Option<&'static EmbeddedFile> {{").unwrap();
+    writeln!(
+        f,
+        "pub fn lookup(path: &str) -> Option<&'static EmbeddedFile> {{"
+    )
+    .unwrap();
     writeln!(f, "    // Normalize: ensure path starts with /").unwrap();
     writeln!(f, "    let normalized = if path.starts_with('/') {{ path.to_string() }} else {{ format!(\"/{{}}\", path) }};").unwrap();
     writeln!(f).unwrap();
     writeln!(f, "    // Direct lookup").unwrap();
-    writeln!(f, "    if let Some(file) = FILES.iter().find(|f| f.path == normalized) {{").unwrap();
+    writeln!(
+        f,
+        "    if let Some(file) = FILES.iter().find(|f| f.path == normalized) {{"
+    )
+    .unwrap();
     writeln!(f, "        return Some(file);").unwrap();
     writeln!(f, "    }}").unwrap();
     writeln!(f).unwrap();
-    writeln!(f, "    // Index redirect lookup (e.g. \"/\" → \"/index.html\")").unwrap();
+    writeln!(
+        f,
+        "    // Index redirect lookup (e.g. \"/\" → \"/index.html\")"
+    )
+    .unwrap();
     writeln!(f, "    let with_slash = if normalized.ends_with('/') {{ normalized.clone() }} else {{ format!(\"{{normalized}}/\") }};").unwrap();
     writeln!(f, "    for &(dir_path, index_path) in INDEX_REDIRECTS {{").unwrap();
     writeln!(f, "        if dir_path == with_slash {{").unwrap();
-    writeln!(f, "            return FILES.iter().find(|f| f.path == index_path);").unwrap();
+    writeln!(
+        f,
+        "            return FILES.iter().find(|f| f.path == index_path);"
+    )
+    .unwrap();
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }}").unwrap();
     writeln!(f).unwrap();
@@ -142,7 +155,11 @@ fn write_empty_module(f: &mut fs::File) {
     writeln!(f, "pub const INDEX_REDIRECTS: &[(&str, &str)] = &[];").unwrap();
     writeln!(f).unwrap();
     writeln!(f, "#[allow(unused)]").unwrap();
-    writeln!(f, "pub fn lookup(_path: &str) -> Option<&'static EmbeddedFile> {{ None }}").unwrap();
+    writeln!(
+        f,
+        "pub fn lookup(_path: &str) -> Option<&'static EmbeddedFile> {{ None }}"
+    )
+    .unwrap();
     writeln!(f, "pub fn has_files() -> bool {{ false }}").unwrap();
 }
 

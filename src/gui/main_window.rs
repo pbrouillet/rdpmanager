@@ -32,26 +32,25 @@ impl MainWindow {
             unsafe {
                 // Disable cookies: WebUI's cookie check rejects CSS/JS requests
                 // that arrive before webui.js has set the auth cookie.
-                webui_sys::webui_set_config(
-                    webui_sys::use_cookies,
-                    false,
-                );
+                // use_cookies = 4 in webui_config enum
+                webui_sys::webui_set_config(4, false);
                 webui_sys::webui_set_file_handler(self.window, Some(vfs_handler));
             }
         } else {
             info!("No embedded UI — searching for UI files on disk");
             if let Some(ui_path) = find_ui_path() {
                 let path_cstr = CString::new(ui_path.to_str().unwrap()).unwrap();
-                let ok = unsafe {
-                    webui_sys::webui_set_root_folder(self.window, path_cstr.as_ptr())
-                };
+                let ok =
+                    unsafe { webui_sys::webui_set_root_folder(self.window, path_cstr.as_ptr()) };
                 if !ok {
                     error!("Failed to set root folder: {}", ui_path.display());
                     return false;
                 }
                 info!("Serving UI from disk: {}", ui_path.display());
             } else {
-                error!("No UI files found! Build the React UI first (npm run build in src/ui-react/)");
+                error!(
+                    "No UI files found! Build the React UI first (npm run build in src/ui-react/)"
+                );
                 return false;
             }
         }
@@ -66,13 +65,8 @@ impl MainWindow {
         if !ok {
             warn!("webui_show returned false — trying browser fallback");
             // Try any browser as fallback
-            let ok = unsafe {
-                webui_sys::webui_show_browser(
-                    self.window,
-                    content.as_ptr(),
-                    webui_sys::AnyBrowser as usize,
-                )
-            };
+            // Try any browser as fallback (AnyBrowser = 1)
+            let ok = unsafe { webui_sys::webui_show_browser(self.window, content.as_ptr(), 1) };
             if !ok {
                 error!("Failed to open UI in any browser or WebView");
                 return false;
@@ -94,10 +88,7 @@ impl MainWindow {
 ///
 /// Returns a full HTTP response (headers + body) allocated with `webui_malloc`,
 /// or null to let WebUI handle the request.
-unsafe extern "C" fn vfs_handler(
-    filename: *const c_char,
-    length: *mut c_int,
-) -> *const c_void {
+unsafe extern "C" fn vfs_handler(filename: *const c_char, length: *mut c_int) -> *const c_void {
     let path_cstr = unsafe { CStr::from_ptr(filename) };
     let path = path_cstr.to_str().unwrap_or("");
 
@@ -116,7 +107,11 @@ unsafe extern "C" fn vfs_handler(
                 return std::ptr::null();
             }
             std::ptr::copy_nonoverlapping(header.as_ptr(), buf, header.len());
-            std::ptr::copy_nonoverlapping(file.data.as_ptr(), buf.add(header.len()), file.data.len());
+            std::ptr::copy_nonoverlapping(
+                file.data.as_ptr(),
+                buf.add(header.len()),
+                file.data.len(),
+            );
             *length = total_len as c_int;
             buf as *const c_void
         }
