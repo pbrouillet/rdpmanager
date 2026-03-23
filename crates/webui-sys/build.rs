@@ -84,7 +84,7 @@ fn main() {
     }
 
     // --- Generate FFI bindings ---
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(manifest_dir.join("wrapper.h").to_str().unwrap())
         .clang_arg(format!("-I{}", webui_dir.join("include").display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -94,7 +94,22 @@ fn main() {
         // Enums used by the project
         .allowlist_type("webui_browser")
         .allowlist_type("webui_event")
-        .allowlist_type("webui_config")
+        .allowlist_type("webui_config");
+
+    // macOS: bindgen's clang needs the SDK sysroot to find framework headers
+    if target_os == "macos" {
+        if let Ok(output) = std::process::Command::new("xcrun")
+            .args(["--sdk", "macosx", "--show-sdk-path"])
+            .output()
+        {
+            let sdk = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !sdk.is_empty() {
+                builder = builder.clang_arg(format!("-isysroot{}", sdk));
+            }
+        }
+    }
+
+    let bindings = builder
         .generate()
         .expect("Unable to generate WebUI bindings");
 

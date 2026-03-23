@@ -93,6 +93,7 @@ fn main() {
             .define("WITH_FFMPEG", "OFF")
             .define("WITH_VIDEO_FFMPEG", "OFF")
             .define("WITH_DSP_FFMPEG", "OFF")
+            .define("WITH_SWSCALE", "OFF")
             .define("WITH_BULK_COMPRESSION", "OFF")
             .define("WITH_NATIVE_SSPI", "ON");
     } else if is_macos {
@@ -103,6 +104,7 @@ fn main() {
             .define("WITH_FFMPEG", "OFF")
             .define("WITH_VIDEO_FFMPEG", "OFF")
             .define("WITH_DSP_FFMPEG", "OFF")
+            .define("WITH_SWSCALE", "OFF")
             .define("WITH_BULK_COMPRESSION", "OFF");
     }
 
@@ -112,6 +114,16 @@ fn main() {
     } else if is_macos {
         if let Some(dir) = brew_prefix("openssl@3") {
             config.define("OPENSSL_ROOT_DIR", &dir);
+        }
+    }
+
+    // Windows: use vcpkg toolchain if available (provides zlib, OpenSSL)
+    if is_windows {
+        if let Ok(toolchain) = env::var("CMAKE_TOOLCHAIN_FILE") {
+            config.define("CMAKE_TOOLCHAIN_FILE", &toolchain);
+        }
+        if let Ok(triplet) = env::var("VCPKG_TARGET_TRIPLET") {
+            config.define("VCPKG_TARGET_TRIPLET", &triplet);
         }
     }
 
@@ -176,7 +188,7 @@ fn main() {
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=zstd");
     } else if is_windows {
-        // OpenSSL (choco package provides libssl.lib / libcrypto.lib)
+        // OpenSSL and zlib from vcpkg or standalone install
         if let Ok(ssl_dir) = env::var("OPENSSL_ROOT_DIR") {
             let lib_dir = PathBuf::from(&ssl_dir).join("lib");
             if lib_dir.exists() {
@@ -190,6 +202,8 @@ fn main() {
         }
         println!("cargo:rustc-link-lib=libssl");
         println!("cargo:rustc-link-lib=libcrypto");
+        // zlib (from vcpkg: zlib.lib, or system: zlib.lib)
+        println!("cargo:rustc-link-lib=zlib");
         // Windows system libraries
         for lib in [
             "ws2_32", "rpcrt4", "crypt32", "ncrypt", "bcrypt", "secur32", "advapi32", "user32",

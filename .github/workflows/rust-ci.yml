@@ -98,35 +98,16 @@ jobs:
           choco install llvm --no-progress -y
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          # Find existing OpenSSL or install it
-          $sslPaths = @(
-            "C:\Program Files\OpenSSL-Win64",
-            "C:\Program Files\OpenSSL",
-            "C:\OpenSSL-Win64"
-          )
-          $found = $false
-          foreach ($p in $sslPaths) {
-            if (Test-Path "$p\include\openssl\ssl.h") {
-              echo "OPENSSL_ROOT_DIR=$p" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              Write-Host "Found OpenSSL at $p"
-              $found = $true
-              break
-            }
-          }
-          if (-not $found) {
-            choco install openssl --no-progress -y
-            # Re-check common paths after install
-            foreach ($p in $sslPaths) {
-              if (Test-Path "$p\include\openssl\ssl.h") {
-                echo "OPENSSL_ROOT_DIR=$p" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-                Write-Host "Installed OpenSSL at $p"
-                $found = $true
-                break
-              }
-            }
-            if (-not $found) {
-              Write-Host "WARNING: OpenSSL installation path not found, cmake will search"
-            }
+          # Install zlib and OpenSSL via vcpkg (pre-installed on runner)
+          vcpkg install zlib:x64-windows-static openssl:x64-windows-static
+          echo "CMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "VCPKG_TARGET_TRIPLET=x64-windows-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Also find system OpenSSL for Rust link path (vcpkg puts it in installed/)
+          $vcpkgRoot = "C:\vcpkg\installed\x64-windows-static"
+          if (Test-Path "$vcpkgRoot\include\openssl\ssl.h") {
+            echo "OPENSSL_ROOT_DIR=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Using vcpkg OpenSSL at $vcpkgRoot"
           }
 
       - name: Install system dependencies (macOS)
