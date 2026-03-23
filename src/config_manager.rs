@@ -127,7 +127,12 @@ impl ConfigManager {
             }
         };
 
-        let backup = match rusqlite::backup::Backup::new(&src_conn, &dst_conn) {
+        let backup = match rusqlite::backup::Backup::new_with_names(
+            &src_conn,
+            rusqlite::DatabaseName::Main,
+            &dst_conn,
+            rusqlite::DatabaseName::Main,
+        ) {
             Ok(b) => b,
             Err(e) => {
                 error!("Failed to init backup: {e}");

@@ -10,6 +10,7 @@
 use crate::config_manager::ConfigManager;
 use log::info;
 use std::ffi::{CStr, CString};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Global shared state accessible from WebUI callbacks (which are C function pointers).
@@ -74,6 +75,98 @@ unsafe fn return_string(e: *mut webui_sys::webui_event_t, val: &str) {
     unsafe { webui_sys::webui_return_string(e, cs.as_ptr()) };
 }
 
+// -- Cross-platform file dialogs --
+// Windows/macOS: rfd (native dialogs). Linux: zenity/kdialog fallback.
+
+#[cfg(not(target_os = "linux"))]
+fn pick_save_file(title: &str, default_name: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .set_file_name(default_name)
+        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
+        .add_filter("All Files", &["*"])
+        .save_file()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick_open_file(title: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
+        .add_filter("All Files", &["*"])
+        .pick_file()
+}
+
+#[cfg(target_os = "linux")]
+fn pick_save_file(title: &str, default_name: &str) -> Option<PathBuf> {
+    // Try zenity first, then kdialog
+    let output = std::process::Command::new("zenity")
+        .args([
+            "--file-selection",
+            "--save",
+            "--confirm-overwrite",
+            &format!("--title={title}"),
+            &format!("--filename={default_name}"),
+        ])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    let output = std::process::Command::new("kdialog")
+        .args([
+            "--getsavefilename",
+            "~",
+            "*.db *.sqlite *.sqlite3|Database files",
+        ])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn pick_open_file(title: &str) -> Option<PathBuf> {
+    let output = std::process::Command::new("zenity")
+        .args([
+            "--file-selection",
+            &format!("--title={title}"),
+            "--file-filter=Database files | *.db *.sqlite *.sqlite3",
+            "--file-filter=All files | *",
+        ])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    let output = std::process::Command::new("kdialog")
+        .args([
+            "--getopenfilename",
+            "~",
+            "*.db *.sqlite *.sqlite3|Database files",
+        ])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    None
+}
+
 // -- Database handlers --
 
 unsafe extern "C" fn on_create_database(e: *mut webui_sys::webui_event_t) {
@@ -83,14 +176,7 @@ unsafe extern "C" fn on_create_database(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn on_create_database_dialog(e: *mut webui_sys::webui_event_t) {
-    let path = rfd::FileDialog::new()
-        .set_title("Create Database")
-        .set_file_name("connections.db")
-        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
-        .add_filter("All Files", &["*"])
-        .save_file();
-
-    let Some(p) = path else {
+    let Some(p) = pick_save_file("Create Database", "connections.db") else {
         unsafe { return_bool(e, false) };
         return;
     };
@@ -108,13 +194,7 @@ unsafe extern "C" fn on_open_database(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn on_open_database_dialog(e: *mut webui_sys::webui_event_t) {
-    let path = rfd::FileDialog::new()
-        .set_title("Open Database")
-        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
-        .add_filter("All Files", &["*"])
-        .pick_file();
-
-    let Some(p) = path else {
+    let Some(p) = pick_open_file("Open Database") else {
         unsafe { return_bool(e, false) };
         return;
     };
@@ -151,7 +231,7 @@ unsafe extern "C" fn on_get_database_status(e: *mut webui_sys::webui_event_t) {
     unsafe { return_string(e, &result) };
 }
 
-// -- Data query handlers (stubs returning current data) --
+// -- Data query handlers --
 
 unsafe extern "C" fn on_get_connections(e: *mut webui_sys::webui_event_t) {
     let json = with_config(|cm| cm.get_connections_json()).unwrap_or_else(|| "[]".to_string());
