@@ -119,7 +119,7 @@ impl ConfigManager {
                 }
             };
 
-        let dst_conn = match Connection::open(target) {
+        let mut dst_conn = match Connection::open(target) {
             Ok(c) => c,
             Err(e) => {
                 error!("Failed to open target for clone: {e}");
@@ -130,7 +130,7 @@ impl ConfigManager {
         let backup = match rusqlite::backup::Backup::new_with_names(
             &src_conn,
             rusqlite::DatabaseName::Main,
-            &dst_conn,
+            &mut dst_conn,
             rusqlite::DatabaseName::Main,
         ) {
             Ok(b) => b,
