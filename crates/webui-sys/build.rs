@@ -78,6 +78,7 @@ fn main() {
         }
         "macos" => {
             println!("cargo:rustc-link-lib=pthread");
+            println!("cargo:rustc-link-lib=framework=CoreGraphics");
         }
         _ => {}
     }

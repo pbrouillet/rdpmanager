@@ -1,14 +1,18 @@
 // freerdp-sys build script
 //
 // 1. Applies the aad-fallback-parse patch to the vendored FreeRDP source
-// 2. Builds FreeRDP as a static library via CMake (matching the project's meson.build defines)
+// 2. Builds FreeRDP as a static library via CMake (platform-aware configuration)
 // 3. Generates Rust FFI bindings from FreeRDP/WinPR headers via `bindgen`
 
-use std::{env, path::PathBuf, process::Command};
+use std::{collections::HashSet, env, path::PathBuf, process::Command};
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let freerdp_dir = manifest_dir.join("freerdp");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let is_linux = target_os == "linux";
+    let is_windows = target_os == "windows";
+    let is_macos = target_os == "macos";
 
     // --- Apply local AAD patch ---
     let patch = manifest_dir
@@ -34,67 +38,89 @@ fn main() {
     }
 
     // --- Build FreeRDP via CMake ---
-    // These defines match the current meson.build CMake configuration exactly.
-    let dst = cmake::Config::new(&freerdp_dir)
-        // Static libraries
+    let mut config = cmake::Config::new(&freerdp_dir);
+
+    // Common defines (all platforms)
+    config
         .define("BUILD_SHARED_LIBS", "OFF")
-        // Client only — no server, proxy, shadow, samples
+        .define("WITH_CLIENT_COMMON", "ON")
         .define("WITH_CLIENT", "ON")
+        .define("WITH_CLIENT_INTERFACE", "ON")
         .define("WITH_SERVER", "OFF")
         .define("WITH_SAMPLE", "OFF")
         .define("WITH_PLATFORM_SERVER", "OFF")
         .define("WITH_PROXY", "OFF")
         .define("WITH_SHADOW", "OFF")
         .define("WITH_MANPAGES", "OFF")
-        // Disable auth mechanisms we don't need
         .define("WITH_GSSAPI", "OFF")
         .define("WITH_KRB5", "OFF")
         .define("WITH_PKCS11", "OFF")
-        // Enable X11 client frontend (provides RdpClientEntry / xfreerdp-client lib)
-        .define("WITH_X11", "ON")
-        .define("WITH_CLIENT_INTERFACE", "ON")
-        // Disable alternative client frontends
         .define("WITH_CLIENT_SDL", "OFF")
         .define("WITH_CLIENT_WAYLAND", "OFF")
         .define("WITH_WAYLAND", "OFF")
-        // Disable features that bring in extra dependencies
         .define("WITH_FUSE", "OFF")
         .define("CHANNEL_REMDESK", "OFF")
-        // Enable Azure AD authentication
-        .define("WITH_AAD", "ON")
-        // Enable H264 video codec support (via FFmpeg)
-        .define("WITH_FFMPEG", "ON")
-        .define("WITH_VIDEO_FFMPEG", "ON")
-        .define("WITH_DSP_FFMPEG", "ON")
         .define("WITH_OPENH264", "OFF")
-        // Use built-in Unicode converter (avoids ~35MB ICU runtime dependency)
         .define("WITH_UNICODE_BUILTIN", "ON")
-        // Enable compression
-        .define("WITH_BULK_COMPRESSION", "ON")
-        // Enable clipboard redirection
+        // Channel configuration
         .define("CHANNEL_CLIPRDR", "ON")
         .define("CHANNEL_CLIPRDR_CLIENT", "ON")
-        // Enable drive/folder sharing
         .define("CHANNEL_DRIVE", "ON")
         .define("CHANNEL_DRIVE_CLIENT", "ON")
-        // Enable camera/video capture redirection
         .define("CHANNEL_RDPECAM", "ON")
         .define("CHANNEL_RDPECAM_CLIENT", "ON")
-        // USB device forwarding — disabled due to complex static linking
         .define("CHANNEL_URBDRC", "OFF")
         .define("CHANNEL_URBDRC_CLIENT", "OFF")
-        // Enable device redirection (printers, serial, parallel, smartcard)
         .define("CHANNEL_RDPDR", "ON")
         .define("CHANNEL_RDPDR_CLIENT", "ON")
-        // Enable dynamic virtual channels
         .define("CHANNEL_DRDYNVC", "ON")
-        .define("CHANNEL_DRDYNVC_CLIENT", "ON")
-        .build();
+        .define("CHANNEL_DRDYNVC_CLIENT", "ON");
+
+    // Platform-specific cmake defines
+    if is_linux {
+        config
+            .define("WITH_X11", "ON")
+            .define("WITH_AAD", "ON")
+            .define("WITH_FFMPEG", "ON")
+            .define("WITH_VIDEO_FFMPEG", "ON")
+            .define("WITH_DSP_FFMPEG", "ON")
+            .define("WITH_BULK_COMPRESSION", "ON");
+    } else if is_windows {
+        config
+            .define("WITH_X11", "OFF")
+            .define("WITH_CLIENT_WINDOWS", "OFF")
+            .define("WITH_AAD", "OFF")
+            .define("WITH_FFMPEG", "OFF")
+            .define("WITH_VIDEO_FFMPEG", "OFF")
+            .define("WITH_DSP_FFMPEG", "OFF")
+            .define("WITH_BULK_COMPRESSION", "OFF")
+            .define("WITH_NATIVE_SSPI", "ON");
+    } else if is_macos {
+        config
+            .define("WITH_X11", "OFF")
+            .define("WITH_CLIENT_MAC", "OFF")
+            .define("WITH_AAD", "OFF")
+            .define("WITH_FFMPEG", "OFF")
+            .define("WITH_VIDEO_FFMPEG", "OFF")
+            .define("WITH_DSP_FFMPEG", "OFF")
+            .define("WITH_BULK_COMPRESSION", "OFF");
+    }
+
+    // OpenSSL location (CI sets OPENSSL_ROOT_DIR; fallback to brew on macOS)
+    if let Ok(ssl_dir) = env::var("OPENSSL_ROOT_DIR") {
+        config.define("OPENSSL_ROOT_DIR", &ssl_dir);
+    } else if is_macos {
+        if let Some(dir) = brew_prefix("openssl@3") {
+            config.define("OPENSSL_ROOT_DIR", &dir);
+        }
+    }
+
+    let dst = config.build();
 
     // --- Link static libraries ---
-    // Recursively find all directories containing .a files in the cmake output
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let mut search_dirs = std::collections::HashSet::new();
+    let lib_ext = if is_windows { "lib" } else { "a" };
+    let mut search_dirs = HashSet::new();
 
     // Standard install directories
     for subdir in ["lib", "lib64", "lib/x86_64-linux-gnu"] {
@@ -104,30 +130,16 @@ fn main() {
         }
     }
 
-    // Recursively search both install dir and build dir for .a files
-    fn find_static_libs(dir: &std::path::Path, dirs: &mut std::collections::HashSet<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    find_static_libs(&path, dirs);
-                } else if path.extension().is_some_and(|e| e == "a") {
-                    if let Some(parent) = path.parent() {
-                        dirs.insert(parent.to_path_buf());
-                    }
-                }
-            }
-        }
-    }
-    find_static_libs(&dst, &mut search_dirs);
-    find_static_libs(&out_dir.join("build"), &mut search_dirs);
+    // Recursively search cmake output for static libraries
+    find_static_libs(&dst, lib_ext, &mut search_dirs);
+    find_static_libs(&out_dir.join("build"), lib_ext, &mut search_dirs);
 
-    // Diagnostic: print found library directories
+    // Diagnostic: print found libraries (crucial for debugging CI)
     for dir in &search_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
                 let p = e.path();
-                if p.extension().is_some_and(|ext| ext == "a") {
+                if p.extension().is_some_and(|ext| ext == lib_ext) {
                     println!(
                         "cargo:warning=Found static lib: {}",
                         p.file_name().unwrap().to_string_lossy()
@@ -138,69 +150,114 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", dir.display());
     }
 
-    // Core FreeRDP libraries
+    // Core FreeRDP libraries (all platforms, version suffix "3")
     for lib in ["freerdp3", "freerdp-client3", "winpr3", "winpr-tools3"] {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
-    // X11 FreeRDP client library (provides RdpClientEntry for popup windows)
-    // FreeRDP 3.x appends version suffix "3" to library names
-    println!("cargo:rustc-link-lib=static=xfreerdp-client3");
+    // X11 client library (Linux only)
+    if is_linux {
+        println!("cargo:rustc-link-lib=static=xfreerdp-client3");
+    }
 
-    // System dependencies (Linux)
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-    if target_os == "linux" {
-        // SSL/TLS
+    // --- System dependencies ---
+    if is_linux {
         println!("cargo:rustc-link-lib=ssl");
         println!("cargo:rustc-link-lib=crypto");
-        // X11
-        println!("cargo:rustc-link-lib=X11");
-        println!("cargo:rustc-link-lib=Xext");
-        println!("cargo:rustc-link-lib=Xcursor");
-        println!("cargo:rustc-link-lib=Xfixes");
-        println!("cargo:rustc-link-lib=Xi");
-        println!("cargo:rustc-link-lib=Xinerama");
-        println!("cargo:rustc-link-lib=Xrandr");
-        println!("cargo:rustc-link-lib=Xrender");
-        // Multimedia (FFmpeg)
-        println!("cargo:rustc-link-lib=avcodec");
-        println!("cargo:rustc-link-lib=avutil");
-        println!("cargo:rustc-link-lib=swresample");
-        println!("cargo:rustc-link-lib=swscale");
-        // System
+        for lib in [
+            "X11", "Xext", "Xcursor", "Xfixes", "Xi", "Xinerama", "Xrandr", "Xrender",
+        ] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
+        for lib in ["avcodec", "avutil", "swresample", "swscale"] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=zstd");
+    } else if is_windows {
+        // OpenSSL (choco package provides libssl.lib / libcrypto.lib)
+        if let Ok(ssl_dir) = env::var("OPENSSL_ROOT_DIR") {
+            let lib_dir = PathBuf::from(&ssl_dir).join("lib");
+            if lib_dir.exists() {
+                println!("cargo:rustc-link-search=native={}", lib_dir.display());
+            }
+            // Some installs put libs in lib/VC/x64/MD or similar
+            let vc_dir = lib_dir.join("VC").join("x64").join("MD");
+            if vc_dir.exists() {
+                println!("cargo:rustc-link-search=native={}", vc_dir.display());
+            }
+        }
+        println!("cargo:rustc-link-lib=libssl");
+        println!("cargo:rustc-link-lib=libcrypto");
+        // Windows system libraries
+        for lib in [
+            "ws2_32", "rpcrt4", "crypt32", "ncrypt", "bcrypt", "secur32", "advapi32", "user32",
+            "gdi32", "shell32", "ole32", "ntdll", "iphlpapi", "winmm", "shlwapi", "dbghelp",
+        ] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
+    } else if is_macos {
+        // OpenSSL from Homebrew
+        let ssl_dir = env::var("OPENSSL_ROOT_DIR")
+            .ok()
+            .or_else(|| brew_prefix("openssl@3"))
+            .unwrap_or_default();
+        if !ssl_dir.is_empty() {
+            println!("cargo:rustc-link-search=native={}/lib", ssl_dir);
+        }
+        println!("cargo:rustc-link-lib=ssl");
+        println!("cargo:rustc-link-lib=crypto");
+        println!("cargo:rustc-link-lib=z");
+        println!("cargo:rustc-link-lib=pthread");
+        println!("cargo:rustc-link-lib=iconv");
+        for fw in [
+            "CoreFoundation",
+            "Security",
+            "IOKit",
+            "Cocoa",
+            "CoreGraphics",
+            "AppKit",
+        ] {
+            println!("cargo:rustc-link-lib=framework={fw}");
+        }
     }
 
     // --- Generate FFI bindings ---
     let include_dir = dst.join("include");
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(manifest_dir.join("wrapper.h").to_str().unwrap())
         .clang_arg(format!("-I{}", include_dir.join("freerdp3").display()))
         .clang_arg(format!("-I{}", include_dir.join("winpr3").display()))
         .clang_arg(format!("-I{}", include_dir.display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        // FreeRDP functions
         .allowlist_function("freerdp_.*")
         .allowlist_function("RdpClientEntry")
         .allowlist_function("client_common_.*")
-        // WinPR functions
         .allowlist_function("winpr_.*")
         .allowlist_function("WaitForSingleObject")
         .allowlist_function("GetExitCodeThread")
-        // Types
         .allowlist_type("rdp.*")
         .allowlist_type("freerdp.*")
         .allowlist_type("RDP_CLIENT_ENTRY_POINTS.*")
-        // Settings constants (FreeRDP_ServerHostname, etc.)
         .allowlist_var("FreeRDP_.*")
         .allowlist_var("FREERDP_.*")
-        // WinPR constants
         .allowlist_var("WINPR_.*")
         .allowlist_var("INFINITE")
-        // Generate even for complex types
-        .derive_default(true)
+        .derive_default(true);
+
+    // Help clang find OpenSSL headers on macOS (not in default search path)
+    if is_macos {
+        let ssl_dir = env::var("OPENSSL_ROOT_DIR")
+            .ok()
+            .or_else(|| brew_prefix("openssl@3"))
+            .unwrap_or_default();
+        if !ssl_dir.is_empty() {
+            builder = builder.clang_arg(format!("-I{}/include", ssl_dir));
+        }
+    }
+
+    let bindings = builder
         .generate()
         .expect("Unable to generate FreeRDP bindings");
 
@@ -209,7 +266,38 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write FreeRDP bindings");
 
-    // Rebuild triggers
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=patches/aad-fallback-parse.patch");
+}
+
+/// Recursively find directories containing static libraries
+fn find_static_libs(dir: &std::path::Path, ext: &str, dirs: &mut HashSet<PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                find_static_libs(&path, ext, dirs);
+            } else if path.extension().is_some_and(|e| e == ext) {
+                if let Some(parent) = path.parent() {
+                    dirs.insert(parent.to_path_buf());
+                }
+            }
+        }
+    }
+}
+
+/// Get a Homebrew prefix for a package (macOS only)
+fn brew_prefix(package: &str) -> Option<String> {
+    Command::new("brew")
+        .args(["--prefix", package])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        })
 }
