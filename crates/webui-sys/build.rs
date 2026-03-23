@@ -60,6 +60,10 @@ fn main() {
         "windows" => {
             build.define("WIN32", None);
         }
+        "macos" => {
+            // Compile the macOS WebView (WKWebView) Objective-C implementation
+            build.file(webui_dir.join("src").join("webview").join("wkwebview.m"));
+        }
         _ => {}
     }
 
@@ -79,6 +83,8 @@ fn main() {
         "macos" => {
             println!("cargo:rustc-link-lib=pthread");
             println!("cargo:rustc-link-lib=framework=CoreGraphics");
+            println!("cargo:rustc-link-lib=framework=WebKit");
+            println!("cargo:rustc-link-lib=framework=Cocoa");
         }
         _ => {}
     }
