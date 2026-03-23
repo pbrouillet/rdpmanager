@@ -27,6 +27,13 @@ impl MainWindow {
             webui_sys::webui_set_size(self.window, 1200, 800);
         }
 
+        // Register an all-events handler so we can detect window disconnect
+        // and call webui_exit() to unblock webui_wait().
+        let element = CString::new("").unwrap();
+        unsafe {
+            webui_sys::webui_bind(self.window, element.as_ptr(), Some(on_event));
+        }
+
         if embedded_ui::has_files() {
             info!("Using embedded UI (VFS mode — assets compiled into binary)");
             unsafe {
@@ -80,6 +87,19 @@ impl MainWindow {
         unsafe {
             webui_sys::webui_set_timeout(0); // wait forever
             webui_sys::webui_wait();
+            webui_sys::webui_clean();
+        }
+    }
+}
+
+/// WebUI all-events handler — calls webui_exit() on disconnect so webui_wait() returns.
+unsafe extern "C" fn on_event(e: *mut webui_sys::webui_event_t) {
+    let event = unsafe { &*e };
+    // WEBUI_EVENT_DISCONNECTED = 0
+    if event.event_type == 0 {
+        info!("Window disconnected — signalling exit");
+        unsafe {
+            webui_sys::webui_exit();
         }
     }
 }
