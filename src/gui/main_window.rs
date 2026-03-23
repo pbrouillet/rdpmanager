@@ -8,17 +8,25 @@
 use log::{error, info, warn};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
+use crate::config_manager::ConfigManager;
 use crate::embedded_ui;
+use crate::js_handlers;
 
 pub struct MainWindow {
     window: usize,
+    config_manager: Arc<Mutex<ConfigManager>>,
 }
 
 impl MainWindow {
     pub fn new() -> Self {
         let window = unsafe { webui_sys::webui_new_window() };
-        Self { window }
+        let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
+        Self {
+            window,
+            config_manager,
+        }
     }
 
     /// Initialize the window: configure size, set up UI file serving.
@@ -33,6 +41,9 @@ impl MainWindow {
         unsafe {
             webui_sys::webui_bind(self.window, element.as_ptr(), Some(on_event));
         }
+
+        // Register JS→Rust bindings for database, connections, folders, etc.
+        js_handlers::bind_all(self.window, Arc::clone(&self.config_manager));
 
         if embedded_ui::has_files() {
             info!("Using embedded UI (VFS mode — assets compiled into binary)");
