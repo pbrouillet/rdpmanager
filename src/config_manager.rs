@@ -171,7 +171,7 @@ impl ConfigManager {
         self.database_path.to_string_lossy().into_owned()
     }
 
-    // -- Stubs for data loading (expanded later) --
+    // -- Connection CRUD --
 
     pub fn get_connections_json(&self) -> String {
         let Some(ref db) = self.db else {
@@ -187,6 +187,71 @@ impl ConfigManager {
         };
         format!("[{}]", rows.join(","))
     }
+
+    pub fn get_connection_json(&self, name: &str) -> Option<String> {
+        let db = self.db.as_ref()?;
+        db.query_row(
+            "SELECT profile_json FROM connections WHERE name = ?1",
+            [name],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    pub fn save_connection(&self, json_str: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        // Extract the "name" field from the JSON to use as primary key
+        let val: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("save_connection: invalid JSON: {e}");
+                return false;
+            }
+        };
+        let name = match val.get("name").and_then(|n| n.as_str()) {
+            Some(n) => n,
+            None => {
+                error!("save_connection: missing 'name' field");
+                return false;
+            }
+        };
+        match db.execute(
+            "INSERT OR REPLACE INTO connections (name, profile_json) VALUES (?1, ?2)",
+            rusqlite::params![name, json_str],
+        ) {
+            Ok(_) => {
+                info!("Saved connection: {name}");
+                true
+            }
+            Err(e) => {
+                error!("save_connection failed: {e}");
+                false
+            }
+        }
+    }
+
+    pub fn delete_connection(&self, name: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "DELETE FROM connections WHERE name = ?1",
+            rusqlite::params![name],
+        ) {
+            Ok(_) => {
+                info!("Deleted connection: {name}");
+                true
+            }
+            Err(e) => {
+                error!("delete_connection failed: {e}");
+                false
+            }
+        }
+    }
+
+    // -- Folder CRUD --
 
     pub fn get_folders_json(&self) -> String {
         let Some(ref db) = self.db else {
@@ -207,6 +272,142 @@ impl ConfigManager {
             Err(_) => return "[]".to_string(),
         };
         format!("[{}]", paths.join(","))
+    }
+
+    pub fn create_folder(&self, path: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "INSERT OR IGNORE INTO folders (path) VALUES (?1)",
+            rusqlite::params![path],
+        ) {
+            Ok(_) => true,
+            Err(e) => {
+                error!("create_folder failed: {e}");
+                false
+            }
+        }
+    }
+
+    pub fn move_folder(&self, source: &str, target_parent: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        // Extract the folder's leaf name and build the new path
+        let leaf = source.rsplit('/').next().unwrap_or(source);
+        let new_path = if target_parent.is_empty() {
+            leaf.to_string()
+        } else {
+            format!("{target_parent}/{leaf}")
+        };
+        let tx = match db.execute("BEGIN", []) {
+            Ok(_) => true,
+            Err(_) => false,
+        };
+        // Rename the folder itself
+        let _ = db.execute(
+            "UPDATE folders SET path = ?1 WHERE path = ?2",
+            rusqlite::params![new_path, source],
+        );
+        // Rename all child folders (prefix match)
+        let prefix = format!("{source}/");
+        let _ = db.execute(
+            "UPDATE folders SET path = ?1 || substr(path, ?2) WHERE path LIKE ?3",
+            rusqlite::params![
+                format!("{new_path}/"),
+                prefix.len() + 1,
+                format!("{prefix}%")
+            ],
+        );
+        // Move connections in this folder
+        let _ = db.execute(
+            "UPDATE connections SET profile_json = json_set(profile_json, '$.folder', ?1) WHERE json_extract(profile_json, '$.folder') = ?2",
+            rusqlite::params![new_path, source],
+        );
+        if tx {
+            let _ = db.execute("COMMIT", []);
+        }
+        true
+    }
+
+    pub fn rename_folder(&self, source: &str, new_name: &str) -> bool {
+        // Build new path by replacing the last segment
+        let parent = source.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        let new_path = if parent.is_empty() {
+            new_name.to_string()
+        } else {
+            format!("{parent}/{new_name}")
+        };
+        self.move_folder(source, parent)
+            && self
+                .db
+                .as_ref()
+                .map(|db| {
+                    // Fix the exact folder name (move_folder rebuilds from leaf)
+                    let _ = db.execute(
+                        "UPDATE folders SET path = ?1 WHERE path LIKE ?2",
+                        rusqlite::params![
+                            new_path,
+                            format!(
+                                "{}/{}",
+                                if parent.is_empty() {
+                                    "".to_string()
+                                } else {
+                                    parent.to_string()
+                                },
+                                source.rsplit('/').next().unwrap_or(source)
+                            )
+                        ],
+                    );
+                    true
+                })
+                .unwrap_or(false)
+    }
+
+    pub fn delete_folder(&self, path: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        let _ = db.execute(
+            "DELETE FROM folders WHERE path = ?1 OR path LIKE ?2",
+            rusqlite::params![path, format!("{path}/%")],
+        );
+        let _ = db.execute(
+            "DELETE FROM folder_settings WHERE path = ?1 OR path LIKE ?2",
+            rusqlite::params![path, format!("{path}/%")],
+        );
+        true
+    }
+
+    // -- Folder settings --
+
+    pub fn get_folder_settings(&self, path: &str) -> String {
+        let Some(ref db) = self.db else {
+            return "{}".to_string();
+        };
+        db.query_row(
+            "SELECT settings_json FROM folder_settings WHERE path = ?1",
+            rusqlite::params![path],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn save_folder_settings(&self, path: &str, settings_json: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "INSERT OR REPLACE INTO folder_settings (path, settings_json) VALUES (?1, ?2)",
+            rusqlite::params![path, settings_json],
+        ) {
+            Ok(_) => true,
+            Err(e) => {
+                error!("save_folder_settings failed: {e}");
+                false
+            }
+        }
     }
 
     // -- Internal helpers --

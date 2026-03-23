@@ -7,3 +7,6 @@ crates/*/target/
 
 # Local build downloads
 /builds/
+
+# Runtime databases
+*.db
