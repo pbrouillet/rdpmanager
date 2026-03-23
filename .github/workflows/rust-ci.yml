@@ -132,9 +132,34 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/ui-react/package-lock.json
+
+      - name: Build React UI
+        working-directory: src/ui-react
+        run: |
+          npm ci --no-audit --no-fund
+          npx rollup -c rollup.config.mjs
+        env:
+          ROLLUP_OUT_DIR: ${{ github.workspace }}/ui-dist
+
+      - name: Stage release package
+        shell: bash
+        run: |
+          mkdir -p staging/ui
+          cp target/release/${{ matrix.binary }} staging/
+          cp -r ui-dist/* staging/ui/
+          cp README.md staging/ 2>/dev/null || true
+          cp appicon.ico staging/ 2>/dev/null || true
+          cp appicon.png staging/ 2>/dev/null || true
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/${{ matrix.binary }}
+          path: staging/
           if-no-files-found: error
