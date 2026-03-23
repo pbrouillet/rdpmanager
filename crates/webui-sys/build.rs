@@ -59,6 +59,17 @@ fn main() {
         }
         "windows" => {
             build.define("WIN32", None);
+            // Compile the Windows WebView2 C++ implementation separately (it's C++)
+            cc::Build::new()
+                .cpp(true)
+                .define("WIN32", None)
+                .define("WEBUI_STATIC", None)
+                .define("NO_SSL", None)
+                .define("NDEBUG", None)
+                .include(webui_dir.join("include"))
+                .include(webui_dir.join("src").join("webview"))
+                .file(webui_dir.join("src").join("webview").join("win32_wv2.cpp"))
+                .compile("webui_wv2");
         }
         "macos" => {
             // Compile the macOS WebView (WKWebView) Objective-C implementation
@@ -76,6 +87,7 @@ fn main() {
             println!("cargo:rustc-link-lib=shell32");
             println!("cargo:rustc-link-lib=ole32");
             println!("cargo:rustc-link-lib=ws2_32");
+            println!("cargo:rustc-link-lib=advapi32");
         }
         "linux" => {
             println!("cargo:rustc-link-lib=pthread");
