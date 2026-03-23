@@ -17,6 +17,7 @@
 
 mod config_manager;
 mod dialog_manager;
+mod embedded_ui;
 mod feed_discovery;
 mod gui;
 mod js_handlers;
@@ -25,19 +26,35 @@ mod rdp_launcher;
 mod types;
 mod utils;
 
-use log::info;
+use gui::main_window::MainWindow;
+use log::{error, info};
 
 fn main() {
     // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
 
     info!("rdpmanager v{} starting", env!("CARGO_PKG_VERSION"));
 
-    // TODO: Parse CLI arguments (--debug-port, --log-level, --aad-dbg, -USE_MANUAL_CODE_FLOW)
-    // TODO: Linux GIO TLS backend configuration
-    // TODO: Create MainWindow, initialize, show, wait
+    // Create and initialize the main window
+    let window = MainWindow::new();
+
+    if !window.initialize() {
+        error!("Failed to initialize — exiting");
+        std::process::exit(1);
+    }
+
+    // Show the UI window
+    if !window.show() {
+        error!("Failed to show window — exiting");
+        std::process::exit(1);
+    }
+
+    info!("Window opened — waiting for close");
+
+    // Block until the window is closed
+    MainWindow::wait();
 
     info!("rdpmanager exiting");
 }

@@ -120,18 +120,6 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
-      - name: Build workspace
-        run: cargo build --workspace
-
-      - name: Run clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace
-
-      - name: Build release binary
-        run: cargo build --release
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -147,19 +135,21 @@ jobs:
         env:
           ROLLUP_OUT_DIR: ${{ github.workspace }}/ui-dist
 
-      - name: Stage release package
-        shell: bash
-        run: |
-          mkdir -p staging/ui
-          cp target/release/${{ matrix.binary }} staging/
-          cp -r ui-dist/* staging/ui/
-          cp README.md staging/ 2>/dev/null || true
-          cp appicon.ico staging/ 2>/dev/null || true
-          cp appicon.png staging/ 2>/dev/null || true
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Build release binary
+        run: cargo build --release
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: staging/
+          path: target/release/${{ matrix.binary }}
           if-no-files-found: error
