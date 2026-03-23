@@ -67,8 +67,6 @@ fn main() {
         .define("CHANNEL_CLIPRDR_CLIENT", "ON")
         .define("CHANNEL_DRIVE", "ON")
         .define("CHANNEL_DRIVE_CLIENT", "ON")
-        .define("CHANNEL_RDPECAM", "ON")
-        .define("CHANNEL_RDPECAM_CLIENT", "ON")
         .define("CHANNEL_URBDRC", "OFF")
         .define("CHANNEL_URBDRC_CLIENT", "OFF")
         .define("CHANNEL_RDPDR", "ON")
@@ -84,7 +82,10 @@ fn main() {
             .define("WITH_FFMPEG", "ON")
             .define("WITH_VIDEO_FFMPEG", "ON")
             .define("WITH_DSP_FFMPEG", "ON")
-            .define("WITH_BULK_COMPRESSION", "ON");
+            .define("WITH_BULK_COMPRESSION", "ON")
+            // V4L camera redirection (Linux only)
+            .define("CHANNEL_RDPECAM", "ON")
+            .define("CHANNEL_RDPECAM_CLIENT", "ON");
     } else if is_windows {
         config
             .define("WITH_X11", "OFF")
@@ -95,7 +96,9 @@ fn main() {
             .define("WITH_DSP_FFMPEG", "OFF")
             .define("WITH_SWSCALE", "OFF")
             .define("WITH_BULK_COMPRESSION", "OFF")
-            .define("WITH_NATIVE_SSPI", "ON");
+            .define("WITH_NATIVE_SSPI", "ON")
+            .define("CHANNEL_RDPECAM", "OFF")
+            .define("CHANNEL_RDPECAM_CLIENT", "OFF");
     } else if is_macos {
         config
             .define("WITH_X11", "OFF")
@@ -105,7 +108,9 @@ fn main() {
             .define("WITH_VIDEO_FFMPEG", "OFF")
             .define("WITH_DSP_FFMPEG", "OFF")
             .define("WITH_SWSCALE", "OFF")
-            .define("WITH_BULK_COMPRESSION", "OFF");
+            .define("WITH_BULK_COMPRESSION", "OFF")
+            .define("CHANNEL_RDPECAM", "OFF")
+            .define("CHANNEL_RDPECAM_CLIENT", "OFF");
     }
 
     // OpenSSL location (CI sets OPENSSL_ROOT_DIR; fallback to brew on macOS)
