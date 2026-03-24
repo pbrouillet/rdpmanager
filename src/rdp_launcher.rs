@@ -225,7 +225,7 @@ impl RDPLauncher {
                 if let Ok(cs) = CString::new($val.as_str()) {
                     freerdp_sys::freerdp_settings_set_string(
                         settings,
-                        freerdp_sys::$key as usize,
+                        freerdp_sys::$key as _,
                         cs.as_ptr(),
                     );
                 }
@@ -235,7 +235,7 @@ impl RDPLauncher {
             ($key:ident, $val:expr) => {
                 freerdp_sys::freerdp_settings_set_bool(
                     settings,
-                    freerdp_sys::$key as usize,
+                    freerdp_sys::$key as _,
                     $val as i32,
                 );
             };
@@ -244,7 +244,7 @@ impl RDPLauncher {
             ($key:ident, $val:expr) => {
                 freerdp_sys::freerdp_settings_set_uint32(
                     settings,
-                    freerdp_sys::$key as usize,
+                    freerdp_sys::$key as _,
                     $val as u32,
                 );
             };
