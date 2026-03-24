@@ -151,20 +151,58 @@ fn main() {
     find_static_libs(&dst, lib_ext, &mut search_dirs);
     find_static_libs(&out_dir.join("build"), lib_ext, &mut search_dirs);
 
-    // Diagnostic: print found libraries (crucial for debugging CI)
+    // Diagnostic: print found libraries with sizes (crucial for debugging CI)
     for dir in &search_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
                 let p = e.path();
                 if p.extension().is_some_and(|ext| ext == lib_ext) {
+                    let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                     println!(
-                        "cargo:warning=Found static lib: {}",
-                        p.file_name().unwrap().to_string_lossy()
+                        "cargo:warning=Found: {} ({} bytes) in {}",
+                        p.file_name().unwrap().to_string_lossy(),
+                        size,
+                        dir.display()
                     );
                 }
             }
         }
         println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+
+    // Diagnostic: check if key libraries contain expected symbols using nm
+    for (lib_name, expected_symbol) in [
+        ("libfreerdp3", "freerdp_settings_set_string"),
+        ("libfreerdp-client3", "freerdp_client_stop"),
+        ("libwinpr3", "WaitForSingleObject"),
+    ] {
+        for dir in &search_dirs {
+            let lib_file = dir.join(format!("{}.{}", lib_name, lib_ext));
+            if lib_file.exists() {
+                let output = Command::new("nm")
+                    .arg("--defined-only")
+                    .arg(&lib_file)
+                    .output();
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let has_symbol = stdout.contains(expected_symbol);
+                        let symbol_count = stdout.lines().count();
+                        println!(
+                            "cargo:warning=nm {}: {} symbols, contains '{}': {}",
+                            lib_file.display(),
+                            symbol_count,
+                            expected_symbol,
+                            has_symbol
+                        );
+                    }
+                    Err(e) => {
+                        println!("cargo:warning=nm failed for {}: {}", lib_file.display(), e);
+                    }
+                }
+                break; // only check first occurrence
+            }
+        }
     }
 
     // Core FreeRDP libraries (all platforms, version suffix "3")
