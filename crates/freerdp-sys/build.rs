@@ -321,6 +321,13 @@ fn main() {
         bindings_str.contains("FreeRDP_ServerHostname"),
         bindings_str.contains("FreeRDP_Settings_Keys")
     );
+    // Print lines containing FreeRDP_ServerHostname
+    for line in bindings_str
+        .lines()
+        .filter(|l| l.contains("FreeRDP_ServerHostname"))
+    {
+        println!("cargo:warning=  binding line: {}", line.trim());
+    }
 
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=patches/aad-fallback-parse.patch");
