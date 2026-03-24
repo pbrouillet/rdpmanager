@@ -286,6 +286,42 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write FreeRDP bindings");
 
+    // Diagnostic: check generated settings_keys.h and bindings
+    let settings_keys_path = include_dir.join("freerdp3/freerdp/settings_keys.h");
+    if settings_keys_path.exists() {
+        let content = std::fs::read_to_string(&settings_keys_path).unwrap_or_default();
+        println!(
+            "cargo:warning=settings_keys.h exists ({} bytes), contains FreeRDP_ServerHostname: {}",
+            content.len(),
+            content.contains("FreeRDP_ServerHostname")
+        );
+        // Print first 5 non-empty lines of content
+        for line in content.lines().filter(|l| !l.trim().is_empty()).take(5) {
+            println!("cargo:warning=  settings_keys.h: {}", line.trim());
+        }
+    } else {
+        println!(
+            "cargo:warning=settings_keys.h NOT found at {}",
+            settings_keys_path.display()
+        );
+        // Search for it in the include dir
+        for pattern in ["freerdp/settings_keys.h", "settings_keys.h"] {
+            let alt = include_dir.join(pattern);
+            if alt.exists() {
+                println!("cargo:warning=  Found at alternative: {}", alt.display());
+            }
+        }
+    }
+
+    // Check if bindings contain FreeRDP_ServerHostname
+    let bindings_str = std::fs::read_to_string(out_path.join("bindings.rs")).unwrap_or_default();
+    println!(
+        "cargo:warning=bindings.rs: {} bytes, contains FreeRDP_ServerHostname: {}, contains FreeRDP_Settings_Keys: {}",
+        bindings_str.len(),
+        bindings_str.contains("FreeRDP_ServerHostname"),
+        bindings_str.contains("FreeRDP_Settings_Keys")
+    );
+
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=patches/aad-fallback-parse.patch");
 }
