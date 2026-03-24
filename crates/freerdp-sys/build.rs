@@ -43,6 +43,9 @@ fn main() {
     // Common defines (all platforms)
     config
         .define("BUILD_SHARED_LIBS", "OFF")
+        .define("CMAKE_INTERPROCEDURAL_OPTIMIZATION", "OFF")
+        .define("CMAKE_C_VISIBILITY_PRESET", "default")
+        .define("CMAKE_CXX_VISIBILITY_PRESET", "default")
         .define("WITH_CLIENT_COMMON", "ON")
         .define("WITH_CLIENT", "ON")
         .define("WITH_CLIENT_INTERFACE", "ON")
@@ -151,18 +154,15 @@ fn main() {
     find_static_libs(&dst, lib_ext, &mut search_dirs);
     find_static_libs(&out_dir.join("build"), lib_ext, &mut search_dirs);
 
-    // Diagnostic: print found libraries with sizes (crucial for debugging CI)
+    // Print found library paths (useful for CI debugging)
     for dir in &search_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
                 let p = e.path();
                 if p.extension().is_some_and(|ext| ext == lib_ext) {
-                    let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                     println!(
-                        "cargo:warning=Found: {} ({} bytes) in {}",
-                        p.file_name().unwrap().to_string_lossy(),
-                        size,
-                        dir.display()
+                        "cargo:warning=Found static lib: {}",
+                        p.file_name().unwrap().to_string_lossy()
                     );
                 }
             }
@@ -170,67 +170,17 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", dir.display());
     }
 
-    // Diagnostic: check if key libraries contain expected symbols using nm
-    for (lib_name, expected_symbol) in [
-        ("libfreerdp3", "freerdp_settings_set_string"),
-        ("libfreerdp-client3", "freerdp_client_stop"),
-        ("libwinpr3", "WaitForSingleObject"),
-    ] {
-        for dir in &search_dirs {
-            let lib_file = dir.join(format!("{}.{}", lib_name, lib_ext));
-            if lib_file.exists() {
-                // Check global/external symbols with nm -g
-                let output = Command::new("nm").arg("-g").arg(&lib_file).output();
-                match output {
-                    Ok(out) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        // Find the exact line with the symbol
-                        let matching_lines: Vec<&str> = stdout
-                            .lines()
-                            .filter(|l| l.contains(expected_symbol))
-                            .collect();
-                        println!(
-                            "cargo:warning=nm -g {}: matching lines for '{}': {:?}",
-                            lib_file.display(),
-                            expected_symbol,
-                            matching_lines.iter().take(3).collect::<Vec<_>>()
-                        );
-                    }
-                    Err(e) => {
-                        println!("cargo:warning=nm failed for {}: {}", lib_file.display(), e);
-                    }
-                }
-                // Also check with readelf for symbol binding
-                let output2 = Command::new("readelf")
-                    .args(["-sW", &lib_file.to_string_lossy()])
-                    .output();
-                if let Ok(out) = output2 {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let matching: Vec<&str> = stdout
-                        .lines()
-                        .filter(|l| l.contains(expected_symbol))
-                        .collect();
-                    println!(
-                        "cargo:warning=readelf -sW {}: '{}' entries: {:?}",
-                        lib_name,
-                        expected_symbol,
-                        matching.iter().take(3).collect::<Vec<_>>()
-                    );
-                }
-                break;
-            }
-        }
-    }
-
     // Core FreeRDP libraries (all platforms, version suffix "3")
-    // Use +whole-archive to ensure all symbols are available when the
-    // final binary links against freerdp-sys.
     // Order: most dependent first (xfreerdp-client3 → freerdp-client3 → freerdp3 → winpr3)
     if is_linux {
-        println!("cargo:rustc-link-lib=static:+whole-archive=xfreerdp-client3");
+        println!("cargo:rustc-link-lib=static=xfreerdp-client3");
     }
     for lib in ["freerdp-client3", "freerdp3", "winpr-tools3", "winpr3"] {
-        println!("cargo:rustc-link-lib=static:+whole-archive={lib}");
+        println!("cargo:rustc-link-lib=static={lib}");
+    }
+    // Repeat for circular dependencies between FreeRDP static archives
+    for lib in ["freerdp-client3", "freerdp3", "winpr3"] {
+        println!("cargo:rustc-link-lib=static={lib}");
     }
 
     // --- System dependencies ---
