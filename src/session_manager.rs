@@ -54,7 +54,7 @@ impl SessionManager {
         }
 
         // Hide all other sessions
-        for (id, _) in &self.rects {
+        for id in self.rects.keys() {
             if id != session_id {
                 self.embedding.hide_session(id);
             }
@@ -69,7 +69,7 @@ impl SessionManager {
 
     /// Switch to the home tab (hide all RDP sessions).
     pub fn show_home(&mut self) {
-        for (id, _) in &self.rects {
+        for id in self.rects.keys() {
             self.embedding.hide_session(id);
         }
         self.active_session = None;
