@@ -168,13 +168,14 @@ fn main() {
     }
 
     // Core FreeRDP libraries (all platforms, version suffix "3")
-    for lib in ["freerdp3", "freerdp-client3", "winpr3", "winpr-tools3"] {
-        println!("cargo:rustc-link-lib=static={lib}");
-    }
-
-    // X11 client library (Linux only)
+    // Use +whole-archive to ensure all symbols are available when the
+    // final binary links against freerdp-sys.
+    // Order: most dependent first (xfreerdp-client3 → freerdp-client3 → freerdp3 → winpr3)
     if is_linux {
-        println!("cargo:rustc-link-lib=static=xfreerdp-client3");
+        println!("cargo:rustc-link-lib=static:+whole-archive=xfreerdp-client3");
+    }
+    for lib in ["freerdp-client3", "freerdp3", "winpr-tools3", "winpr3"] {
+        println!("cargo:rustc-link-lib=static:+whole-archive={lib}");
     }
 
     // --- System dependencies ---
