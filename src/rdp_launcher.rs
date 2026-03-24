@@ -131,8 +131,6 @@ impl RDPLauncher {
         session_id: &str,
         profile: &ConnectionProfile,
     ) -> Result<RDPSession, String> {
-        use std::ffi::CString;
-
         unsafe {
             // Initialize entry points
             let mut entry: freerdp_sys::RDP_CLIENT_ENTRY_POINTS_V1 = std::mem::zeroed();
