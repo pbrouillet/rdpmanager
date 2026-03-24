@@ -195,6 +195,8 @@ fn main() {
         for lib in ["avcodec", "avutil", "swresample", "swscale"] {
             println!("cargo:rustc-link-lib={lib}");
         }
+        // WinPR JSON backend (cJSON on Linux)
+        println!("cargo:rustc-link-lib=cjson");
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=zstd");
