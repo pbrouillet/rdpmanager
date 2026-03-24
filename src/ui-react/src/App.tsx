@@ -50,9 +50,14 @@ import {
   apiSaveFolderSettings,
   apiGetEffectiveConnectionProfile,
   apiAadAuthResponse,
+  apiDisconnectSession,
+  apiShowHomeTab,
+  apiSwitchTab,
+  apiGetActiveSessions,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
+import { SessionTabs, type RdpSession } from './components/SessionTabs';
 import { Toolbar } from './components/Toolbar';
 import { ConnectionGrid } from './components/ConnectionGrid';
 import { ConnectionTable } from './components/ConnectionTable';
@@ -175,6 +180,10 @@ export function App() {
   const [folderSettingsOpen, setFolderSettingsOpen] = useState(false);
   const [folderSettingsPath, setFolderSettingsPath] = useState('');
 
+  // RDP session tab state
+  const [activeSessions, setActiveSessions] = useState<RdpSession[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('home'); // 'home' or session id
+
   // Ref to track imported RDP data for connection params
   const importedRdpDataRef = useRef<Record<string, unknown> | null>(null);
   importedRdpDataRef.current = importedRdpData;
@@ -244,8 +253,16 @@ export function App() {
       };
 
       const result = await apiConnect(params);
-      if (result.success) {
+      if (result.success && result.sessionId) {
         showToast(`Connecting to ${conn.hostname}...`, 'success');
+        // Add session to tab bar
+        const newSession: RdpSession = {
+          id: result.sessionId,
+          hostname: conn.hostname,
+          state: 'connecting',
+        };
+        setActiveSessions((prev) => [...prev, newSession]);
+        setActiveTab(result.sessionId);
       } else {
         showToast(`Connection failed: ${result.error}`, 'error');
       }
@@ -751,6 +768,49 @@ export function App() {
     apiAuthResponse(false, '', '', '');
   }, []);
 
+  // Session tab handlers
+  const handleSelectHome = useCallback(async () => {
+    setActiveTab('home');
+    await apiShowHomeTab();
+  }, []);
+
+  const handleSelectSession = useCallback(async (sessionId: string) => {
+    setActiveTab(sessionId);
+    await apiSwitchTab(sessionId, 0, 0, 800, 600);
+  }, []);
+
+  const handleCloseSession = useCallback(
+    async (sessionId: string) => {
+      const ok = await apiDisconnectSession(sessionId);
+      if (ok) {
+        setActiveSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (activeTab === sessionId) {
+          setActiveTab('home');
+          await apiShowHomeTab();
+        }
+        showToast('Session disconnected', 'info');
+      } else {
+        showToast('Failed to disconnect session', 'error');
+      }
+    },
+    [activeTab, showToast]
+  );
+
+  // Periodically refresh session states
+  useEffect(() => {
+    if (activeSessions.length === 0) return;
+    const interval = setInterval(async () => {
+      const sessions = await apiGetActiveSessions();
+      setActiveSessions((prev) =>
+        prev.map((s) => {
+          const updated = sessions.find((u) => u.id === s.id);
+          return updated ? { ...s, state: updated.state } : s;
+        })
+      );
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeSessions.length]);
+
   // Register global callbacks for C++ backend
   useEffect(() => {
     (window as unknown as Record<string, unknown>).showCertificateDialog = (
@@ -999,6 +1059,13 @@ export function App() {
           onClose={handleCloseDatabaseTab}
           onClone={handleCloneDatabase}
           onCopyPath={handleCopyDatabasePath}
+        />
+        <SessionTabs
+          sessions={activeSessions}
+          activeTab={activeTab}
+          onSelectHome={handleSelectHome}
+          onSelectSession={handleSelectSession}
+          onCloseSession={handleCloseSession}
         />
         {mainVisible && (
           <div className={styles.main}>

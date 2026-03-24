@@ -106,6 +106,7 @@ export interface DatabaseStatus {
 
 export interface ConnectResult {
   success: boolean;
+  sessionId?: string;
   error?: string;
 }
 

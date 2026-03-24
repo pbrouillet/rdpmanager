@@ -53,3 +53,10 @@ declare function getFolderSettings(path: string): Promise<string>;
 declare function saveFolderSettings(path: string, settingsJson: string): Promise<boolean>;
 declare function getEffectiveFolderSettings(path: string): Promise<string>;
 declare function getEffectiveConnectionProfile(name: string): Promise<string>;
+
+// Session management (tab embedding)
+declare function switchTab(jsonParams: string): Promise<boolean>;
+declare function showHomeTab(): Promise<boolean>;
+declare function resizeSession(jsonParams: string): Promise<boolean>;
+declare function disconnectSession(sessionId: string): Promise<boolean>;
+declare function getActiveSessions(): Promise<string>;

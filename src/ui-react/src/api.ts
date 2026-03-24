@@ -272,3 +272,67 @@ export async function apiGetEffectiveConnectionProfile(name: string): Promise<Co
     return null;
   }
 }
+
+// ============================================================================
+// Session Management (tab embedding)
+// ============================================================================
+
+export interface SessionInfo {
+  id: string;
+  hostname: string;
+  state: 'connecting' | 'connected' | 'disconnecting' | 'disconnected' | 'error';
+}
+
+export async function apiSwitchTab(
+  sessionId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<boolean> {
+  try {
+    return await switchTab(JSON.stringify({ sessionId, x, y, width, height }));
+  } catch {
+    return false;
+  }
+}
+
+export async function apiShowHomeTab(): Promise<boolean> {
+  try {
+    return await showHomeTab();
+  } catch {
+    return false;
+  }
+}
+
+export async function apiResizeSession(
+  sessionId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<boolean> {
+  try {
+    return await resizeSession(JSON.stringify({ sessionId, x, y, width, height }));
+  } catch {
+    return false;
+  }
+}
+
+export async function apiDisconnectSession(sessionId: string): Promise<boolean> {
+  try {
+    return await disconnectSession(sessionId);
+  } catch {
+    return false;
+  }
+}
+
+export async function apiGetActiveSessions(): Promise<SessionInfo[]> {
+  try {
+    const result = await getActiveSessions();
+    if (!result) return [];
+    return JSON.parse(result) as SessionInfo[];
+  } catch {
+    return [];
+  }
+}

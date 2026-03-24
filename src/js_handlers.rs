@@ -1,12 +1,15 @@
 //! WebUI JavaScript ↔ Rust binding layer.
 //!
-//! Registers all 30 JavaScript functions with WebUI that bridge the React
+//! Registers JavaScript functions with WebUI that bridge the React
 //! frontend to the Rust backend. Implemented handlers delegate to
-//! ConfigManager; unported subsystems return graceful stubs.
+//! ConfigManager and SessionManager; unported subsystems return graceful stubs.
 //!
 //! Equivalent to: `src/js_handlers.cpp` / `js_handlers.hpp`
 
 use crate::config_manager::ConfigManager;
+use crate::session_manager::SessionManager;
+use crate::types::ConnectionProfile;
+use crate::window_embedding::ContentRect;
 use log::{info, warn};
 use std::ffi::{CStr, CString};
 use std::path::PathBuf;
@@ -14,10 +17,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// Global shared state accessible from WebUI callbacks (which are C function pointers).
 static STATE: OnceLock<Arc<Mutex<ConfigManager>>> = OnceLock::new();
+static SESSION_STATE: OnceLock<Arc<Mutex<SessionManager>>> = OnceLock::new();
 
 /// Register all JavaScript bindings on the given WebUI window.
-pub fn bind_all(window: usize, config_manager: Arc<Mutex<ConfigManager>>) {
+pub fn bind_all(
+    window: usize,
+    config_manager: Arc<Mutex<ConfigManager>>,
+    session_manager: Arc<Mutex<SessionManager>>,
+) {
     STATE.get_or_init(|| config_manager);
+    SESSION_STATE.get_or_init(|| session_manager);
 
     let bindings: &[(&str, unsafe extern "C" fn(*mut webui_sys::webui_event_t))] = &[
         // Database management
@@ -62,6 +71,12 @@ pub fn bind_all(window: usize, config_manager: Arc<Mutex<ConfigManager>>) {
             "getEffectiveConnectionProfile",
             on_get_effective_connection_profile,
         ),
+        // Session management (tab embedding)
+        ("switchTab", on_switch_tab),
+        ("showHomeTab", on_show_home_tab),
+        ("resizeSession", on_resize_session),
+        ("disconnectSession", on_disconnect_session),
+        ("getActiveSessions", on_get_active_sessions),
     ];
 
     for (name, handler) in bindings {
@@ -80,6 +95,16 @@ where
     F: FnOnce(&mut ConfigManager) -> R,
 {
     STATE.get().and_then(|arc| {
+        let mut guard = arc.lock().ok()?;
+        Some(f(&mut guard))
+    })
+}
+
+fn with_sessions<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut SessionManager) -> R,
+{
+    SESSION_STATE.get().and_then(|arc| {
         let mut guard = arc.lock().ok()?;
         Some(f(&mut guard))
     })
@@ -270,8 +295,8 @@ unsafe extern "C" fn on_connect_rdp(e: *mut webui_sys::webui_event_t) {
         return;
     }
 
-    // Parse the connection JSON to validate and log
-    let params: serde_json::Value = match serde_json::from_str(&json_str) {
+    // Parse connection profile
+    let profile: ConnectionProfile = match serde_json::from_str(&json_str) {
         Ok(v) => v,
         Err(err) => {
             let msg = format!(
@@ -283,22 +308,47 @@ unsafe extern "C" fn on_connect_rdp(e: *mut webui_sys::webui_event_t) {
         }
     };
 
-    let host = params
-        .get("hostname")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if host.is_empty() {
+    if profile.hostname.is_empty() {
         unsafe { return_string(e, r#"{"success":false,"error":"Hostname cannot be empty"}"#) };
         return;
     }
 
-    warn!("connectRDP: FreeRDP launcher not yet ported to Rust — connection to '{host}' skipped");
-    unsafe {
-        return_string(
-            e,
-            r#"{"success":false,"error":"RDP connections not yet available in Rust build. FreeRDP launcher migration in progress."}"#,
-        )
+    info!("connectRDP: launching session to {}", profile.hostname);
+
+    // Default content rect (will be updated by switchTab)
+    let rect = ContentRect {
+        x: 0,
+        y: 0,
+        width: profile.width,
+        height: profile.height,
     };
+
+    let result = with_sessions(|sm| sm.connect(&profile, rect));
+
+    match result {
+        Some(Ok(session_id)) => {
+            let msg = format!(
+                r#"{{"success":true,"sessionId":"{}"}}"#,
+                session_id.replace('"', "\\\"")
+            );
+            unsafe { return_string(e, &msg) };
+        }
+        Some(Err(err)) => {
+            let msg = format!(
+                r#"{{"success":false,"error":"{}"}}"#,
+                err.replace('"', "\\\"")
+            );
+            unsafe { return_string(e, &msg) };
+        }
+        None => {
+            unsafe {
+                return_string(
+                    e,
+                    r#"{"success":false,"error":"Session manager not initialized"}"#,
+                )
+            };
+        }
+    }
 }
 
 unsafe extern "C" fn on_get_connections(e: *mut webui_sys::webui_event_t) {
@@ -447,5 +497,94 @@ unsafe extern "C" fn on_get_effective_connection_profile(e: *mut webui_sys::webu
     let json = with_config(|cm| cm.get_connection_json(&name))
         .flatten()
         .unwrap_or_else(|| "null".to_string());
+    unsafe { return_string(e, &json) };
+}
+
+// ── Session management (tab embedding) ───────────────────────────────────
+
+unsafe extern "C" fn on_switch_tab(e: *mut webui_sys::webui_event_t) {
+    let json_str = unsafe { get_string_at(e, 0) };
+    let val: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => {
+            unsafe { return_bool(e, false) };
+            return;
+        }
+    };
+
+    let session_id = val
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if session_id.is_empty() {
+        unsafe { return_bool(e, false) };
+        return;
+    }
+
+    let rect = ContentRect {
+        x: val.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        y: val.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        width: val.get("width").and_then(|v| v.as_u64()).unwrap_or(800) as u32,
+        height: val.get("height").and_then(|v| v.as_u64()).unwrap_or(600) as u32,
+    };
+
+    let ok = with_sessions(|sm| sm.switch_tab(session_id, rect)).unwrap_or(false);
+    unsafe { return_bool(e, ok) };
+}
+
+unsafe extern "C" fn on_show_home_tab(e: *mut webui_sys::webui_event_t) {
+    with_sessions(|sm| sm.show_home());
+    unsafe { return_bool(e, true) };
+}
+
+unsafe extern "C" fn on_resize_session(e: *mut webui_sys::webui_event_t) {
+    let json_str = unsafe { get_string_at(e, 0) };
+    let val: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => {
+            unsafe { return_bool(e, false) };
+            return;
+        }
+    };
+
+    let session_id = val
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if session_id.is_empty() {
+        unsafe { return_bool(e, false) };
+        return;
+    }
+
+    let rect = ContentRect {
+        x: val.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        y: val.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        width: val.get("width").and_then(|v| v.as_u64()).unwrap_or(800) as u32,
+        height: val.get("height").and_then(|v| v.as_u64()).unwrap_or(600) as u32,
+    };
+
+    with_sessions(|sm| sm.resize_session(session_id, rect));
+    unsafe { return_bool(e, true) };
+}
+
+unsafe extern "C" fn on_disconnect_session(e: *mut webui_sys::webui_event_t) {
+    let session_id = unsafe { get_string_at(e, 0) };
+    if session_id.is_empty() {
+        unsafe { return_bool(e, false) };
+        return;
+    }
+
+    let ok = with_sessions(|sm| sm.disconnect(&session_id)).unwrap_or(false);
+    unsafe { return_bool(e, ok) };
+}
+
+unsafe extern "C" fn on_get_active_sessions(e: *mut webui_sys::webui_event_t) {
+    let sessions = with_sessions(|sm| {
+        sm.cleanup();
+        sm.get_sessions()
+    })
+    .unwrap_or_default();
+
+    let json = serde_json::to_string(&sessions).unwrap_or_else(|_| "[]".to_string());
     unsafe { return_string(e, &json) };
 }

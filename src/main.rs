@@ -23,8 +23,10 @@ mod gui;
 mod js_handlers;
 mod rdp_file_parser;
 mod rdp_launcher;
+mod session_manager;
 mod types;
 mod utils;
+mod window_embedding;
 
 use gui::main_window::MainWindow;
 use log::{error, info};
