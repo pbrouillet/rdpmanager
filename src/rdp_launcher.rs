@@ -12,6 +12,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 /// Session info exposed to the UI for tab display.
 #[derive(Debug, Clone, Serialize)]
@@ -173,7 +174,7 @@ impl RDPLauncher {
             let host = profile.hostname.clone();
 
             // Background thread waits for the FreeRDP session to finish
-            let thread = thread::spawn(move || {
+            let thread = std::thread::spawn(move || {
                 let ctx = context_addr as *mut freerdp_sys::rdpContext;
                 info!("Session {} ({}) — waiting for FreeRDP thread", sid, host);
 
@@ -354,7 +355,7 @@ impl RDPLauncher {
             // Let the thread finish naturally
             if let Some(handle) = session.thread.take() {
                 drop(session); // release lock before joining
-                let _ = handle.join();
+                let _: Result<(), _> = handle.join();
             }
             true
         } else {
@@ -401,7 +402,7 @@ impl RDPLauncher {
                 if let Ok(mut session) = session_arc.lock() {
                     if let Some(handle) = session.thread.take() {
                         drop(session);
-                        let _ = handle.join();
+                        let _: Result<(), _> = handle.join();
                     }
                 }
             }
