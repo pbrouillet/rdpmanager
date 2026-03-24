@@ -77,8 +77,8 @@ impl SessionManager {
 
     /// Resize an active session's display area.
     pub fn resize_session(&mut self, session_id: &str, rect: ContentRect) {
-        self.rects.insert(session_id.to_string(), rect);
         self.embedding.reposition_session(session_id, &rect);
+        self.rects.insert(session_id.to_string(), rect);
         // TODO Phase 2: send DISPLAY_CONTROL_MONITOR_LAYOUT for dynamic resolution
     }
 

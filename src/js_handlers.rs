@@ -512,10 +512,7 @@ unsafe extern "C" fn on_switch_tab(e: *mut webui_sys::webui_event_t) {
         }
     };
 
-    let session_id = val
-        .get("sessionId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let session_id = val.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
     if session_id.is_empty() {
         unsafe { return_bool(e, false) };
         return;
@@ -547,10 +544,7 @@ unsafe extern "C" fn on_resize_session(e: *mut webui_sys::webui_event_t) {
         }
     };
 
-    let session_id = val
-        .get("sessionId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let session_id = val.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
     if session_id.is_empty() {
         unsafe { return_bool(e, false) };
         return;

@@ -7,12 +7,11 @@
 //! Equivalent to: `src/rdp_launcher.cpp` / `rdp_launcher.hpp`
 
 use crate::types::{ConnectionProfile, RDPConnectionState};
-use log::{error, info, warn};
+use log::{info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 
 /// Session info exposed to the UI for tab display.
 #[derive(Debug, Clone, Serialize)]
@@ -85,9 +84,7 @@ impl RDPSession {
 // On Linux, link to xfreerdp-client3 which provides RdpClientEntry
 #[cfg(target_os = "linux")]
 extern "C" {
-    fn RdpClientEntry(
-        entry: *mut freerdp_sys::RDP_CLIENT_ENTRY_POINTS_V1,
-    ) -> std::ffi::c_int;
+    fn RdpClientEntry(entry: *mut freerdp_sys::RDP_CLIENT_ENTRY_POINTS_V1) -> std::ffi::c_int;
 }
 
 /// Manages FreeRDP sessions.
@@ -105,11 +102,10 @@ impl RDPLauncher {
     /// Launch a new RDP session. Returns session ID on success.
     pub fn launch(&mut self, profile: &ConnectionProfile) -> Result<String, String> {
         let session_id = uuid::Uuid::new_v4().to_string();
-        let hostname = profile.hostname.clone();
 
         info!(
             "Launching RDP session {} to {}:{}",
-            session_id, hostname, profile.port
+            session_id, profile.hostname, profile.port
         );
 
         #[cfg(target_os = "linux")]
@@ -117,15 +113,14 @@ impl RDPLauncher {
             let session = self.launch_freerdp(&session_id, profile)?;
             self.sessions
                 .insert(session_id.clone(), Arc::new(Mutex::new(session)));
+            Ok(session_id)
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (&session_id, &hostname);
-            return Err("RDP sessions require the FreeRDP platform client. Currently only supported on Linux.".into());
+            let _ = &session_id;
+            Err("RDP sessions require the FreeRDP platform client. Currently only supported on Linux.".into())
         }
-
-        Ok(session_id)
     }
 
     /// Launch using FreeRDP library API (Linux/X11 only).
@@ -182,7 +177,10 @@ impl RDPLauncher {
                 let ctx = context_addr as *mut freerdp_sys::rdpContext;
                 info!("Session {} ({}) — waiting for FreeRDP thread", sid, host);
 
-                state_clone.store(state_to_u8(RDPConnectionState::Connected), Ordering::Relaxed);
+                state_clone.store(
+                    state_to_u8(RDPConnectionState::Connected),
+                    Ordering::Relaxed,
+                );
 
                 // Wait for internal FreeRDP thread to complete.
                 // rdpClientContext extends rdpContext; the thread handle is in the
@@ -190,10 +188,7 @@ impl RDPLauncher {
                 let cctx = ctx as *mut freerdp_sys::rdpClientContext;
                 let thread_handle = (*cctx).thread;
                 if !thread_handle.is_null() {
-                    freerdp_sys::WaitForSingleObject(
-                        thread_handle,
-                        freerdp_sys::INFINITE,
-                    );
+                    freerdp_sys::WaitForSingleObject(thread_handle, freerdp_sys::INFINITE);
                 }
 
                 info!("Session {} ({}) — FreeRDP thread exited", sid, host);
@@ -335,17 +330,20 @@ impl RDPLauncher {
     pub fn disconnect(&mut self, session_id: &str) -> bool {
         if let Some(session_arc) = self.sessions.remove(session_id) {
             let mut session = session_arc.lock().unwrap();
-            info!("Disconnecting session {} ({})", session_id, session.hostname);
-            session
-                .state
-                .store(state_to_u8(RDPConnectionState::Disconnecting), Ordering::Relaxed);
+            info!(
+                "Disconnecting session {} ({})",
+                session_id, session.hostname
+            );
+            session.state.store(
+                state_to_u8(RDPConnectionState::Disconnecting),
+                Ordering::Relaxed,
+            );
 
             #[cfg(target_os = "linux")]
             {
                 if session.context_ptr != 0 {
                     unsafe {
-                        let ctx =
-                            session.context_ptr as *mut freerdp_sys::rdpContext;
+                        let ctx = session.context_ptr as *mut freerdp_sys::rdpContext;
                         freerdp_sys::freerdp_client_stop(ctx);
                     }
                     // The background thread will clean up the context
@@ -410,4 +408,3 @@ impl RDPLauncher {
         }
     }
 }
-
