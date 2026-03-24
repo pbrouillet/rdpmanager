@@ -377,6 +377,55 @@ impl RDPLauncher {
             .and_then(|s| s.lock().ok().map(|s| s.info()))
     }
 
+    /// Send a dynamic resolution update to an active session (Linux only).
+    #[cfg(target_os = "linux")]
+    pub fn send_resize(&self, session_id: &str, width: u32, height: u32) -> bool {
+        if let Some(session_arc) = self.sessions.get(session_id) {
+            let session = session_arc.lock().unwrap();
+            if !matches!(session.get_state(), RDPConnectionState::Connected) {
+                warn!("send_resize: session {} not connected", session_id);
+                return false;
+            }
+            let ctx_ptr = session.context_ptr;
+            if ctx_ptr == 0 {
+                warn!("send_resize: session {} has null context", session_id);
+                return false;
+            }
+            let w = width.clamp(200, 8192);
+            let h = height.clamp(200, 8192);
+
+            unsafe {
+                let ctx = ctx_ptr as *mut freerdp_sys::rdpContext;
+                let mut monitor = freerdp_sys::MONITOR_DEF {
+                    left: 0,
+                    top: 0,
+                    right: w as i32 - 1,
+                    bottom: h as i32 - 1,
+                    flags: 1, // DISPLAY_CONTROL_MONITOR_PRIMARY
+                };
+                let ok = freerdp_sys::freerdp_display_send_monitor_layout(
+                    ctx,
+                    1,
+                    &mut monitor as *mut _,
+                );
+                if ok != 0 {
+                    info!("Sent display resize {}x{} to session {}", w, h, session_id);
+                } else {
+                    warn!("Failed to send display resize to session {}", session_id);
+                }
+                ok != 0
+            }
+        } else {
+            warn!("send_resize: session {} not found", session_id);
+            false
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn send_resize(&self, _session_id: &str, _width: u32, _height: u32) -> bool {
+        false
+    }
+
     /// Clean up completed sessions (already disconnected).
     pub fn cleanup_finished(&mut self) {
         let finished: Vec<String> = self

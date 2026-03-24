@@ -78,8 +78,8 @@ impl SessionManager {
     /// Resize an active session's display area.
     pub fn resize_session(&mut self, session_id: &str, rect: ContentRect) {
         self.embedding.reposition_session(session_id, &rect);
+        self.launcher.send_resize(session_id, rect.width, rect.height);
         self.rects.insert(session_id.to_string(), rect);
-        // TODO Phase 2: send DISPLAY_CONTROL_MONITOR_LAYOUT for dynamic resolution
     }
 
     /// Disconnect a session and clean up.

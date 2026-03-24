@@ -54,6 +54,7 @@ import {
   apiShowHomeTab,
   apiSwitchTab,
   apiGetActiveSessions,
+  apiResizeSession,
 } from './api';
 import { AppHeader } from './components/AppHeader';
 import { DatabaseTabs } from './components/DatabaseTabs';
@@ -187,6 +188,13 @@ export function App() {
   // Ref to track imported RDP data for connection params
   const importedRdpDataRef = useRef<Record<string, unknown> | null>(null);
   importedRdpDataRef.current = importedRdpData;
+
+  // Refs for ResizeObserver resize-to-fit
+  const contentPaneRef = useRef<HTMLDivElement>(null);
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   // Toast helper
   const showToast = useCallback(
@@ -983,6 +991,35 @@ export function App() {
     };
   }, []);
 
+  // Debounced resize observer for dynamic RDP session resolution
+  useEffect(() => {
+    const el = contentPaneRef.current;
+    if (!el) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const { width, height } = entry.contentRect;
+      if (width < 200 || height < 200) return;
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (activeTabRef.current !== 'home') {
+          apiResizeSession(activeTabRef.current, 0, 0, Math.round(width), Math.round(height));
+        }
+      }, 300);
+    });
+
+    observer.observe(el);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      observer.disconnect();
+    };
+  }, []);
+
   const visibleConnections = selectedFolder
     ? connections.filter((conn) => (conn.folder || '') === selectedFolder)
     : connections;
@@ -1098,7 +1135,7 @@ export function App() {
               aria-orientation="vertical"
               aria-label="Resize folder tree"
             />
-            <div className={styles.contentPane}>
+            <div ref={contentPaneRef} className={styles.contentPane}>
               {viewMode === 'table' ? (
                 <ConnectionTable
                   connections={visibleConnections}

@@ -274,6 +274,8 @@ fn main() {
         .allowlist_type("freerdp.*")
         .allowlist_type("RDP_CLIENT_ENTRY_POINTS.*")
         .allowlist_type("FreeRDP_Settings_Keys.*")
+        .allowlist_type("MONITOR_DEF")
+        .allowlist_var("DISPLAY_CONTROL_.*")
         .allowlist_var("FreeRDP_.*")
         .allowlist_var("FREERDP_.*")
         .allowlist_var("WINPR_.*")
