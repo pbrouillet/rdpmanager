@@ -179,28 +179,45 @@ fn main() {
         for dir in &search_dirs {
             let lib_file = dir.join(format!("{}.{}", lib_name, lib_ext));
             if lib_file.exists() {
-                let output = Command::new("nm")
-                    .arg("--defined-only")
-                    .arg(&lib_file)
-                    .output();
+                // Check global/external symbols with nm -g
+                let output = Command::new("nm").arg("-g").arg(&lib_file).output();
                 match output {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
-                        let has_symbol = stdout.contains(expected_symbol);
-                        let symbol_count = stdout.lines().count();
+                        // Find the exact line with the symbol
+                        let matching_lines: Vec<&str> = stdout
+                            .lines()
+                            .filter(|l| l.contains(expected_symbol))
+                            .collect();
                         println!(
-                            "cargo:warning=nm {}: {} symbols, contains '{}': {}",
+                            "cargo:warning=nm -g {}: matching lines for '{}': {:?}",
                             lib_file.display(),
-                            symbol_count,
                             expected_symbol,
-                            has_symbol
+                            matching_lines.iter().take(3).collect::<Vec<_>>()
                         );
                     }
                     Err(e) => {
                         println!("cargo:warning=nm failed for {}: {}", lib_file.display(), e);
                     }
                 }
-                break; // only check first occurrence
+                // Also check with readelf for symbol binding
+                let output2 = Command::new("readelf")
+                    .args(["-sW", &lib_file.to_string_lossy()])
+                    .output();
+                if let Ok(out) = output2 {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let matching: Vec<&str> = stdout
+                        .lines()
+                        .filter(|l| l.contains(expected_symbol))
+                        .collect();
+                    println!(
+                        "cargo:warning=readelf -sW {}: '{}' entries: {:?}",
+                        lib_name,
+                        expected_symbol,
+                        matching.iter().take(3).collect::<Vec<_>>()
+                    );
+                }
+                break;
             }
         }
     }
