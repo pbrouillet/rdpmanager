@@ -197,6 +197,10 @@ fn main() {
         }
         // WinPR JSON backend (cJSON on Linux)
         println!("cargo:rustc-link-lib=cjson");
+        // ALSA (sound channel)
+        println!("cargo:rustc-link-lib=asound");
+        // CUPS (printer redirection)
+        println!("cargo:rustc-link-lib=cups");
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=zstd");
