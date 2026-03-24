@@ -201,6 +201,8 @@ fn main() {
         println!("cargo:rustc-link-lib=asound");
         // CUPS (printer redirection)
         println!("cargo:rustc-link-lib=cups");
+        // libusb (USB device redirection)
+        println!("cargo:rustc-link-lib=usb-1.0");
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=zstd");
