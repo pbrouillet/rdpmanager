@@ -110,8 +110,13 @@ pub type FeedProgressCallback = Box<dyn Fn(&str, usize, usize) + Send + Sync>;
 // Popup synchronization state
 // ============================================================================
 
+/// Wrapper to allow raw pointers in `OnceLock` (which requires Send+Sync).
+struct SendSyncPtr<T>(*const T);
+unsafe impl<T> Send for SendSyncPtr<T> {}
+unsafe impl<T> Sync for SendSyncPtr<T> {}
+
 /// Global instance pointer for WebUI static callbacks.
-static FEED_INSTANCE: OnceLock<*const FeedDiscoveryManager> = OnceLock::new();
+static FEED_INSTANCE: OnceLock<SendSyncPtr<FeedDiscoveryManager>> = OnceLock::new();
 
 // SAFETY: FeedDiscoveryManager uses interior mutability (Mutex/Condvar) and is
 // only accessed from the FEED_INSTANCE global via immutable reference.
@@ -182,7 +187,7 @@ impl FeedDiscoveryManager {
     /// Register this manager as the global instance for WebUI callbacks.
     pub fn register_global(self: &Arc<Self>) {
         let ptr: *const FeedDiscoveryManager = Arc::as_ptr(self);
-        let _ = FEED_INSTANCE.set(ptr);
+        let _ = FEED_INSTANCE.set(SendSyncPtr(ptr));
     }
 
     /// Returns `true` if a discovery operation is currently in progress.
@@ -524,14 +529,12 @@ impl FeedDiscoveryManager {
 
         info!("FeedDiscovery: Token request to {MS_TOKEN_ENDPOINT}");
 
-        let mut response_body = String::new();
-        ureq::post(MS_TOKEN_ENDPOINT)
+        let response_body = ureq::post(MS_TOKEN_ENDPOINT)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Origin", "https://client.wvd.microsoft.com")
             .send(post_body.as_bytes())
             .map_err(|e| format!("Token exchange HTTP error: {e}"))?
-            .into_body()
-            .read_to_string(&mut response_body)
+            .into_string()
             .map_err(|e| format!("Failed to read token response: {e}"))?;
 
         // Parse JSON response
@@ -868,8 +871,7 @@ impl FeedDiscoveryManager {
 
     /// Perform an HTTP GET with bearer token authorization.
     fn http_get(url: &str, bearer_token: &str) -> Result<String, String> {
-        let mut body = String::new();
-        ureq::get(url)
+        let body = ureq::get(url)
             .header("Authorization", &format!("Bearer {bearer_token}"))
             .header("Accept", "application/x-msts-radc-discovery+xml,text/xml")
             .header("Origin", "https://client.wvd.microsoft.com")
@@ -880,8 +882,7 @@ impl FeedDiscoveryManager {
             )
             .call()
             .map_err(|e| format!("HTTP GET failed for {url}: {e}"))?
-            .into_body()
-            .read_to_string(&mut body)
+            .into_string()
             .map_err(|e| format!("Failed to read response from {url}: {e}"))?;
 
         Ok(body)
@@ -893,7 +894,7 @@ impl FeedDiscoveryManager {
 // ============================================================================
 
 fn get_feed_instance() -> Option<&'static FeedDiscoveryManager> {
-    FEED_INSTANCE.get().map(|ptr| unsafe { &**ptr })
+    FEED_INSTANCE.get().map(|p| unsafe { &*p.0 })
 }
 
 /// Static event handler for the OAuth popup window.

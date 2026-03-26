@@ -77,14 +77,18 @@ fn main() {
         .define("CHANNEL_DRDYNVC", "ON")
         .define("CHANNEL_DRDYNVC_CLIENT", "ON");
 
+    // Only enable FFmpeg when FREERDP_FFMPEG=1 is set (it requires platform-specific dev packages)
+    let enable_ffmpeg = std::env::var("FREERDP_FFMPEG").unwrap_or_default() == "1";
+    let ffmpeg_flag = if enable_ffmpeg { "ON" } else { "OFF" };
+
     // Platform-specific cmake defines
     if is_linux {
         config
             .define("WITH_X11", "ON")
             .define("WITH_AAD", "ON")
-            .define("WITH_FFMPEG", "ON")
-            .define("WITH_VIDEO_FFMPEG", "ON")
-            .define("WITH_DSP_FFMPEG", "ON")
+            .define("WITH_FFMPEG", ffmpeg_flag)
+            .define("WITH_VIDEO_FFMPEG", ffmpeg_flag)
+            .define("WITH_DSP_FFMPEG", ffmpeg_flag)
             .define("WITH_BULK_COMPRESSION", "ON")
             // V4L camera redirection (Linux only)
             .define("CHANNEL_RDPECAM", "ON")
@@ -94,9 +98,9 @@ fn main() {
             .define("WITH_X11", "OFF")
             .define("WITH_CLIENT_WINDOWS", "ON")
             .define("WITH_AAD", "ON")
-            .define("WITH_FFMPEG", "ON")
-            .define("WITH_VIDEO_FFMPEG", "ON")
-            .define("WITH_DSP_FFMPEG", "ON")
+            .define("WITH_FFMPEG", ffmpeg_flag)
+            .define("WITH_VIDEO_FFMPEG", ffmpeg_flag)
+            .define("WITH_DSP_FFMPEG", ffmpeg_flag)
             .define("WITH_BULK_COMPRESSION", "ON")
             .define("WITH_NATIVE_SSPI", "ON")
             .define("CHANNEL_RDPECAM", "OFF")
@@ -106,12 +110,14 @@ fn main() {
             .define("WITH_X11", "OFF")
             .define("WITH_CLIENT_MAC", "ON")
             .define("WITH_AAD", "ON")
-            .define("WITH_FFMPEG", "ON")
-            .define("WITH_VIDEO_FFMPEG", "ON")
-            .define("WITH_DSP_FFMPEG", "ON")
+            .define("WITH_FFMPEG", ffmpeg_flag)
+            .define("WITH_VIDEO_FFMPEG", ffmpeg_flag)
+            .define("WITH_DSP_FFMPEG", ffmpeg_flag)
             .define("WITH_BULK_COMPRESSION", "ON")
             .define("CHANNEL_RDPECAM", "OFF")
-            .define("CHANNEL_RDPECAM_CLIENT", "OFF");
+            .define("CHANNEL_RDPECAM_CLIENT", "OFF")
+            // Map C++ nullptr → NULL for ObjC files compiled as plain C (Keyboard.m)
+            .define("CMAKE_OBJC_FLAGS", "-Dnullptr=NULL");
     }
 
     // OpenSSL location (CI sets OPENSSL_ROOT_DIR; fallback to brew on macOS)
@@ -124,11 +130,13 @@ fn main() {
     }
 
     // FFmpeg location (CI sets FFMPEG_DIR; fallback to brew/vcpkg)
-    if let Ok(ffmpeg_dir) = env::var("FFMPEG_DIR") {
-        config.define("FFMPEG_DIR", &ffmpeg_dir);
-    } else if is_macos {
-        if let Some(dir) = brew_prefix("ffmpeg") {
-            config.define("CMAKE_PREFIX_PATH", &dir);
+    if enable_ffmpeg {
+        if let Ok(ffmpeg_dir) = env::var("FFMPEG_DIR") {
+            config.define("FFMPEG_DIR", &ffmpeg_dir);
+        } else if is_macos {
+            if let Some(dir) = brew_prefix("ffmpeg") {
+                config.define("CMAKE_PREFIX_PATH", &dir);
+            }
         }
     }
 
@@ -212,8 +220,10 @@ fn main() {
         ] {
             println!("cargo:rustc-link-lib={lib}");
         }
-        for lib in ["avcodec", "avutil", "swresample", "swscale"] {
-            println!("cargo:rustc-link-lib={lib}");
+        if enable_ffmpeg {
+            for lib in ["avcodec", "avutil", "swresample", "swscale"] {
+                println!("cargo:rustc-link-lib={lib}");
+            }
         }
         // WinPR JSON backend (cJSON on Linux)
         println!("cargo:rustc-link-lib=cjson");
@@ -239,20 +249,21 @@ fn main() {
                 println!("cargo:rustc-link-search=native={}", vc_dir.display());
             }
         }
-        // FFmpeg from vcpkg or standalone install
-        if let Ok(ffmpeg_dir) = env::var("FFMPEG_DIR") {
-            let lib_dir = PathBuf::from(&ffmpeg_dir).join("lib");
-            if lib_dir.exists() {
-                println!("cargo:rustc-link-search=native={}", lib_dir.display());
-            }
-        }
         println!("cargo:rustc-link-lib=libssl");
         println!("cargo:rustc-link-lib=libcrypto");
         // zlib (from vcpkg: zlib.lib, or system: zlib.lib)
         println!("cargo:rustc-link-lib=zlib");
         // FFmpeg libraries (from vcpkg)
-        for lib in ["avcodec", "avutil", "swresample", "swscale"] {
-            println!("cargo:rustc-link-lib={lib}");
+        if enable_ffmpeg {
+            if let Ok(ffmpeg_dir) = env::var("FFMPEG_DIR") {
+                let lib_dir = PathBuf::from(&ffmpeg_dir).join("lib");
+                if lib_dir.exists() {
+                    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+                }
+            }
+            for lib in ["avcodec", "avutil", "swresample", "swscale"] {
+                println!("cargo:rustc-link-lib={lib}");
+            }
         }
         // WinPR JSON backend (cJSON from vcpkg, needed for AAD auth)
         println!("cargo:rustc-link-lib=cjson");
@@ -274,12 +285,14 @@ fn main() {
             println!("cargo:rustc-link-search=native={}/lib", ssl_dir);
         }
         // FFmpeg from Homebrew
-        let ffmpeg_dir = env::var("FFMPEG_DIR")
-            .ok()
-            .or_else(|| brew_prefix("ffmpeg"))
-            .unwrap_or_default();
-        if !ffmpeg_dir.is_empty() {
-            println!("cargo:rustc-link-search=native={}/lib", ffmpeg_dir);
+        if enable_ffmpeg {
+            let ffmpeg_dir = env::var("FFMPEG_DIR")
+                .ok()
+                .or_else(|| brew_prefix("ffmpeg"))
+                .unwrap_or_default();
+            if !ffmpeg_dir.is_empty() {
+                println!("cargo:rustc-link-search=native={}/lib", ffmpeg_dir);
+            }
         }
         // cJSON from Homebrew (WinPR JSON backend, needed for AAD auth)
         let cjson_dir = brew_prefix("cjson").unwrap_or_default();
@@ -292,8 +305,10 @@ fn main() {
         println!("cargo:rustc-link-lib=pthread");
         println!("cargo:rustc-link-lib=iconv");
         // FFmpeg libraries
-        for lib in ["avcodec", "avutil", "swresample", "swscale"] {
-            println!("cargo:rustc-link-lib={lib}");
+        if enable_ffmpeg {
+            for lib in ["avcodec", "avutil", "swresample", "swscale"] {
+                println!("cargo:rustc-link-lib={lib}");
+            }
         }
         // cJSON (WinPR JSON backend for AAD)
         println!("cargo:rustc-link-lib=cjson");

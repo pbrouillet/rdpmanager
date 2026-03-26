@@ -25,8 +25,13 @@ static MANUAL_CODE_FLOW: AtomicBool = AtomicBool::new(false);
 /// Global flag for AAD debug logging.
 static AAD_DEBUG: AtomicBool = AtomicBool::new(false);
 
+/// Wrapper to allow raw pointers in `OnceLock` (which requires Send+Sync).
+struct SendSyncPtr<T>(*const T);
+unsafe impl<T> Send for SendSyncPtr<T> {}
+unsafe impl<T> Sync for SendSyncPtr<T> {}
+
 /// Global instance pointer for WebUI callbacks (static C functions need access).
-static INSTANCE: OnceLock<*const AADAuthHandler> = OnceLock::new();
+static INSTANCE: OnceLock<SendSyncPtr<AADAuthHandler>> = OnceLock::new();
 
 // SAFETY: AADAuthHandler uses interior mutability (Mutex/Condvar) and is only
 // accessed from the INSTANCE global via immutable reference.
@@ -91,7 +96,7 @@ impl AADAuthHandler {
     pub fn register_global(self: &std::sync::Arc<Self>) {
         let ptr: *const AADAuthHandler = std::sync::Arc::as_ptr(self);
         INSTANCE
-            .set(ptr)
+            .set(SendSyncPtr(ptr))
             .expect("AADAuthHandler already registered");
     }
 
@@ -622,7 +627,7 @@ impl Drop for AADAuthHandler {
 // ── Static WebUI callbacks ───────────────────────────────────────────────
 
 fn get_instance() -> Option<&'static AADAuthHandler> {
-    INSTANCE.get().map(|ptr| unsafe { &**ptr })
+    INSTANCE.get().map(|p| unsafe { &*p.0 })
 }
 
 unsafe extern "C" fn s_handle_window_events(e: *mut webui_sys::webui_event_t) {
