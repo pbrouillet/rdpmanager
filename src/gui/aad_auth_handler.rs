@@ -138,7 +138,10 @@ impl AADAuthHandler {
         };
         state.pending = false;
         self.cv.notify_all();
-        debug!("AAD: Auth response: {}", if success { "completed" } else { "cancelled" });
+        debug!(
+            "AAD: Auth response: {}",
+            if success { "completed" } else { "cancelled" }
+        );
     }
 
     /// Main authentication entry point — called from FreeRDP background thread.
@@ -164,7 +167,10 @@ impl AADAuthHandler {
 
         // Extract original redirect URI for later reconstruction.
         state.original_redirect_uri = extract_redirect_uri(&request.auth_url);
-        debug!("AAD: Original redirect URI: {}", state.original_redirect_uri);
+        debug!(
+            "AAD: Original redirect URI: {}",
+            state.original_redirect_uri
+        );
 
         if Self::is_debug_enabled() {
             log_url_details(&request.auth_url, "Auth request URL");
@@ -240,8 +246,7 @@ impl AADAuthHandler {
         }
 
         // Rewrite redirect URI if needed (e.g. ms-appx-web:// → localhost).
-        let modified_url =
-            rewrite_auth_url_with_localhost_redirect(&request.auth_url, port as u16);
+        let modified_url = rewrite_auth_url_with_localhost_redirect(&request.auth_url, port as u16);
         let actual = extract_redirect_uri(&modified_url);
         state.actual_redirect_uri = if actual.is_empty() {
             state.original_redirect_uri.clone()
@@ -325,7 +330,10 @@ impl AADAuthHandler {
             }
         }
 
-        debug!("AAD: handle_authenticate returning, success={}", auth_result.success);
+        debug!(
+            "AAD: handle_authenticate returning, success={}",
+            auth_result.success
+        );
         auth_result
     }
 
@@ -416,7 +424,11 @@ impl AADAuthHandler {
         if main_window != 0 {
             let js = format!(
                 "onAADAuthComplete({});",
-                if state.result.success { "true" } else { "false" }
+                if state.result.success {
+                    "true"
+                } else {
+                    "false"
+                }
             );
             run_js(main_window, &js);
         }
@@ -478,7 +490,11 @@ impl AADAuthHandler {
         if main_window != 0 {
             let js = format!(
                 "onAADAuthComplete({});",
-                if state.result.success { "true" } else { "false" }
+                if state.result.success {
+                    "true"
+                } else {
+                    "false"
+                }
             );
             run_js(main_window, &js);
         }
@@ -496,10 +512,9 @@ impl AADAuthHandler {
 
         // Check for nativeclient redirect callback (not just a URL containing "nativeclient"
         // inside the redirect_uri query param of an authorize request).
-        let is_nativeclient_callback =
-            (url.starts_with("https://login.microsoftonline.com/")
-                || url.starts_with("http://login.microsoftonline.com/"))
-                && url.contains("/oauth2/nativeclient");
+        let is_nativeclient_callback = (url.starts_with("https://login.microsoftonline.com/")
+            || url.starts_with("http://login.microsoftonline.com/"))
+            && url.contains("/oauth2/nativeclient");
 
         let has_auth_code = url.contains("code=");
         let has_auth_error = url.contains("error=");
@@ -517,8 +532,7 @@ impl AADAuthHandler {
             return;
         }
 
-        let is_localhost_callback =
-            url.contains("localhost:") && url.contains("/oauth/callback");
+        let is_localhost_callback = url.contains("localhost:") && url.contains("/oauth/callback");
         let is_msappx_redirect =
             url.starts_with("ms-appx-web://") || url.contains("ms-appx-web%3A");
 
@@ -537,8 +551,7 @@ impl AADAuthHandler {
                 info!("AAD: AUTHORIZATION CODE RECEIVED");
 
                 // Reconstruct the original redirect URL if we rewrote it.
-                let result_url = if is_localhost_callback
-                    && !state.original_redirect_uri.is_empty()
+                let result_url = if is_localhost_callback && !state.original_redirect_uri.is_empty()
                 {
                     let reconstructed =
                         reconstruct_original_redirect(url, &state.original_redirect_uri);
@@ -613,7 +626,9 @@ fn get_instance() -> Option<&'static AADAuthHandler> {
 }
 
 unsafe extern "C" fn s_handle_window_events(e: *mut webui_sys::webui_event_t) {
-    let Some(handler) = get_instance() else { return };
+    let Some(handler) = get_instance() else {
+        return;
+    };
     let event_type = unsafe { (*e).event_type };
     // webui_event enum: DISCONNECTED=0, CONNECTED=1, MOUSE_CLICK=2, NAVIGATION=3
     const NAVIGATION: usize = 3;
@@ -642,7 +657,9 @@ unsafe extern "C" fn s_handle_window_events(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn s_handle_oauth_callback(e: *mut webui_sys::webui_event_t) {
-    let Some(handler) = get_instance() else { return };
+    let Some(handler) = get_instance() else {
+        return;
+    };
     let url_ptr = unsafe { webui_sys::webui_get_string_at(e, 0) };
     if !url_ptr.is_null() {
         let url = unsafe { std::ffi::CStr::from_ptr(url_ptr) }
@@ -656,8 +673,7 @@ unsafe extern "C" fn s_handle_oauth_callback(e: *mut webui_sys::webui_event_t) {
 unsafe extern "C" fn s_handle_log_to_backend(e: *mut webui_sys::webui_event_t) {
     let msg_ptr = unsafe { webui_sys::webui_get_string_at(e, 0) };
     if !msg_ptr.is_null() {
-        let msg = unsafe { std::ffi::CStr::from_ptr(msg_ptr) }
-            .to_string_lossy();
+        let msg = unsafe { std::ffi::CStr::from_ptr(msg_ptr) }.to_string_lossy();
         debug!("AAD: {msg}");
     }
 }
@@ -833,4 +849,3 @@ h1 { color: #333; }
 <p>Setting up authentication...</p>
 </body>
 </html>"#;
-

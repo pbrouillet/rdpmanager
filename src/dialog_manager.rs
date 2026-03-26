@@ -85,11 +85,11 @@ impl DialogManager {
             }
         }
 
-        let result = self
-            .cv
-            .wait_timeout_while(state, Duration::from_secs(DIALOG_TIMEOUT_SECS), |s| {
-                s.cert_pending
-            });
+        let result =
+            self.cv
+                .wait_timeout_while(state, Duration::from_secs(DIALOG_TIMEOUT_SECS), |s| {
+                    s.cert_pending
+                });
 
         match result {
             Ok((ref state, ref timeout)) => {
@@ -142,11 +142,11 @@ impl DialogManager {
             }
         }
 
-        let result = self
-            .cv
-            .wait_timeout_while(state, Duration::from_secs(DIALOG_TIMEOUT_SECS), |s| {
-                s.auth_pending
-            });
+        let result =
+            self.cv
+                .wait_timeout_while(state, Duration::from_secs(DIALOG_TIMEOUT_SECS), |s| {
+                    s.auth_pending
+                });
 
         match result {
             Ok((ref state, ref timeout)) => {

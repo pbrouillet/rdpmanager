@@ -172,10 +172,7 @@ impl EmbeddingHost {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = rect;
-            info!(
-                "reposition_session {} (no-op on this platform)",
-                session_id
-            );
+            info!("reposition_session {} (no-op on this platform)", session_id);
         }
     }
 

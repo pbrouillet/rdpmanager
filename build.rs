@@ -6,6 +6,7 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
     embed_windows_icon();
+    link_windows_libs();
     generate_embedded_ui();
 }
 
@@ -22,6 +23,14 @@ fn embed_windows_icon() {
                 println!("cargo:warning=Failed to compile Windows resources: {e}");
             }
         }
+    }
+}
+
+/// Link comdlg32 for native file picker dialogs (GetOpenFileNameA / GetSaveFileNameA).
+fn link_windows_libs() {
+    #[cfg(windows)]
+    {
+        println!("cargo:rustc-link-lib=dylib=comdlg32");
     }
 }
 

@@ -46,9 +46,8 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 
-# Native file dialogs (Windows + macOS only; Linux uses zenity/kdialog)
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-rfd = { version = "0.15", default-features = false }
+# Native file dialogs: raw Win32 FFI (Windows), osascript (macOS), zenity/kdialog (Linux)
+# — no external crate needed.
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
