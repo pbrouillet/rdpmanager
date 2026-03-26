@@ -26,6 +26,7 @@ static MANUAL_CODE_FLOW: AtomicBool = AtomicBool::new(false);
 static AAD_DEBUG: AtomicBool = AtomicBool::new(false);
 
 /// Wrapper to allow raw pointers in `OnceLock` (which requires Send+Sync).
+#[derive(Debug)]
 struct SendSyncPtr<T>(*const T);
 unsafe impl<T> Send for SendSyncPtr<T> {}
 unsafe impl<T> Sync for SendSyncPtr<T> {}

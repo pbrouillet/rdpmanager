@@ -111,6 +111,7 @@ pub type FeedProgressCallback = Box<dyn Fn(&str, usize, usize) + Send + Sync>;
 // ============================================================================
 
 /// Wrapper to allow raw pointers in `OnceLock` (which requires Send+Sync).
+#[derive(Debug)]
 struct SendSyncPtr<T>(*const T);
 unsafe impl<T> Send for SendSyncPtr<T> {}
 unsafe impl<T> Sync for SendSyncPtr<T> {}
@@ -534,7 +535,8 @@ impl FeedDiscoveryManager {
             .header("Origin", "https://client.wvd.microsoft.com")
             .send(post_body.as_bytes())
             .map_err(|e| format!("Token exchange HTTP error: {e}"))?
-            .into_string()
+            .into_body()
+            .read_to_string()
             .map_err(|e| format!("Failed to read token response: {e}"))?;
 
         // Parse JSON response
@@ -882,7 +884,8 @@ impl FeedDiscoveryManager {
             )
             .call()
             .map_err(|e| format!("HTTP GET failed for {url}: {e}"))?
-            .into_string()
+            .into_body()
+            .read_to_string()
             .map_err(|e| format!("Failed to read response from {url}: {e}"))?;
 
         Ok(body)
