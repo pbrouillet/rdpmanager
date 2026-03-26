@@ -353,7 +353,7 @@ impl AADAuthHandler {
     fn handle_manual_code_flow(
         &self,
         request: &AADAuthRequest,
-        mut state: std::sync::MutexGuard<'_, AuthState>,
+        state: std::sync::MutexGuard<'_, AuthState>,
     ) -> AADAuthResponse {
         let type_str = match request.auth_type {
             AADAuthType::RdsAad => "RDS_AAD",

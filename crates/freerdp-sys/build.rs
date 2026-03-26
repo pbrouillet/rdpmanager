@@ -123,9 +123,11 @@ fn main() {
             .define("WITH_DSP_FFMPEG", ffmpeg_flag)
             .define("WITH_BULK_COMPRESSION", "ON")
             .define("CHANNEL_RDPECAM", "OFF")
-            .define("CHANNEL_RDPECAM_CLIENT", "OFF")
-            // Map C++ nullptr → NULL for ObjC files compiled as plain C (Keyboard.m)
-            .define("CMAKE_OBJC_FLAGS", "-Dnullptr=NULL");
+            .define("CHANNEL_RDPECAM_CLIENT", "OFF");
+        // Map C++ nullptr → NULL for ObjC files compiled as plain C (Keyboard.m).
+        // CMAKE_OBJC_FLAGS only works when CMake's OBJC language is enabled; FreeRDP
+        // compiles .m files via the C compiler, so we must use cflag instead.
+        config.cflag("-Dnullptr=NULL");
     }
 
     // OpenSSL location (CI sets OPENSSL_ROOT_DIR; fallback to brew on macOS)

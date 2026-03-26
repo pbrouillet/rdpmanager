@@ -6,7 +6,7 @@
 //! Linux: FreeRDP_ParentWindowId + XReparentWindow (future)
 //! macOS: NSView embedding or separate window fallback (future)
 
-use log::{info, warn};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

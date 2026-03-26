@@ -10,7 +10,6 @@
 //! Equivalent to: `src/feed_discovery.cpp` / `feed_discovery.hpp`
 
 use std::ffi::CString;
-use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
