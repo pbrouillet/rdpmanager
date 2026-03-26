@@ -447,11 +447,7 @@ unsafe extern "C" fn get_access_token_cb(
             req_cnf_cstr.as_ptr(),
         )
     } else {
-        freerdp_sys::freerdp_client_get_aad_url(
-            cctx,
-            token_request_type,
-            code_cstr.as_ptr(),
-        )
+        freerdp_sys::freerdp_client_get_aad_url(cctx, token_request_type, code_cstr.as_ptr())
     };
 
     if token_request_ptr.is_null() {
@@ -472,11 +468,8 @@ unsafe extern "C" fn get_access_token_cb(
 
     // Exchange authorization code for access token via FreeRDP HTTP client
     let request_cstr = std::ffi::CString::new(token_request_final.as_str()).unwrap_or_default();
-    let result = freerdp_sys::client_common_get_access_token(
-        instance,
-        request_cstr.as_ptr(),
-        token,
-    );
+    let result =
+        freerdp_sys::client_common_get_access_token(instance, request_cstr.as_ptr(), token);
 
     if result != 0 && !(*token).is_null() {
         info!("get_access_token_cb: successfully obtained access token");
@@ -494,7 +487,10 @@ unsafe extern "C" fn get_access_token_cb(
         return 1;
     }
 
-    error!("get_access_token_cb: token exchange failed for {}", cache_hostname);
+    error!(
+        "get_access_token_cb: token exchange failed for {}",
+        cache_hostname
+    );
     0
 }
 
@@ -674,7 +670,8 @@ impl RDPLauncher {
                                 usize,
                                 *const std::os::raw::c_char,
                                 *const std::os::raw::c_char,
-                            ) -> freerdp_sys::BOOL,
+                            )
+                                -> freerdp_sys::BOOL,
                     );
 
                     info!("Installed FreeRDP callbacks for session {}", session_id);

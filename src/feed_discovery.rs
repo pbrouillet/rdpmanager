@@ -28,27 +28,22 @@ use crate::utils;
 // ============================================================================
 
 /// WVD webclient URL (used as redirect target during OAuth flow).
-pub const WVD_WEBCLIENT_URL: &str =
-    "https://client.wvd.microsoft.com/arm/webclient/index.html";
+pub const WVD_WEBCLIENT_URL: &str = "https://client.wvd.microsoft.com/arm/webclient/index.html";
 
 /// WVD feed discovery endpoint -- returns tenant/workspace list as XML.
-pub const WVD_FEED_DISCOVERY_URL: &str =
-    "https://client.wvd.microsoft.com/api/arm/feeddiscovery";
+pub const WVD_FEED_DISCOVERY_URL: &str = "https://client.wvd.microsoft.com/api/arm/feeddiscovery";
 
 /// Azure app registration client ID for the WVD webclient.
 pub const WVD_CLIENT_ID: &str = "a85cf173-4192-42f8-81fa-777a763e6e2c";
 
 /// OAuth redirect URI -- must match the app registration.
-pub const WVD_REDIRECT_URI: &str =
-    "https://client.wvd.microsoft.com/arm/webclient/index.html";
+pub const WVD_REDIRECT_URI: &str = "https://client.wvd.microsoft.com/arm/webclient/index.html";
 
 /// OAuth scopes requested during authentication.
-pub const WVD_SCOPE: &str =
-    "https://www.wvd.microsoft.com/.default openid profile offline_access";
+pub const WVD_SCOPE: &str = "https://www.wvd.microsoft.com/.default openid profile offline_access";
 
 /// Microsoft identity platform token endpoint (common tenant).
-pub const MS_TOKEN_ENDPOINT: &str =
-    "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+pub const MS_TOKEN_ENDPOINT: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
 /// Microsoft identity platform authorize endpoint (common tenant).
 pub const MS_AUTHORIZE_ENDPOINT: &str =
@@ -224,11 +219,13 @@ impl FeedDiscoveryManager {
             let state = self.popup_state.lock().unwrap();
             state.id_token.clone()
         };
-        let id_src = if id_token.is_empty() { &token } else { &id_token };
-        let user_display_name = utils::jwt_extract_field(id_src, "name")
-            .unwrap_or_default();
-        let user_upn = utils::jwt_extract_field(id_src, "upn")
-            .unwrap_or_default();
+        let id_src = if id_token.is_empty() {
+            &token
+        } else {
+            &id_token
+        };
+        let user_display_name = utils::jwt_extract_field(id_src, "name").unwrap_or_default();
+        let user_upn = utils::jwt_extract_field(id_src, "upn").unwrap_or_default();
         let user_email = utils::jwt_extract_field(id_src, "preferred_username")
             .or_else(|| {
                 if user_upn.is_empty() {
@@ -350,10 +347,7 @@ impl FeedDiscoveryManager {
                         );
                     }
                     Err(e) => {
-                        error!(
-                            "FeedDiscovery: Failed to import {}: {e}",
-                            resource.title
-                        );
+                        error!("FeedDiscovery: Failed to import {}: {e}", resource.title);
                     }
                 }
             }
@@ -480,11 +474,9 @@ impl FeedDiscoveryManager {
         let state = self.popup_state.lock().unwrap();
         let (state, _timeout) = self
             .popup_cv
-            .wait_timeout_while(
-                state,
-                Duration::from_secs(AUTH_TIMEOUT_SECS),
-                |s| !s.token_found && !s.popup_closed,
-            )
+            .wait_timeout_while(state, Duration::from_secs(AUTH_TIMEOUT_SECS), |s| {
+                !s.token_found && !s.popup_closed
+            })
             .unwrap();
 
         let auth_code = state.auth_code.clone();
@@ -520,11 +512,7 @@ impl FeedDiscoveryManager {
     }
 
     /// Exchange an authorization code for tokens via the PKCE token endpoint.
-    fn exchange_code_for_token(
-        &self,
-        code: &str,
-        code_verifier: &str,
-    ) -> Result<String, String> {
+    fn exchange_code_for_token(&self, code: &str, code_verifier: &str) -> Result<String, String> {
         let post_body = format!(
             "client_id={}&code={}&redirect_uri={}&grant_type=authorization_code&code_verifier={}&scope={}",
             WVD_CLIENT_ID,
@@ -619,10 +607,7 @@ impl FeedDiscoveryManager {
             let code = utils::url_decode(&code);
 
             if !code.is_empty() {
-                info!(
-                    "FeedDiscovery: Auth code received (length={})",
-                    code.len()
-                );
+                info!("FeedDiscovery: Auth code received (length={})", code.len());
                 let mut state = self.popup_state.lock().unwrap();
                 state.auth_code = code;
                 state.token_found = true;
@@ -675,18 +660,18 @@ impl FeedDiscoveryManager {
                         if !tenant_id.is_empty() && !feed_url.is_empty() {
                             let tenant = TenantFeed {
                                 tenant_id,
-                                tenant_display_name: utils::html_decode(
-                                    &get_attr(e, b"TenantDisplayName"),
-                                ),
-                                workspace_name: utils::html_decode(
-                                    &get_attr(e, b"WorkspaceName"),
-                                ),
+                                tenant_display_name: utils::html_decode(&get_attr(
+                                    e,
+                                    b"TenantDisplayName",
+                                )),
+                                workspace_name: utils::html_decode(&get_attr(e, b"WorkspaceName")),
                                 feed_url,
                                 geo: get_attr(e, b"Geo"),
                                 arm_path: get_attr(e, b"ArmPath"),
-                                hub_discovery_url: utils::html_decode(
-                                    &get_attr(e, b"HubDiscoveryURL"),
-                                ),
+                                hub_discovery_url: utils::html_decode(&get_attr(
+                                    e,
+                                    b"HubDiscoveryURL",
+                                )),
                             };
                             info!(
                                 "FeedDiscovery: Found tenant: {} (ID: {})",
@@ -755,15 +740,13 @@ impl FeedDiscoveryManager {
                     if in_resource {
                         if name.contains("ResourceFile") {
                             if let Some(ref mut res) = current_resource {
-                                res.rdp_url =
-                                    utils::html_decode(&get_attr(e, b"URL"));
+                                res.rdp_url = utils::html_decode(&get_attr(e, b"URL"));
                             }
                         } else if name.contains("Icon32") {
                             if let Some(ref mut res) = current_resource {
                                 let url = get_attr(e, b"FileURL");
                                 if !url.is_empty() {
-                                    res.icon_url =
-                                        Some(utils::html_decode(&url));
+                                    res.icon_url = Some(utils::html_decode(&url));
                                 }
                             }
                         }
@@ -791,11 +774,7 @@ impl FeedDiscoveryManager {
     }
 
     /// Download an RDP file and return its content.
-    fn fetch_rdp_content(
-        &self,
-        rdp_url: &str,
-        bearer_token: &str,
-    ) -> Result<String, String> {
+    fn fetch_rdp_content(&self, rdp_url: &str, bearer_token: &str) -> Result<String, String> {
         Self::http_get(rdp_url, bearer_token)
     }
 
@@ -831,16 +810,13 @@ impl FeedDiscoveryManager {
         // If the connection name already exists in a different folder, make it unique
         if let Ok(cm) = self.config_manager.lock() {
             if let Some(existing_json) = cm.get_connection_json(&profile.name) {
-                if let Ok(existing) =
-                    serde_json::from_str::<serde_json::Value>(&existing_json)
-                {
+                if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_json) {
                     let existing_folder = existing
                         .get("folder")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     if existing_folder != profile.folder {
-                        profile.name =
-                            format!("{workspace_name} - {}", resource.title);
+                        profile.name = format!("{workspace_name} - {}", resource.title);
                     }
                 }
             }
@@ -969,8 +945,7 @@ fn get_attr(e: &quick_xml::events::BytesStart, name: &[u8]) -> String {
 /// Check if an element name represents a `Resource` element
 /// (not `Resources`, `ResourceFile`, or `ResourceCollection`).
 fn is_resource_element(name: &str) -> bool {
-    name == "Resource"
-        || (name.ends_with(":Resource") && !name.contains("Resources"))
+    name == "Resource" || (name.ends_with(":Resource") && !name.contains("Resources"))
 }
 
 /// Extract a parameter value from a URL query/fragment string.

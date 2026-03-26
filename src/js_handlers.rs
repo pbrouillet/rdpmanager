@@ -7,10 +7,10 @@
 //! Equivalent to: `src/js_handlers.cpp` / `js_handlers.hpp`
 
 use crate::config_manager::ConfigManager;
-use crate::rdp_file_parser;
 use crate::dialog_manager::DialogManager;
 use crate::feed_discovery::FeedDiscoveryManager;
 use crate::gui::aad_auth_handler::AADAuthHandler;
+use crate::rdp_file_parser;
 use crate::session_manager::SessionManager;
 use crate::types::ConnectionProfile;
 use crate::window_embedding::ContentRect;
@@ -451,9 +451,7 @@ unsafe extern "C" fn on_discover_feeds(e: *mut webui_sys::webui_event_t) {
         std::thread::spawn(move || {
             fm.discover_and_import(&account_id);
         });
-        unsafe {
-            return_string(e, r#"{"success":true,"message":"Discovery started"}"#)
-        };
+        unsafe { return_string(e, r#"{"success":true,"message":"Discovery started"}"#) };
     } else {
         warn!("discoverFeeds: FeedDiscoveryManager not initialized");
         unsafe {
