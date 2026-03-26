@@ -7,7 +7,9 @@
 //! Equivalent to: `src/js_handlers.cpp` / `js_handlers.hpp`
 
 use crate::config_manager::ConfigManager;
+use crate::rdp_file_parser;
 use crate::dialog_manager::DialogManager;
+use crate::feed_discovery::FeedDiscoveryManager;
 use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::session_manager::SessionManager;
 use crate::types::ConnectionProfile;
@@ -22,6 +24,7 @@ static STATE: OnceLock<Arc<Mutex<ConfigManager>>> = OnceLock::new();
 static SESSION_STATE: OnceLock<Arc<Mutex<SessionManager>>> = OnceLock::new();
 static AAD_STATE: OnceLock<Arc<AADAuthHandler>> = OnceLock::new();
 static DIALOG_STATE: OnceLock<Arc<DialogManager>> = OnceLock::new();
+static FEED_STATE: OnceLock<Arc<FeedDiscoveryManager>> = OnceLock::new();
 
 /// Register all JavaScript bindings on the given WebUI window.
 pub fn bind_all(
@@ -30,6 +33,7 @@ pub fn bind_all(
     session_manager: Arc<Mutex<SessionManager>>,
     aad_handler: Option<Arc<AADAuthHandler>>,
     dialog_manager: Arc<DialogManager>,
+    feed_manager: Option<Arc<FeedDiscoveryManager>>,
 ) {
     STATE.get_or_init(|| config_manager);
     SESSION_STATE.get_or_init(|| session_manager);
@@ -37,6 +41,9 @@ pub fn bind_all(
         AAD_STATE.get_or_init(|| aad);
     }
     DIALOG_STATE.get_or_init(|| dialog_manager);
+    if let Some(fm) = feed_manager {
+        FEED_STATE.get_or_init(|| fm);
+    }
 
     let bindings: &[(&str, unsafe extern "C" fn(*mut webui_sys::webui_event_t))] = &[
         // Database management
@@ -140,94 +147,14 @@ unsafe fn return_string(e: *mut webui_sys::webui_event_t, val: &str) {
     unsafe { webui_sys::webui_return_string(e, cs.as_ptr()) };
 }
 
-// ── File dialog helpers ──────────────────────────────────────────────────
+// ── File dialog helpers (delegated to file_dialogs module) ───────────────
 
-#[cfg(not(target_os = "linux"))]
 fn pick_save_file(title: &str, default_name: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title(title)
-        .set_file_name(default_name)
-        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
-        .add_filter("All Files", &["*"])
-        .save_file()
+    crate::file_dialogs::pick_save_file(title, default_name)
 }
 
-#[cfg(not(target_os = "linux"))]
 fn pick_open_file(title: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title(title)
-        .add_filter("Database Files", &["db", "sqlite", "sqlite3"])
-        .add_filter("All Files", &["*"])
-        .pick_file()
-}
-
-#[cfg(target_os = "linux")]
-fn pick_save_file(title: &str, default_name: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new("zenity")
-        .args([
-            "--file-selection",
-            "--save",
-            "--confirm-overwrite",
-            &format!("--title={title}"),
-            &format!("--filename={default_name}"),
-        ])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    let output = std::process::Command::new("kdialog")
-        .args([
-            "--getsavefilename",
-            "~",
-            "*.db *.sqlite *.sqlite3|Database files",
-        ])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn pick_open_file(title: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new("zenity")
-        .args([
-            "--file-selection",
-            &format!("--title={title}"),
-            "--file-filter=Database files | *.db *.sqlite *.sqlite3",
-            "--file-filter=All files | *",
-        ])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    let output = std::process::Command::new("kdialog")
-        .args([
-            "--getopenfilename",
-            "~",
-            "*.db *.sqlite *.sqlite3|Database files",
-        ])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    None
+    crate::file_dialogs::pick_open_file(title)
 }
 
 // ── Database handlers ────────────────────────────────────────────────────
@@ -387,14 +314,37 @@ unsafe extern "C" fn on_get_app_info(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn on_import_rdp_file(e: *mut webui_sys::webui_event_t) {
-    let _content = unsafe { get_string_at(e, 0) };
-    warn!("importRdpFile: parser not yet ported to Rust");
-    unsafe {
-        return_string(
-            e,
-            r#"{"success":false,"error":"RDP file import not yet available in Rust build"}"#,
-        )
-    };
+    let content = unsafe { get_string_at(e, 0) };
+    match rdp_file_parser::parse_content(&content) {
+        Ok(data) => {
+            let profile = data.to_connection_profile();
+            let name = profile.name.clone();
+            match serde_json::to_string(&profile) {
+                Ok(json) => {
+                    let ok = with_config(|cm| cm.save_connection(&json)).unwrap_or(false);
+                    if ok {
+                        let resp = serde_json::json!({"success": true, "name": name});
+                        unsafe { return_string(e, &resp.to_string()) };
+                    } else {
+                        unsafe {
+                            return_string(
+                                e,
+                                r#"{"success":false,"error":"Failed to save connection"}"#,
+                            )
+                        };
+                    }
+                }
+                Err(err) => {
+                    let resp = serde_json::json!({"success": false, "error": err.to_string()});
+                    unsafe { return_string(e, &resp.to_string()) };
+                }
+            }
+        }
+        Err(err) => {
+            let resp = serde_json::json!({"success": false, "error": err});
+            unsafe { return_string(e, &resp.to_string()) };
+        }
+    }
 }
 
 // ── Folder management ────────────────────────────────────────────────────
@@ -445,7 +395,10 @@ unsafe extern "C" fn on_auth_response(e: *mut webui_sys::webui_event_t) {
     let json_str = unsafe { get_string_at(e, 0) };
     if let Some(dm) = DIALOG_STATE.get() {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            let success = value.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            let success = value
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let username = value.get("username").and_then(|v| v.as_str()).unwrap_or("");
             let password = value.get("password").and_then(|v| v.as_str()).unwrap_or("");
             let domain = value.get("domain").and_then(|v| v.as_str()).unwrap_or("");
@@ -469,39 +422,59 @@ unsafe extern "C" fn on_aad_auth_response(e: *mut webui_sys::webui_event_t) {
     }
 }
 
-// ── Feed discovery (stubs — need FeedDiscoveryManager port) ──────────────
+// ── Feed discovery ────────────────────────────────────────────────────────
 
 unsafe extern "C" fn on_get_feed_accounts(e: *mut webui_sys::webui_event_t) {
-    unsafe { return_string(e, "[]") };
+    let json = with_config(|cm| cm.get_feed_accounts_json()).unwrap_or_else(|| "[]".to_string());
+    unsafe { return_string(e, &json) };
 }
 
 unsafe extern "C" fn on_delete_feed_account(e: *mut webui_sys::webui_event_t) {
-    let _id = unsafe { get_string_at(e, 0) };
-    warn!("deleteFeedAccount: FeedDiscovery not yet ported");
-    unsafe { return_bool(e, false) };
+    let id = unsafe { get_string_at(e, 0) };
+    let ok = with_config(|cm| cm.delete_feed_account(&id)).unwrap_or(false);
+    unsafe { return_bool(e, ok) };
 }
 
 unsafe extern "C" fn on_discover_feeds(e: *mut webui_sys::webui_event_t) {
-    let _account_id = unsafe { get_string_at(e, 0) };
-    warn!("discoverFeeds: FeedDiscovery not yet ported");
-    unsafe {
-        return_string(
-            e,
-            r#"{"success":false,"error":"Feed discovery not yet available in Rust build"}"#,
-        )
-    };
+    let account_id = unsafe { get_string_at(e, 0) };
+    if let Some(fm) = FEED_STATE.get() {
+        if fm.is_busy() {
+            unsafe {
+                return_string(
+                    e,
+                    r#"{"success":false,"error":"Feed discovery already in progress"}"#,
+                )
+            };
+            return;
+        }
+        let fm = Arc::clone(fm);
+        std::thread::spawn(move || {
+            fm.discover_and_import(&account_id);
+        });
+        unsafe {
+            return_string(e, r#"{"success":true,"message":"Discovery started"}"#)
+        };
+    } else {
+        warn!("discoverFeeds: FeedDiscoveryManager not initialized");
+        unsafe {
+            return_string(
+                e,
+                r#"{"success":false,"error":"Feed discovery not initialized"}"#,
+            )
+        };
+    }
 }
 
 unsafe extern "C" fn on_log_off_account(e: *mut webui_sys::webui_event_t) {
-    let _id = unsafe { get_string_at(e, 0) };
-    warn!("logOffAccount: FeedDiscovery not yet ported");
-    unsafe { return_bool(e, false) };
+    let id = unsafe { get_string_at(e, 0) };
+    let ok = with_config(|cm| cm.clear_tokens_for_account(&id)).unwrap_or(false);
+    unsafe { return_bool(e, ok) };
 }
 
 unsafe extern "C" fn on_forget_account(e: *mut webui_sys::webui_event_t) {
-    let _id = unsafe { get_string_at(e, 0) };
-    warn!("forgetAccount: FeedDiscovery not yet ported");
-    unsafe { return_bool(e, false) };
+    let id = unsafe { get_string_at(e, 0) };
+    let ok = with_config(|cm| cm.forget_account(&id)).unwrap_or(false);
+    unsafe { return_bool(e, ok) };
 }
 
 // ── Folder settings ──────────────────────────────────────────────────────
@@ -521,14 +494,14 @@ unsafe extern "C" fn on_save_folder_settings(e: *mut webui_sys::webui_event_t) {
 
 unsafe extern "C" fn on_get_effective_folder_settings(e: *mut webui_sys::webui_event_t) {
     let path = unsafe { get_string_at(e, 0) };
-    // For now, same as direct settings (inheritance walk not yet implemented)
-    let json = with_config(|cm| cm.get_folder_settings(&path)).unwrap_or_else(|| "{}".to_string());
+    let json = with_config(|cm| cm.get_effective_folder_settings(&path))
+        .unwrap_or_else(|| "{}".to_string());
     unsafe { return_string(e, &json) };
 }
 
 unsafe extern "C" fn on_get_effective_connection_profile(e: *mut webui_sys::webui_event_t) {
     let name = unsafe { get_string_at(e, 0) };
-    let json = with_config(|cm| cm.get_connection_json(&name))
+    let json = with_config(|cm| cm.get_effective_connection_profile(&name))
         .flatten()
         .unwrap_or_else(|| "null".to_string());
     unsafe { return_string(e, &json) };

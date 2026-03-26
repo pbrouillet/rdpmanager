@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use crate::config_manager::ConfigManager;
 use crate::dialog_manager::DialogManager;
 use crate::embedded_ui;
+use crate::feed_discovery::FeedDiscoveryManager;
 use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::js_handlers;
 use crate::session_manager::SessionManager;
@@ -24,6 +25,7 @@ pub struct MainWindow {
     session_manager: Arc<Mutex<SessionManager>>,
     aad_handler: Arc<AADAuthHandler>,
     dialog_manager: Arc<DialogManager>,
+    feed_manager: Arc<FeedDiscoveryManager>,
 }
 
 impl MainWindow {
@@ -40,6 +42,12 @@ impl MainWindow {
             Some(Arc::clone(&aad_handler)),
             Some(Arc::clone(&config_manager)),
         )));
+
+        let mut feed_mgr = FeedDiscoveryManager::new(Arc::clone(&config_manager));
+        feed_mgr.set_main_window(window);
+        let feed_manager = Arc::new(feed_mgr);
+        feed_manager.register_global();
+
         Self {
             window,
             debug_port: std::cell::Cell::new(0),
@@ -47,6 +55,7 @@ impl MainWindow {
             session_manager,
             aad_handler,
             dialog_manager,
+            feed_manager,
         }
     }
 
@@ -90,6 +99,7 @@ impl MainWindow {
             Arc::clone(&self.session_manager),
             Some(Arc::clone(&self.aad_handler)),
             Arc::clone(&self.dialog_manager),
+            Some(Arc::clone(&self.feed_manager)),
         );
 
         if embedded_ui::has_files() {

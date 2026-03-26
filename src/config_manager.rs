@@ -16,6 +16,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Persisted settings (last-used database path, etc.)
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -407,7 +408,313 @@ impl ConfigManager {
         }
     }
 
+    // -- Token cache CRUD --
+
+    /// Look up a cached token. Returns `None` if not found or expired.
+    pub fn get_cached_token(&self, key: &str, scope: &str) -> Option<String> {
+        let db = self.db.as_ref()?;
+        let now = epoch_secs();
+        db.query_row(
+            "SELECT token FROM token_cache WHERE cache_key = ?1 AND scope = ?2 AND expires_at > ?3",
+            rusqlite::params![key, scope, now],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    /// Store a token in the cache with expiration.
+    pub fn set_cached_token(&self, key: &str, scope: &str, token: &str, expires_at: i64) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "INSERT OR REPLACE INTO token_cache (cache_key, scope, token, expires_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![key, scope, token, expires_at],
+        ) {
+            Ok(_) => {
+                info!("Cached token for key={key} scope={scope}");
+                true
+            }
+            Err(e) => {
+                error!("set_cached_token failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Delete a specific cached token.
+    pub fn delete_cached_token(&self, key: &str, scope: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "DELETE FROM token_cache WHERE cache_key = ?1 AND scope = ?2",
+            rusqlite::params![key, scope],
+        ) {
+            Ok(_) => true,
+            Err(e) => {
+                error!("delete_cached_token failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Get all feed accounts as a JSON array string.
+    pub fn get_feed_accounts_json(&self) -> String {
+        let Some(ref db) = self.db else {
+            return "[]".to_string();
+        };
+        let mut stmt = match db.prepare(
+            "SELECT id, display_name, email, last_synced FROM feed_accounts ORDER BY display_name",
+        ) {
+            Ok(s) => s,
+            Err(_) => return "[]".to_string(),
+        };
+        let rows: Vec<String> = match stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let display_name: String = row.get(1)?;
+            let email: String = row.get(2)?;
+            let last_synced: i64 = row.get(3)?;
+            Ok(serde_json::json!({
+                "id": id,
+                "display_name": display_name,
+                "email": email,
+                "last_synced": last_synced,
+            })
+            .to_string())
+        }) {
+            Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+            Err(_) => return "[]".to_string(),
+        };
+        format!("[{}]", rows.join(","))
+    }
+
+    /// Insert a new feed account record.
+    pub fn add_feed_account(
+        &self,
+        id: &str,
+        display_name: &str,
+        email: &str,
+        last_synced: i64,
+    ) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "INSERT OR REPLACE INTO feed_accounts (id, display_name, email, last_synced) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, display_name, email, last_synced],
+        ) {
+            Ok(_) => {
+                info!("Added feed account: {display_name} ({id})");
+                true
+            }
+            Err(e) => {
+                error!("add_feed_account failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Update an existing feed account record.
+    pub fn update_feed_account(
+        &self,
+        id: &str,
+        display_name: &str,
+        email: &str,
+        last_synced: i64,
+    ) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "UPDATE feed_accounts SET display_name = ?2, email = ?3, last_synced = ?4 WHERE id = ?1",
+            rusqlite::params![id, display_name, email, last_synced],
+        ) {
+            Ok(n) => {
+                if n == 0 {
+                    // Row didn't exist — insert instead
+                    return self.add_feed_account(id, display_name, email, last_synced);
+                }
+                info!("Updated feed account: {display_name} ({id})");
+                true
+            }
+            Err(e) => {
+                error!("update_feed_account failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Delete a feed account record (without clearing tokens).
+    pub fn delete_feed_account(&self, account_id: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        match db.execute(
+            "DELETE FROM feed_accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+        ) {
+            Ok(n) => n > 0,
+            Err(e) => {
+                error!("delete_feed_account failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Delete a feed account and all its cached tokens.
+    pub fn forget_account(&self, account_id: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        let deleted = match db.execute(
+            "DELETE FROM feed_accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+        ) {
+            Ok(n) => n > 0,
+            Err(e) => {
+                error!("forget_account: DELETE failed: {e}");
+                return false;
+            }
+        };
+        self.clear_tokens_for_account(account_id);
+        deleted
+    }
+
+    /// Clear all tokens for a given key prefix (used when logging off an account).
+    pub fn clear_tokens_for_account(&self, key_prefix: &str) -> bool {
+        let Some(ref db) = self.db else {
+            return false;
+        };
+        let pattern = format!("{key_prefix}%");
+        match db.execute(
+            "DELETE FROM token_cache WHERE cache_key LIKE ?1",
+            rusqlite::params![pattern],
+        ) {
+            Ok(n) => {
+                info!("Cleared {n} cached tokens for prefix={key_prefix}");
+                true
+            }
+            Err(e) => {
+                error!("clear_tokens_for_account failed: {e}");
+                false
+            }
+        }
+    }
+
+    // -- Folder settings inheritance --
+
+    /// Get effective (cascade-resolved) folder settings as a JSON string.
+    /// Walks the ancestor chain from root to the given path, merging at each level.
+    pub fn get_effective_folder_settings(&self, path: &str) -> String {
+        let Some(ref db) = self.db else {
+            return "{}".to_string();
+        };
+
+        let ancestors = Self::get_ancestor_paths(path);
+        let mut merged = serde_json::Value::Object(serde_json::Map::new());
+
+        // Walk root → leaf so leaf values override parent values
+        for ancestor in &ancestors {
+            let json_str: Option<String> = db
+                .query_row(
+                    "SELECT settings_json FROM folder_settings WHERE path = ?1",
+                    rusqlite::params![ancestor],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+
+            if let Some(s) = json_str {
+                if let Ok(overlay) = serde_json::from_str::<serde_json::Value>(&s) {
+                    merge_json(&mut merged, &overlay);
+                }
+            }
+        }
+
+        serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get a fully resolved connection profile with folder settings inheritance applied.
+    /// Folder defaults are applied only for fields NOT in the connection's `overridden_fields`.
+    pub fn get_effective_connection_profile(&self, name: &str) -> Option<String> {
+        let db = self.db.as_ref()?;
+
+        let profile_json: String = db
+            .query_row(
+                "SELECT profile_json FROM connections WHERE name = ?1",
+                [name],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()?;
+
+        let mut profile: serde_json::Value = serde_json::from_str(&profile_json).ok()?;
+
+        // Determine the folder path from the connection profile
+        let folder = profile
+            .get("folder")
+            .and_then(|f| f.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Get effective folder settings for this folder
+        let effective_settings_str = self.get_effective_folder_settings(&folder);
+        let folder_settings: serde_json::Value =
+            serde_json::from_str(&effective_settings_str).unwrap_or(serde_json::Value::Null);
+
+        // Determine which fields are explicitly overridden on this connection
+        let overridden: std::collections::HashSet<String> = profile
+            .get("overridden_fields")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let legacy = !profile
+            .as_object()
+            .map(|o| o.contains_key("overridden_fields"))
+            .unwrap_or(false);
+
+        // Apply folder defaults for fields NOT overridden by the connection.
+        // Legacy profiles (no overridden_fields key) keep all their values.
+        if !legacy {
+            if let Some(settings_obj) = folder_settings.as_object() {
+                if let Some(profile_obj) = profile.as_object_mut() {
+                    for (key, value) in settings_obj {
+                        if !overridden.contains(key) {
+                            profile_obj.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::to_string(&profile).ok()
+    }
+
     // -- Internal helpers --
+
+    /// Given a folder path like "a/b/c", returns `["", "a", "a/b", "a/b/c"]`.
+    /// The empty string represents root-level (global) defaults.
+    fn get_ancestor_paths(path: &str) -> Vec<String> {
+        let mut ancestors = vec![String::new()]; // root
+        if path.is_empty() {
+            return ancestors;
+        }
+
+        let mut current = String::new();
+        for (i, segment) in path.split('/').enumerate() {
+            if i == 0 {
+                current = segment.to_string();
+            } else {
+                current = format!("{current}/{segment}");
+            }
+            ancestors.push(current.clone());
+        }
+        ancestors
+    }
 
     fn open_database_internal(&mut self, path: &Path) -> bool {
         if let Some(parent) = path.parent() {
@@ -473,6 +780,13 @@ impl ConfigManager {
                 path TEXT PRIMARY KEY NOT NULL,
                 settings_json TEXT NOT NULL DEFAULT '{}'
             );
+            CREATE TABLE IF NOT EXISTS token_cache (
+                cache_key TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                token TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                PRIMARY KEY (cache_key, scope)
+            );
         "#;
 
         if let Err(e) = db.execute_batch(sql) {
@@ -517,4 +831,21 @@ impl ConfigManager {
             }
         }
     }
+}
+
+/// Merge `overlay` JSON object fields into `base`. Overlay values win.
+fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
+    if let (Some(base_obj), Some(overlay_obj)) = (base.as_object_mut(), overlay.as_object()) {
+        for (key, value) in overlay_obj {
+            base_obj.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Current epoch time in seconds.
+fn epoch_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
