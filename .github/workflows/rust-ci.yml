@@ -99,7 +99,7 @@ jobs:
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           # Install zlib, OpenSSL, and cJSON via vcpkg (pre-installed on runner)
-          vcpkg install zlib:x64-windows-static openssl:x64-windows-static cjson:x64-windows-static
+          vcpkg install zlib:x64-windows-static openssl:x64-windows-static cjson:x64-windows-static jansson:x64-windows-static
           echo "CMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "VCPKG_TARGET_TRIPLET=x64-windows-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 

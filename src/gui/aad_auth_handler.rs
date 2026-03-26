@@ -26,10 +26,15 @@ static MANUAL_CODE_FLOW: AtomicBool = AtomicBool::new(false);
 static AAD_DEBUG: AtomicBool = AtomicBool::new(false);
 
 /// Wrapper to allow raw pointers in `OnceLock` (which requires Send+Sync).
-#[derive(Debug)]
 struct SendSyncPtr<T>(*const T);
 unsafe impl<T> Send for SendSyncPtr<T> {}
 unsafe impl<T> Sync for SendSyncPtr<T> {}
+
+impl<T> std::fmt::Debug for SendSyncPtr<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SendSyncPtr({:p})", self.0)
+    }
+}
 
 /// Global instance pointer for WebUI callbacks (static C functions need access).
 static INSTANCE: OnceLock<SendSyncPtr<AADAuthHandler>> = OnceLock::new();

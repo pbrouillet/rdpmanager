@@ -81,6 +81,14 @@ fn main() {
     let enable_ffmpeg = std::env::var("FREERDP_FFMPEG").unwrap_or_default() == "1";
     let ffmpeg_flag = if enable_ffmpeg { "ON" } else { "OFF" };
 
+    // SWSCALE is an FFmpeg library — disable it when FFmpeg is off to avoid
+    // the REQUIRED find_package(FFmpeg) in libfreerdp/CMakeLists.txt:181
+    if !enable_ffmpeg {
+        config
+            .define("WITH_SWSCALE", "OFF")
+            .define("WITH_CAIRO", "OFF");
+    }
+
     // Platform-specific cmake defines
     if is_linux {
         config
