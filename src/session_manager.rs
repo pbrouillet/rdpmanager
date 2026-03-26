@@ -3,13 +3,15 @@
 //! Manages active RDP sessions and coordinates between the RDP launcher,
 //! the window embedding layer, and the React UI via JS bindings.
 
+use crate::config_manager::ConfigManager;
 use crate::dialog_manager::DialogManager;
+use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::rdp_launcher::{RDPLauncher, SessionInfo};
 use crate::types::ConnectionProfile;
 use crate::window_embedding::{ContentRect, EmbeddingHost};
 use log::{info, warn};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Coordinates RDP sessions with window embedding and the UI.
 pub struct SessionManager {
@@ -24,9 +26,20 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(webui_window: usize, dialog_manager: Arc<DialogManager>) -> Self {
+    pub fn new(
+        webui_window: usize,
+        dialog_manager: Arc<DialogManager>,
+        aad_handler: Option<Arc<AADAuthHandler>>,
+        config_manager: Option<Arc<Mutex<ConfigManager>>>,
+    ) -> Self {
         let mut launcher = RDPLauncher::new();
         launcher.set_dialog_manager(dialog_manager);
+        if let Some(handler) = aad_handler {
+            launcher.set_aad_handler(handler);
+        }
+        if let Some(cm) = config_manager {
+            launcher.set_config_manager(cm);
+        }
         Self {
             launcher,
             embedding: EmbeddingHost::new(webui_window),
@@ -85,7 +98,8 @@ impl SessionManager {
     /// Resize an active session's display area.
     pub fn resize_session(&mut self, session_id: &str, rect: ContentRect) {
         self.embedding.reposition_session(session_id, &rect);
-        self.launcher.send_resize(session_id, rect.width, rect.height);
+        self.launcher
+            .send_resize(session_id, rect.width, rect.height);
         self.rects.insert(session_id.to_string(), rect);
     }
 

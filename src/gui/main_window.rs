@@ -19,6 +19,7 @@ use crate::session_manager::SessionManager;
 
 pub struct MainWindow {
     window: usize,
+    debug_port: std::cell::Cell<u16>,
     config_manager: Arc<Mutex<ConfigManager>>,
     session_manager: Arc<Mutex<SessionManager>>,
     aad_handler: Arc<AADAuthHandler>,
@@ -30,19 +31,42 @@ impl MainWindow {
         let window = unsafe { webui_sys::webui_new_window() };
         let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
         let dialog_manager = Arc::new(DialogManager::new(window));
-        let session_manager = Arc::new(Mutex::new(SessionManager::new(
-            window,
-            Arc::clone(&dialog_manager),
-        )));
         let aad_handler = Arc::new(AADAuthHandler::new());
         aad_handler.set_main_window(window);
         aad_handler.register_global();
+        let session_manager = Arc::new(Mutex::new(SessionManager::new(
+            window,
+            Arc::clone(&dialog_manager),
+            Some(Arc::clone(&aad_handler)),
+            Some(Arc::clone(&config_manager)),
+        )));
         Self {
             window,
+            debug_port: std::cell::Cell::new(0),
             config_manager,
             session_manager,
             aad_handler,
             dialog_manager,
+        }
+    }
+
+    /// Set Chrome DevTools remote debugging port (0 = disabled).
+    pub fn set_debug_port(&self, port: u16) {
+        self.debug_port.set(port);
+        if port > 0 {
+            let debug_profile = "/tmp/webui-rdp-debug-profile";
+            let params = format!(
+                "--no-first-run --disable-extensions --disable-background-mode \
+                 --disable-sync --allow-insecure-localhost \
+                 --user-data-dir={debug_profile} \
+                 --remote-debugging-port={port}"
+            );
+            let params_c = std::ffi::CString::new(params).unwrap();
+            unsafe {
+                webui_sys::webui_set_custom_parameters(self.window, params_c.into_raw());
+            }
+            info!("Chrome DevTools debugging enabled on port {port}");
+            info!("Connect at: edge://inspect or http://localhost:{port}");
         }
     }
 
@@ -102,10 +126,27 @@ impl MainWindow {
     /// Show the window and return whether it opened successfully.
     pub fn show(&self) -> bool {
         let content = CString::new("index.html").unwrap();
+
+        // Use browser mode when debugging (WebView doesn't support DevTools)
+        if self.debug_port.get() > 0 {
+            info!("Using browser mode for debugging (Edge)");
+            // Edge = 7, ChromiumBased = 3
+            let ok = unsafe { webui_sys::webui_show_browser(self.window, content.as_ptr(), 7) };
+            if ok {
+                return true;
+            }
+            warn!("Edge not available, trying any Chromium-based browser");
+            let ok = unsafe { webui_sys::webui_show_browser(self.window, content.as_ptr(), 3) };
+            if ok {
+                return true;
+            }
+            error!("Failed to open UI in any Chromium browser for debugging");
+            return false;
+        }
+
         let ok = unsafe { webui_sys::webui_show(self.window, content.as_ptr()) };
         if !ok {
             warn!("webui_show returned false — trying browser fallback");
-            // Try any browser as fallback
             // Try any browser as fallback (AnyBrowser = 1)
             let ok = unsafe { webui_sys::webui_show_browser(self.window, content.as_ptr(), 1) };
             if !ok {

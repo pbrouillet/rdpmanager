@@ -8,11 +8,14 @@
 //!
 //! Equivalent to: `src/rdp_launcher.cpp` / `rdp_launcher.hpp`
 
+use crate::config_manager::ConfigManager;
 use crate::dialog_manager::DialogManager;
+use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::types::{
-    AuthRequest, CertificateInfo, ConnectionProfile, RDPConnectionState,
+    AADAuthRequest, AADAuthType, AuthRequest, CertificateInfo, ConnectionProfile,
+    RDPConnectionState,
 };
-use log::{info, warn};
+use log::{error, info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -113,6 +116,10 @@ extern "C" {
 struct SessionCallbackState {
     dialog_manager: Arc<DialogManager>,
     hostname: String,
+    aad_handler: Option<Arc<AADAuthHandler>>,
+    config_manager: Option<Arc<Mutex<ConfigManager>>>,
+    gateway_hostname: String,
+    use_manual_code_flow: bool,
 }
 
 /// Maps FreeRDP instance pointers to their callback state.
@@ -265,12 +272,295 @@ unsafe extern "C" fn gateway_authenticate_cb(
     handle_auth(instance, username, password, domain, true)
 }
 
+/// FreeRDP AAD/Entra ID access token callback.
+/// Called when FreeRDP needs an OAuth bearer token for AAD-joined hosts.
+///
+/// This is a variadic C callback (`pGetAccessToken`). We define it with only the
+/// fixed parameters and use `transmute` when installing it, since stable Rust
+/// cannot declare variadic fn items. The variadic args (scope, req_cnf) are
+/// accessed via pointer arithmetic on the stack — only when `count >= 2` and
+/// the platform ABI guarantees they follow the fixed params.
+///
+/// For ACCESS_TOKEN_TYPE_AAD (count=2): extra args are (scope: *const c_char, req_cnf: *const c_char)
+/// For ACCESS_TOKEN_TYPE_AVD (count=0): no extra args
+unsafe extern "C" fn get_access_token_cb(
+    instance: *mut freerdp_sys::freerdp,
+    token_type: freerdp_sys::AccessTokenType,
+    token: *mut *mut std::os::raw::c_char,
+    count: usize,
+    // Variadic args follow on the stack. We declare the two known optional params
+    // so the compiler reads them from the correct stack positions when present.
+    scope_arg: *const std::os::raw::c_char,
+    req_cnf_arg: *const std::os::raw::c_char,
+) -> freerdp_sys::BOOL {
+    if instance.is_null() || token.is_null() {
+        return 0;
+    }
+
+    let state = {
+        let map = get_session_map().lock().unwrap();
+        map.get(&(instance as usize)).cloned()
+    };
+
+    let Some(state) = state else {
+        warn!("get_access_token_cb: no session found for instance");
+        return 0;
+    };
+
+    let Some(aad_handler) = &state.aad_handler else {
+        warn!("get_access_token_cb: no AAD handler configured");
+        return 0;
+    };
+
+    // Determine cache key and scope based on token type
+    let (cache_kind, cache_hostname) = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AVD {
+        if !state.gateway_hostname.is_empty() {
+            ("gateway".to_string(), state.gateway_hostname.clone())
+        } else {
+            ("machine".to_string(), state.hostname.clone())
+        }
+    } else {
+        ("machine".to_string(), state.hostname.clone())
+    };
+
+    let cache_key = format!("aad:{}:{}", cache_kind, cache_hostname);
+
+    // Extract scope from variadic args (AAD type) or use WVD default (AVD type)
+    let scope = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AAD && count >= 2 {
+        ptr_to_string(scope_arg)
+    } else {
+        "https://www.wvd.microsoft.com/.default".to_string()
+    };
+
+    let req_cnf = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AAD && count >= 2 {
+        ptr_to_string(req_cnf_arg)
+    } else {
+        String::new()
+    };
+
+    // Check token cache first
+    if let Some(ref cm_arc) = state.config_manager {
+        if let Ok(cm) = cm_arc.lock() {
+            if let Some(cached) = cm.get_cached_token(&cache_key, &scope) {
+                info!(
+                    "get_access_token_cb: using cached token for {} ({})",
+                    cache_hostname, cache_kind
+                );
+                *token = c_strdup(&cached);
+                return 1;
+            }
+        }
+    }
+
+    // Cache miss — build AAD auth request and invoke OAuth popup
+    info!(
+        "get_access_token_cb: requesting AAD auth for {} (type={})",
+        cache_hostname, token_type
+    );
+
+    let auth_type = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AVD {
+        AADAuthType::Avd
+    } else {
+        AADAuthType::RdsAad
+    };
+
+    // Get the auth URL from FreeRDP's client context
+    let context = (*instance).context;
+    if context.is_null() {
+        error!("get_access_token_cb: null context");
+        return 0;
+    }
+    let cctx = context as *mut freerdp_sys::rdpClientContext;
+
+    let aad_request_type = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AVD {
+        freerdp_sys::FREERDP_CLIENT_AAD_AVD_AUTH_REQUEST
+    } else {
+        freerdp_sys::FREERDP_CLIENT_AAD_AUTH_REQUEST
+    };
+
+    let auth_url_ptr = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AAD {
+        let scope_cstr = std::ffi::CString::new(scope.as_str()).unwrap_or_default();
+        freerdp_sys::freerdp_client_get_aad_url(cctx, aad_request_type, scope_cstr.as_ptr())
+    } else {
+        freerdp_sys::freerdp_client_get_aad_url(cctx, aad_request_type)
+    };
+
+    let auth_url = if !auth_url_ptr.is_null() {
+        let s = ptr_to_string(auth_url_ptr);
+        libc::free(auth_url_ptr as *mut std::ffi::c_void);
+        s
+    } else {
+        error!("get_access_token_cb: failed to generate auth URL");
+        return 0;
+    };
+
+    let request = AADAuthRequest {
+        auth_type,
+        auth_url,
+        scope: scope.clone(),
+        req_cnf: req_cnf.clone(),
+        use_ui_manual_code_flow: state.use_manual_code_flow,
+        step_current: 1,
+        step_total: if auth_type == AADAuthType::Avd { 2 } else { 1 },
+        step_label: if auth_type == AADAuthType::Avd {
+            "Gateway".to_string()
+        } else {
+            "Authentication".to_string()
+        },
+    };
+
+    let response = aad_handler.handle_authenticate(&request);
+
+    if !response.success || response.redirect_url.is_empty() {
+        warn!(
+            "get_access_token_cb: AAD auth failed for {}",
+            cache_hostname
+        );
+        return 0;
+    }
+
+    info!("get_access_token_cb: AAD auth succeeded, exchanging code for token");
+
+    // Extract authorization code from redirect URL
+    let code = extract_code_from_url(&response.redirect_url);
+    if code.is_empty() {
+        error!("get_access_token_cb: failed to extract auth code from redirect URL");
+        return 0;
+    }
+
+    // Build token request via FreeRDP helper
+    let token_request_type = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AVD {
+        freerdp_sys::FREERDP_CLIENT_AAD_AVD_TOKEN_REQUEST
+    } else {
+        freerdp_sys::FREERDP_CLIENT_AAD_TOKEN_REQUEST
+    };
+
+    let code_cstr = std::ffi::CString::new(code.as_str()).unwrap_or_default();
+    let token_request_ptr = if token_type == freerdp_sys::ACCESS_TOKEN_TYPE_AAD {
+        let scope_cstr = std::ffi::CString::new(scope.as_str()).unwrap_or_default();
+        let req_cnf_cstr = std::ffi::CString::new(req_cnf.as_str()).unwrap_or_default();
+        freerdp_sys::freerdp_client_get_aad_url(
+            cctx,
+            token_request_type,
+            scope_cstr.as_ptr(),
+            code_cstr.as_ptr(),
+            req_cnf_cstr.as_ptr(),
+        )
+    } else {
+        freerdp_sys::freerdp_client_get_aad_url(
+            cctx,
+            token_request_type,
+            code_cstr.as_ptr(),
+        )
+    };
+
+    if token_request_ptr.is_null() {
+        error!("get_access_token_cb: failed to build token request");
+        return 0;
+    }
+
+    // If the AAD handler rewrote the redirect_uri to localhost, patch the token request
+    // to use the same URI (must match what was used in the auth request).
+    let token_request_str = ptr_to_string(token_request_ptr);
+    libc::free(token_request_ptr as *mut std::ffi::c_void);
+
+    let token_request_final = if !response.actual_redirect_uri.is_empty() {
+        replace_redirect_uri_in_request(&token_request_str, &response.actual_redirect_uri)
+    } else {
+        token_request_str
+    };
+
+    // Exchange authorization code for access token via FreeRDP HTTP client
+    let request_cstr = std::ffi::CString::new(token_request_final.as_str()).unwrap_or_default();
+    let result = freerdp_sys::client_common_get_access_token(
+        instance,
+        request_cstr.as_ptr(),
+        token,
+    );
+
+    if result != 0 && !(*token).is_null() {
+        info!("get_access_token_cb: successfully obtained access token");
+
+        // Cache the token
+        if let Some(ref cm_arc) = state.config_manager {
+            if let Ok(cm) = cm_arc.lock() {
+                let expires = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64 + 3600)
+                    .unwrap_or(0);
+                cm.set_cached_token(&cache_key, &scope, &ptr_to_string(*token), expires);
+            }
+        }
+        return 1;
+    }
+
+    error!("get_access_token_cb: token exchange failed for {}", cache_hostname);
+    0
+}
+
+/// Extract an authorization code from an OAuth redirect URL.
+/// Looks for `code=<value>` in the query string.
+fn extract_code_from_url(url: &str) -> String {
+    url.split('?')
+        .nth(1)
+        .unwrap_or("")
+        .split('&')
+        .find_map(|param| {
+            let (key, value) = param.split_once('=')?;
+            if key == "code" {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Replace the `redirect_uri` parameter in a URL-encoded token request body.
+fn replace_redirect_uri_in_request(request: &str, new_redirect_uri: &str) -> String {
+    // Token request is URL-encoded form data: param1=val1&param2=val2
+    let encoded_uri = urlencoding_encode(new_redirect_uri);
+    let mut result = String::new();
+    let mut replaced = false;
+    for part in request.split('&') {
+        if !result.is_empty() {
+            result.push('&');
+        }
+        if part.starts_with("redirect_uri=") && !replaced {
+            result.push_str("redirect_uri=");
+            result.push_str(&encoded_uri);
+            replaced = true;
+        } else {
+            result.push_str(part);
+        }
+    }
+    result
+}
+
+/// Minimal percent-encoding for redirect URIs in token requests.
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
 // ── RDPLauncher ─────────────────────────────────────────────────────────
 
 /// Manages FreeRDP sessions.
 pub struct RDPLauncher {
     sessions: HashMap<String, Arc<Mutex<RDPSession>>>,
     dialog_manager: Option<Arc<DialogManager>>,
+    aad_handler: Option<Arc<AADAuthHandler>>,
+    config_manager: Option<Arc<Mutex<ConfigManager>>>,
 }
 
 impl RDPLauncher {
@@ -278,12 +568,24 @@ impl RDPLauncher {
         Self {
             sessions: HashMap::new(),
             dialog_manager: None,
+            aad_handler: None,
+            config_manager: None,
         }
     }
 
     /// Set the dialog manager for certificate/auth callbacks.
     pub fn set_dialog_manager(&mut self, dm: Arc<DialogManager>) {
         self.dialog_manager = Some(dm);
+    }
+
+    /// Set the AAD auth handler for Entra ID OAuth popup flows.
+    pub fn set_aad_handler(&mut self, handler: Arc<AADAuthHandler>) {
+        self.aad_handler = Some(handler);
+    }
+
+    /// Set the config manager for token cache access.
+    pub fn set_config_manager(&mut self, cm: Arc<Mutex<ConfigManager>>) {
+        self.config_manager = Some(cm);
     }
 
     /// Launch a new RDP session. Returns session ID on success.
@@ -348,6 +650,10 @@ impl RDPLauncher {
                     let cb_state = Arc::new(SessionCallbackState {
                         dialog_manager: Arc::clone(dm),
                         hostname: profile.hostname.clone(),
+                        aad_handler: self.aad_handler.clone(),
+                        config_manager: self.config_manager.clone(),
+                        gateway_hostname: profile.gateway_hostname.clone(),
+                        use_manual_code_flow: profile.use_manual_code_flow,
                     });
                     get_session_map()
                         .lock()
@@ -357,7 +663,20 @@ impl RDPLauncher {
                     (*instance).VerifyCertificateEx = Some(verify_certificate_cb);
                     (*instance).Authenticate = Some(authenticate_cb);
                     (*instance).GatewayAuthenticate = Some(gateway_authenticate_cb);
-                    // GetAccessToken left unset — AAD handler will be implemented separately
+
+                    // Install AAD access token callback (variadic fn ptr — transmute required)
+                    (*instance).GetAccessToken = std::mem::transmute(
+                        get_access_token_cb
+                            as unsafe extern "C" fn(
+                                *mut freerdp_sys::freerdp,
+                                freerdp_sys::AccessTokenType,
+                                *mut *mut std::os::raw::c_char,
+                                usize,
+                                *const std::os::raw::c_char,
+                                *const std::os::raw::c_char,
+                            ) -> freerdp_sys::BOOL,
+                    );
+
                     info!("Installed FreeRDP callbacks for session {}", session_id);
                 }
                 instance as usize
@@ -680,7 +999,10 @@ impl RDPLauncher {
                 if let Ok(mut session) = session_arc.lock() {
                     // Ensure session is removed from global callback map
                     if session.instance_ptr != 0 {
-                        get_session_map().lock().unwrap().remove(&session.instance_ptr);
+                        get_session_map()
+                            .lock()
+                            .unwrap()
+                            .remove(&session.instance_ptr);
                     }
                     if let Some(handle) = session.thread.take() {
                         drop(session);
