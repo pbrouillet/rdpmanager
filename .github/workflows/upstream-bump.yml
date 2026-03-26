@@ -1,0 +1,152 @@
+name: Upstream Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Submodule to bump'
+        required: true
+        type: choice
+        options:
+          - freerdp
+          - webui
+      ref:
+        description: 'Upstream ref to bump to (tag, branch, or SHA)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set target paths
+        id: paths
+        run: |
+          if [ "${{ inputs.target }}" = "freerdp" ]; then
+            echo "crate_sub=crates/freerdp-sys/freerdp" >> $GITHUB_OUTPUT
+            echo "legacy_sub=subprojects/freerdp" >> $GITHUB_OUTPUT
+            echo "patch=patches/freerdp/aad-fallback-parse.patch" >> $GITHUB_OUTPUT
+            echo "upstream=https://github.com/FreeRDP/FreeRDP.git" >> $GITHUB_OUTPUT
+          else
+            echo "crate_sub=crates/webui-sys/webui" >> $GITHUB_OUTPUT
+            echo "legacy_sub=subprojects/webui" >> $GITHUB_OUTPUT
+            echo "patch=patches/webui/navigate-passthrough.patch" >> $GITHUB_OUTPUT
+            echo "upstream=https://github.com/webui-dev/webui.git" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Init submodules
+        run: |
+          git submodule update --init --recursive ${{ steps.paths.outputs.crate_sub }}
+          # Also init legacy submodule if it exists in .gitmodules
+          if git config --file .gitmodules --get "submodule.${{ steps.paths.outputs.legacy_sub }}.url" >/dev/null 2>&1; then
+            git submodule update --init --recursive ${{ steps.paths.outputs.legacy_sub }}
+          fi
+
+      - name: Record old ref
+        id: old-ref
+        run: |
+          OLD=$(git -C "${{ steps.paths.outputs.crate_sub }}" describe --tags --always 2>/dev/null || git -C "${{ steps.paths.outputs.crate_sub }}" rev-parse --short HEAD)
+          echo "ref=$OLD" >> $GITHUB_OUTPUT
+          echo "Old ref: $OLD"
+
+      - name: Bump crate submodule
+        run: |
+          cd "${{ steps.paths.outputs.crate_sub }}"
+          git fetch origin
+          git checkout "${{ inputs.ref }}"
+          cd "$GITHUB_WORKSPACE"
+
+      - name: Bump legacy submodule (if exists)
+        run: |
+          LEGACY="${{ steps.paths.outputs.legacy_sub }}"
+          if [ -d "$LEGACY/.git" ] || [ -f "$LEGACY/.git" ]; then
+            cd "$LEGACY"
+            git fetch origin
+            git checkout "${{ inputs.ref }}"
+            cd "$GITHUB_WORKSPACE"
+          else
+            echo "Legacy submodule not initialized — skipping"
+          fi
+
+      - name: Record new ref
+        id: new-ref
+        run: |
+          NEW=$(git -C "${{ steps.paths.outputs.crate_sub }}" describe --tags --always 2>/dev/null || git -C "${{ steps.paths.outputs.crate_sub }}" rev-parse --short HEAD)
+          echo "ref=$NEW" >> $GITHUB_OUTPUT
+          echo "New ref: $NEW"
+
+      - name: Apply patch
+        id: patch
+        run: |
+          SUB="${{ steps.paths.outputs.crate_sub }}"
+          PATCH="${{ steps.paths.outputs.patch }}"
+
+          if git -C "$SUB" apply --reverse --check "$GITHUB_WORKSPACE/$PATCH" >/dev/null 2>&1; then
+            echo "Patch already applied"
+            echo "status=clean" >> $GITHUB_OUTPUT
+          elif git -C "$SUB" apply --check "$GITHUB_WORKSPACE/$PATCH" 2>/tmp/patch-err.txt; then
+            git -C "$SUB" apply --3way "$GITHUB_WORKSPACE/$PATCH"
+            echo "Patch applied cleanly"
+            echo "status=clean" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Patch does not apply cleanly against ${{ inputs.ref }}"
+            cat /tmp/patch-err.txt
+            echo ""
+            echo "=== Attempting --3way for conflict details ==="
+            git -C "$SUB" apply --3way "$GITHUB_WORKSPACE/$PATCH" 2>&1 || true
+            echo "status=conflict" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fail on conflict
+        if: steps.patch.outputs.status == 'conflict'
+        run: |
+          echo "::error::Patch conflicts with ${{ inputs.target }} at ${{ inputs.ref }}. Manual rebase required."
+          exit 1
+
+      - name: Create branch and PR
+        if: steps.patch.outputs.status == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="deps/bump-${{ inputs.target }}-${{ inputs.ref }}"
+          # Sanitize branch name
+          BRANCH=$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9._/-]/-/g')
+
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "deps: bump ${{ inputs.target }} to ${{ inputs.ref }}
+
+          Submodule update: ${{ steps.old-ref.outputs.ref }} → ${{ steps.new-ref.outputs.ref }}
+          Local patches re-applied successfully.
+
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "Bump ${{ inputs.target }} to ${{ inputs.ref }}" \
+            --body "## Submodule Bump
+
+          **Target:** ${{ inputs.target }}
+          **Old ref:** \`${{ steps.old-ref.outputs.ref }}\`
+          **New ref:** \`${{ steps.new-ref.outputs.ref }}\`
+          **Patches:** ✅ Applied cleanly
+
+          > This PR was auto-created by the [Upstream Bump workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          > Please verify CI passes before merging." \
+            --label "dependencies"

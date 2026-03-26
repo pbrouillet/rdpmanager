@@ -22,6 +22,7 @@ React/Fluent UI  ←→  WebUI JS bindings  ←→  Rust backend
 | [Embedded Assets](embedded-assets.md) | Build-time UI embedding, VFS serving, disk fallback, single-binary deployment |
 | [Debugging](debugging.md) | Logging setup, RUST_LOG usage, build issues, runtime debugging, platform-specific tools |
 | [Session Tabs & Embedding](session-tabs.md) | RDP session lifecycle, tab UI, Phase 1/2 embedding plan, FreeRDP settings |
+| [Upstream Management](upstream-management.md) | Patch system, CI guardrails, submodule bump and upstream PR workflows |
 
 ## Quick Start
 

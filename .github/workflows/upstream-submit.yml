@@ -1,0 +1,146 @@
+name: Submit Patch Upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which patch to submit'
+        required: true
+        type: choice
+        options:
+          - freerdp
+          - webui
+      fork_owner:
+        description: 'GitHub username/org that owns the upstream fork'
+        required: true
+        type: string
+      base_branch:
+        description: 'Upstream base branch to target'
+        required: false
+        type: string
+        default: 'master'
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set patch metadata
+        id: meta
+        run: |
+          if [ "${{ inputs.target }}" = "freerdp" ]; then
+            echo "upstream_repo=FreeRDP/FreeRDP" >> $GITHUB_OUTPUT
+            echo "fork_repo=${{ inputs.fork_owner }}/FreeRDP" >> $GITHUB_OUTPUT
+            echo "patch=patches/freerdp/aad-fallback-parse.patch" >> $GITHUB_OUTPUT
+            echo "branch=fix/aad-fallback-parse" >> $GITHUB_OUTPUT
+            echo "title=fix(aad): handle malformed JSON and string-typed authentication_result" >> $GITHUB_OUTPUT
+            cat > /tmp/pr-body.md << 'BODY'
+          ## Summary
+
+          Fix intermittent AAD/Entra ID authentication failures caused by:
+          1. **Malformed JSON payloads** from RD Gateway (trailing garbage bytes after valid JSON)
+          2. **Type mismatch** in `authentication_result` — sometimes returned as string `"0"` instead of number `0`
+
+          ## Changes
+
+          - **`aad_parse_state_initial()`**: Add text-based fallback extraction of `ts_nonce` when JSON parsing fails due to trailing garbage
+          - **`aad_parse_state_auth()`**: Handle both numeric and string-typed `authentication_result` values using `WINPR_JSON_IsNumber()`/`WINPR_JSON_IsString()` branching
+          - Add `#include <errno.h>` for `strtoul()` error checking
+
+          ## Testing
+
+          Tested against Azure AD / Entra ID environments where RD Gateway returns non-standard JSON responses. Previously these connections would fail with authentication errors; with this patch they succeed reliably.
+          BODY
+          else
+            echo "upstream_repo=webui-dev/webui" >> $GITHUB_OUTPUT
+            echo "fork_repo=${{ inputs.fork_owner }}/webui" >> $GITHUB_OUTPUT
+            echo "patch=patches/webui/navigate-passthrough.patch" >> $GITHUB_OUTPUT
+            echo "branch=feat/navigate-passthrough" >> $GITHUB_OUTPUT
+            echo "title=feat: add webui_set_navigate_passthrough() for OAuth flows" >> $GITHUB_OUTPUT
+            cat > /tmp/pr-body.md << 'BODY'
+          ## Summary
+
+          Add `webui_set_navigate_passthrough()` API that allows WebView navigation events to proceed without being blocked by the default policy handler.
+
+          ## Motivation
+
+          When using WebUI for applications that require OAuth/OpenID Connect authentication (e.g., Microsoft Entra ID), the authentication flow involves dozens of cross-domain redirects. WebUI's default navigation policy handler (`decide-policy` signal on WebKit) blocks all navigation after the initial page load via `webkit_policy_decision_ignore()`, which breaks OAuth flows entirely.
+
+          ## Changes
+
+          - Add `bool navigate_passthrough` field to window structure
+          - Add `webui_set_navigate_passthrough(size_t window, bool status)` C API
+          - Add `set_navigate_passthrough(bool status)` C++ wrapper
+          - Modify navigation policy handler to skip blocking when passthrough is enabled
+
+          ## Usage
+
+          ```c
+          // Enable passthrough before starting OAuth flow
+          webui_set_navigate_passthrough(window, true);
+          // ... OAuth redirects proceed normally ...
+          // Disable after auth completes
+          webui_set_navigate_passthrough(window, false);
+          ```
+          BODY
+          fi
+
+      - name: Clone upstream via fork
+        env:
+          UPSTREAM_PAT: ${{ secrets.UPSTREAM_PAT }}
+        run: |
+          git clone --depth 50 \
+            "https://x-access-token:${UPSTREAM_PAT}@github.com/${{ steps.meta.outputs.fork_repo }}.git" \
+            /tmp/upstream
+          cd /tmp/upstream
+          git remote add upstream "https://github.com/${{ steps.meta.outputs.upstream_repo }}.git"
+          git fetch upstream "${{ inputs.base_branch }}" --depth 50
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create patch branch
+        run: |
+          cd /tmp/upstream
+          git checkout -b "${{ steps.meta.outputs.branch }}" "upstream/${{ inputs.base_branch }}"
+
+      - name: Apply patch
+        id: apply
+        run: |
+          cd /tmp/upstream
+          PATCH="${GITHUB_WORKSPACE}/${{ steps.meta.outputs.patch }}"
+          if git apply --check "$PATCH" 2>/tmp/apply-err.txt; then
+            git apply "$PATCH"
+            git add -A
+            git commit -m "${{ steps.meta.outputs.title }}"
+            echo "status=clean" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Patch does not apply against upstream/${{ inputs.base_branch }}"
+            cat /tmp/apply-err.txt
+            echo "status=conflict" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push and create PR
+        if: steps.apply.outputs.status == 'clean'
+        env:
+          UPSTREAM_PAT: ${{ secrets.UPSTREAM_PAT }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_PAT }}
+        run: |
+          cd /tmp/upstream
+          git push origin "${{ steps.meta.outputs.branch }}" --force-with-lease
+
+          gh pr create \
+            --repo "${{ steps.meta.outputs.upstream_repo }}" \
+            --head "${{ inputs.fork_owner }}:${{ steps.meta.outputs.branch }}" \
+            --base "${{ inputs.base_branch }}" \
+            --title "${{ steps.meta.outputs.title }}" \
+            --body-file /tmp/pr-body.md \
+            || echo "::warning::PR creation failed — it may already exist. Check ${{ steps.meta.outputs.fork_repo }}"
+
+      - name: Fail on conflict
+        if: steps.apply.outputs.status == 'conflict'
+        run: |
+          echo "::error::Cannot submit patch — it does not apply against upstream/${{ inputs.base_branch }}"
+          echo "Rebase the patch first, then re-run this workflow."
+          exit 1
