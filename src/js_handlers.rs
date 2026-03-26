@@ -7,6 +7,8 @@
 //! Equivalent to: `src/js_handlers.cpp` / `js_handlers.hpp`
 
 use crate::config_manager::ConfigManager;
+use crate::dialog_manager::DialogManager;
+use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::session_manager::SessionManager;
 use crate::types::ConnectionProfile;
 use crate::window_embedding::ContentRect;
@@ -18,15 +20,23 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// Global shared state accessible from WebUI callbacks (which are C function pointers).
 static STATE: OnceLock<Arc<Mutex<ConfigManager>>> = OnceLock::new();
 static SESSION_STATE: OnceLock<Arc<Mutex<SessionManager>>> = OnceLock::new();
+static AAD_STATE: OnceLock<Arc<AADAuthHandler>> = OnceLock::new();
+static DIALOG_STATE: OnceLock<Arc<DialogManager>> = OnceLock::new();
 
 /// Register all JavaScript bindings on the given WebUI window.
 pub fn bind_all(
     window: usize,
     config_manager: Arc<Mutex<ConfigManager>>,
     session_manager: Arc<Mutex<SessionManager>>,
+    aad_handler: Option<Arc<AADAuthHandler>>,
+    dialog_manager: Arc<DialogManager>,
 ) {
     STATE.get_or_init(|| config_manager);
     SESSION_STATE.get_or_init(|| session_manager);
+    if let Some(aad) = aad_handler {
+        AAD_STATE.get_or_init(|| aad);
+    }
+    DIALOG_STATE.get_or_init(|| dialog_manager);
 
     let bindings: &[(&str, unsafe extern "C" fn(*mut webui_sys::webui_event_t))] = &[
         // Database management
@@ -420,19 +430,43 @@ unsafe extern "C" fn on_get_folders(e: *mut webui_sys::webui_event_t) {
     unsafe { return_string(e, &json) };
 }
 
-// ── Dialog responses (stubs — need DialogManager port) ───────────────────
+// ── Dialog responses ─────────────────────────────────────────────────────
 
 unsafe extern "C" fn on_certificate_response(e: *mut webui_sys::webui_event_t) {
-    let _choice = unsafe { webui_sys::webui_get_int_at(e, 0) };
-    warn!("certificateResponse: DialogManager not yet ported");
+    let choice = unsafe { webui_sys::webui_get_int_at(e, 0) } as i32;
+    if let Some(dm) = DIALOG_STATE.get() {
+        dm.on_certificate_response(choice);
+    } else {
+        warn!("certificateResponse: DialogManager not initialized");
+    }
 }
 
-unsafe extern "C" fn on_auth_response(_e: *mut webui_sys::webui_event_t) {
-    warn!("authResponse: DialogManager not yet ported");
+unsafe extern "C" fn on_auth_response(e: *mut webui_sys::webui_event_t) {
+    let json_str = unsafe { get_string_at(e, 0) };
+    if let Some(dm) = DIALOG_STATE.get() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            let success = value.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            let username = value.get("username").and_then(|v| v.as_str()).unwrap_or("");
+            let password = value.get("password").and_then(|v| v.as_str()).unwrap_or("");
+            let domain = value.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            dm.on_auth_response(success, username, password, domain);
+        } else {
+            warn!("authResponse: failed to parse JSON: {}", json_str);
+            dm.on_auth_response(false, "", "", "");
+        }
+    } else {
+        warn!("authResponse: DialogManager not initialized");
+    }
 }
 
-unsafe extern "C" fn on_aad_auth_response(_e: *mut webui_sys::webui_event_t) {
-    warn!("aadAuthResponse: AADAuthHandler not yet ported");
+unsafe extern "C" fn on_aad_auth_response(e: *mut webui_sys::webui_event_t) {
+    let success = unsafe { webui_sys::webui_get_bool_at(e, 0) };
+    let redirect_url = unsafe { get_string_at(e, 1) };
+    if let Some(aad) = AAD_STATE.get() {
+        aad.on_response(success, &redirect_url);
+    } else {
+        warn!("aadAuthResponse: AADAuthHandler not registered");
+    }
 }
 
 // ── Feed discovery (stubs — need FeedDiscoveryManager port) ──────────────

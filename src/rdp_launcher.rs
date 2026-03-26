@@ -1,17 +1,23 @@
 //! FreeRDP session management and threading.
 //!
 //! Spawns FreeRDP sessions on background threads using the FreeRDP library API.
-//! On Linux, links to xfreerdp-client3 for X11 rendering.
-//! On Windows/macOS, platform clients are not yet built — returns unsupported.
+//! Each platform links its native FreeRDP client library:
+//!   - Linux: xfreerdp-client3 (X11 rendering)
+//!   - Windows: wfreerdp-client3 (Win32 GDI rendering)
+//!   - macOS: MacFreeRDP-library (Cocoa/NSView rendering)
 //!
 //! Equivalent to: `src/rdp_launcher.cpp` / `rdp_launcher.hpp`
 
-use crate::types::{ConnectionProfile, RDPConnectionState};
+use crate::dialog_manager::DialogManager;
+use crate::types::{
+    AuthRequest, CertificateInfo, ConnectionProfile, RDPConnectionState,
+};
 use log::{info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 /// Session info exposed to the UI for tab display.
@@ -66,11 +72,24 @@ pub struct RDPSession {
     /// FreeRDP context pointer (as usize for Send safety). Only valid on Linux.
     #[allow(dead_code)]
     context_ptr: usize,
+    /// FreeRDP instance pointer (as usize) — used as key in the global session map.
+    instance_ptr: usize,
+    /// Native window handle (HWND on Windows) for the FreeRDP rendering window.
+    /// Currently None — extracting the HWND from wfContext requires bindgen to
+    /// expose the platform-specific struct fields in a future iteration.
+    native_window: Option<u64>,
 }
 
 impl RDPSession {
     pub fn get_state(&self) -> RDPConnectionState {
         u8_to_state(self.state.load(Ordering::Relaxed))
+    }
+
+    /// Get the native window handle for this session's FreeRDP window.
+    /// Returns None until wfContext HWND extraction is implemented.
+    #[allow(dead_code)]
+    pub fn get_native_window(&self) -> Option<u64> {
+        self.native_window
     }
 
     pub fn info(&self) -> SessionInfo {
@@ -82,54 +101,218 @@ impl RDPSession {
     }
 }
 
-// On Linux, link to xfreerdp-client3 which provides RdpClientEntry
-#[cfg(target_os = "linux")]
+// Platform client libraries provide RdpClientEntry:
+// Linux: xfreerdp-client3, Windows: wfreerdp-client3, macOS: MacFreeRDP-library
 extern "C" {
     fn RdpClientEntry(entry: *mut freerdp_sys::RDP_CLIENT_ENTRY_POINTS_V1) -> std::ffi::c_int;
 }
 
+// ── Global session map ──────────────────────────────────────────────────
+
+/// Per-session state accessible from static FreeRDP callbacks.
+struct SessionCallbackState {
+    dialog_manager: Arc<DialogManager>,
+    hostname: String,
+}
+
+/// Maps FreeRDP instance pointers to their callback state.
+/// Used by the static `extern "C"` callback trampolines to find the
+/// DialogManager for a given FreeRDP session.
+static SESSION_MAP: OnceLock<Mutex<HashMap<usize, Arc<SessionCallbackState>>>> = OnceLock::new();
+
+fn get_session_map() -> &'static Mutex<HashMap<usize, Arc<SessionCallbackState>>> {
+    SESSION_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// ── FreeRDP callback trampolines ────────────────────────────────────────
+
+const VERIFY_CERT_FLAG_CHANGED: u32 = 0x40;
+
+/// Convert a nullable C string pointer to a Rust String.
+unsafe fn ptr_to_string(ptr: *const std::ffi::c_char) -> String {
+    if ptr.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(ptr).to_string_lossy().into_owned()
+    }
+}
+
+/// Allocate a C string via malloc (compatible with FreeRDP's `free()`).
+unsafe fn c_strdup(s: &str) -> *mut std::ffi::c_char {
+    let bytes = s.as_bytes();
+    let len = bytes.len() + 1;
+    let ptr = libc::malloc(len) as *mut u8;
+    if !ptr.is_null() {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+        *ptr.add(bytes.len()) = 0;
+    }
+    ptr as *mut std::ffi::c_char
+}
+
+/// FreeRDP certificate verification callback.
+/// Looks up the session in the global map and delegates to DialogManager.
+unsafe extern "C" fn verify_certificate_cb(
+    instance: *mut freerdp_sys::freerdp,
+    host: *const std::ffi::c_char,
+    port: u16,
+    common_name: *const std::ffi::c_char,
+    subject: *const std::ffi::c_char,
+    issuer: *const std::ffi::c_char,
+    fingerprint: *const std::ffi::c_char,
+    flags: u32,
+) -> u32 {
+    let state = {
+        let map = get_session_map().lock().unwrap();
+        map.get(&(instance as usize)).cloned()
+    };
+
+    let Some(state) = state else {
+        warn!("verify_certificate_cb: no session found for instance");
+        return 0;
+    };
+
+    let info = CertificateInfo {
+        host: ptr_to_string(host),
+        port,
+        common_name: ptr_to_string(common_name),
+        subject: ptr_to_string(subject),
+        issuer: ptr_to_string(issuer),
+        fingerprint: ptr_to_string(fingerprint),
+        is_changed: flags & VERIFY_CERT_FLAG_CHANGED != 0,
+        old_fingerprint: String::new(),
+    };
+
+    state.dialog_manager.handle_certificate_verify(&info) as u32
+}
+
+/// Shared implementation for Authenticate and GatewayAuthenticate callbacks.
+unsafe fn handle_auth(
+    instance: *mut freerdp_sys::freerdp,
+    username: *mut *mut std::ffi::c_char,
+    password: *mut *mut std::ffi::c_char,
+    domain: *mut *mut std::ffi::c_char,
+    is_gateway: bool,
+) -> i32 {
+    let state = {
+        let map = get_session_map().lock().unwrap();
+        map.get(&(instance as usize)).cloned()
+    };
+
+    let Some(state) = state else {
+        warn!("authenticate_cb: no session found for instance");
+        return 0;
+    };
+
+    let request = AuthRequest {
+        hostname: state.hostname.clone(),
+        is_gateway,
+        current_username: if !username.is_null() && !(*username).is_null() {
+            ptr_to_string(*username)
+        } else {
+            String::new()
+        },
+        current_domain: if !domain.is_null() && !(*domain).is_null() {
+            ptr_to_string(*domain)
+        } else {
+            String::new()
+        },
+    };
+
+    let response = state.dialog_manager.handle_authenticate(&request);
+
+    if response.success {
+        if !username.is_null() {
+            if !(*username).is_null() {
+                libc::free(*username as *mut std::ffi::c_void);
+            }
+            *username = c_strdup(&response.username);
+        }
+        if !password.is_null() {
+            if !(*password).is_null() {
+                libc::free(*password as *mut std::ffi::c_void);
+            }
+            *password = c_strdup(&response.password);
+        }
+        if !domain.is_null() {
+            if !(*domain).is_null() {
+                libc::free(*domain as *mut std::ffi::c_void);
+            }
+            *domain = c_strdup(&response.domain);
+        }
+        1 // TRUE
+    } else {
+        0 // FALSE
+    }
+}
+
+/// FreeRDP authentication callback (NLA/TLS/RDP credentials).
+unsafe extern "C" fn authenticate_cb(
+    instance: *mut freerdp_sys::freerdp,
+    username: *mut *mut std::ffi::c_char,
+    password: *mut *mut std::ffi::c_char,
+    domain: *mut *mut std::ffi::c_char,
+) -> i32 {
+    handle_auth(instance, username, password, domain, false)
+}
+
+/// FreeRDP gateway authentication callback (same signature as Authenticate).
+unsafe extern "C" fn gateway_authenticate_cb(
+    instance: *mut freerdp_sys::freerdp,
+    username: *mut *mut std::ffi::c_char,
+    password: *mut *mut std::ffi::c_char,
+    domain: *mut *mut std::ffi::c_char,
+) -> i32 {
+    handle_auth(instance, username, password, domain, true)
+}
+
+// ── RDPLauncher ─────────────────────────────────────────────────────────
+
 /// Manages FreeRDP sessions.
 pub struct RDPLauncher {
     sessions: HashMap<String, Arc<Mutex<RDPSession>>>,
+    dialog_manager: Option<Arc<DialogManager>>,
 }
 
 impl RDPLauncher {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            dialog_manager: None,
         }
+    }
+
+    /// Set the dialog manager for certificate/auth callbacks.
+    pub fn set_dialog_manager(&mut self, dm: Arc<DialogManager>) {
+        self.dialog_manager = Some(dm);
     }
 
     /// Launch a new RDP session. Returns session ID on success.
-    pub fn launch(&mut self, profile: &ConnectionProfile) -> Result<String, String> {
+    /// If `parent_window_id` is provided, FreeRDP will embed its window as a
+    /// child of that native window handle (HWND on Windows).
+    pub fn launch(
+        &mut self,
+        profile: &ConnectionProfile,
+        parent_window_id: Option<u64>,
+    ) -> Result<String, String> {
         let session_id = uuid::Uuid::new_v4().to_string();
 
         info!(
-            "Launching RDP session {} to {}:{}",
-            session_id, profile.hostname, profile.port
+            "Launching RDP session {} to {}:{} (parent_window_id={:?})",
+            session_id, profile.hostname, profile.port, parent_window_id
         );
 
-        #[cfg(target_os = "linux")]
-        {
-            let session = self.launch_freerdp(&session_id, profile)?;
-            self.sessions
-                .insert(session_id.clone(), Arc::new(Mutex::new(session)));
-            Ok(session_id)
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = &session_id;
-            Err("RDP sessions require the FreeRDP platform client. Currently only supported on Linux.".into())
-        }
+        let session = self.launch_freerdp(&session_id, profile, parent_window_id)?;
+        self.sessions
+            .insert(session_id.clone(), Arc::new(Mutex::new(session)));
+        Ok(session_id)
     }
 
-    /// Launch using FreeRDP library API (Linux/X11 only).
-    #[cfg(target_os = "linux")]
+    /// Launch using FreeRDP library API (platform client provides native window).
     fn launch_freerdp(
         &self,
         session_id: &str,
         profile: &ConnectionProfile,
+        parent_window_id: Option<u64>,
     ) -> Result<RDPSession, String> {
         unsafe {
             // Initialize entry points
@@ -156,11 +339,39 @@ impl RDPLauncher {
                 return Err("FreeRDP context has null settings".into());
             }
 
-            self.apply_settings(settings, profile);
+            self.apply_settings(settings, profile, parent_window_id);
+
+            // Install FreeRDP callbacks for certificate verification and authentication
+            let instance = (*context).instance;
+            let instance_addr = if !instance.is_null() {
+                if let Some(dm) = &self.dialog_manager {
+                    let cb_state = Arc::new(SessionCallbackState {
+                        dialog_manager: Arc::clone(dm),
+                        hostname: profile.hostname.clone(),
+                    });
+                    get_session_map()
+                        .lock()
+                        .unwrap()
+                        .insert(instance as usize, cb_state);
+
+                    (*instance).VerifyCertificateEx = Some(verify_certificate_cb);
+                    (*instance).Authenticate = Some(authenticate_cb);
+                    (*instance).GatewayAuthenticate = Some(gateway_authenticate_cb);
+                    // GetAccessToken left unset — AAD handler will be implemented separately
+                    info!("Installed FreeRDP callbacks for session {}", session_id);
+                }
+                instance as usize
+            } else {
+                0
+            };
 
             // Start FreeRDP client (spawns internal thread)
             let start_rc = freerdp_sys::freerdp_client_start(context);
             if start_rc != 0 {
+                // Clean up session map on start failure
+                if instance_addr != 0 {
+                    get_session_map().lock().unwrap().remove(&instance_addr);
+                }
                 freerdp_sys::freerdp_client_context_free(context);
                 return Err(format!("freerdp_client_start failed: {}", start_rc));
             }
@@ -196,10 +407,19 @@ impl RDPLauncher {
                     Ordering::Relaxed,
                 );
 
+                // Remove from global session map before freeing context
+                if instance_addr != 0 {
+                    get_session_map().lock().unwrap().remove(&instance_addr);
+                }
+
                 freerdp_sys::freerdp_client_stop(ctx);
                 freerdp_sys::freerdp_client_context_free(ctx);
                 info!("Session {} cleaned up", sid);
             });
+
+            // TODO: Extract HWND from wfContext after freerdp_client_start().
+            // Requires bindgen to expose wfContext struct fields.
+            let native_window: Option<u64> = None;
 
             Ok(RDPSession {
                 id: session_id.to_string(),
@@ -207,16 +427,18 @@ impl RDPLauncher {
                 state,
                 thread: Some(thread),
                 context_ptr: context_addr,
+                instance_ptr: instance_addr,
+                native_window,
             })
         }
     }
 
     /// Apply ConnectionProfile settings to FreeRDP rdpSettings.
-    #[cfg(target_os = "linux")]
     unsafe fn apply_settings(
         &self,
         settings: *mut freerdp_sys::rdpSettings,
         profile: &ConnectionProfile,
+        parent_window_id: Option<u64>,
     ) {
         use std::ffi::CString;
 
@@ -274,8 +496,18 @@ impl RDPLauncher {
         };
         set_str!(FreeRDP_WindowTitle, title);
 
-        // No decorations when we'll embed (Phase 2); for now keep them
-        set_bool!(FreeRDP_Decorations, true);
+        // When embedding, set ParentWindowId — FreeRDP auto-sets
+        // EmbeddedWindow=true and Decorations=false.
+        if let Some(parent_id) = parent_window_id {
+            info!("Setting FreeRDP_ParentWindowId=0x{:x}", parent_id);
+            freerdp_sys::freerdp_settings_set_uint64(
+                settings,
+                freerdp_sys::FreeRDP_ParentWindowId as _,
+                parent_id,
+            );
+        } else {
+            set_bool!(FreeRDP_Decorations, true);
+        }
 
         // Dynamic resolution
         if profile.dynamic_resolution {
@@ -338,16 +570,21 @@ impl RDPLauncher {
                 Ordering::Relaxed,
             );
 
-            #[cfg(target_os = "linux")]
-            {
-                if session.context_ptr != 0 {
-                    unsafe {
-                        let ctx = session.context_ptr as *mut freerdp_sys::rdpContext;
-                        freerdp_sys::freerdp_client_stop(ctx);
-                    }
-                    // The background thread will clean up the context
-                    session.context_ptr = 0;
+            // Remove from global session map (callback trampolines won't find it anymore)
+            if session.instance_ptr != 0 {
+                get_session_map()
+                    .lock()
+                    .unwrap()
+                    .remove(&session.instance_ptr);
+            }
+
+            if session.context_ptr != 0 {
+                unsafe {
+                    let ctx = session.context_ptr as *mut freerdp_sys::rdpContext;
+                    freerdp_sys::freerdp_client_stop(ctx);
                 }
+                // The background thread will clean up the context
+                session.context_ptr = 0;
             }
 
             // Let the thread finish naturally
@@ -377,8 +614,7 @@ impl RDPLauncher {
             .and_then(|s| s.lock().ok().map(|s| s.info()))
     }
 
-    /// Send a dynamic resolution update to an active session (Linux only).
-    #[cfg(target_os = "linux")]
+    /// Send a dynamic resolution update to an active session.
     pub fn send_resize(&self, session_id: &str, width: u32, height: u32) -> bool {
         if let Some(session_arc) = self.sessions.get(session_id) {
             let session = session_arc.lock().unwrap();
@@ -421,11 +657,6 @@ impl RDPLauncher {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    pub fn send_resize(&self, _session_id: &str, _width: u32, _height: u32) -> bool {
-        false
-    }
-
     /// Clean up completed sessions (already disconnected).
     pub fn cleanup_finished(&mut self) {
         let finished: Vec<String> = self
@@ -447,6 +678,10 @@ impl RDPLauncher {
         for id in finished {
             if let Some(session_arc) = self.sessions.remove(&id) {
                 if let Ok(mut session) = session_arc.lock() {
+                    // Ensure session is removed from global callback map
+                    if session.instance_ptr != 0 {
+                        get_session_map().lock().unwrap().remove(&session.instance_ptr);
+                    }
                     if let Some(handle) = session.thread.take() {
                         drop(session);
                         let _: Result<(), _> = handle.join();

@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::config_manager::ConfigManager;
+use crate::dialog_manager::DialogManager;
 use crate::embedded_ui;
+use crate::gui::aad_auth_handler::AADAuthHandler;
 use crate::js_handlers;
 use crate::session_manager::SessionManager;
 
@@ -19,17 +21,28 @@ pub struct MainWindow {
     window: usize,
     config_manager: Arc<Mutex<ConfigManager>>,
     session_manager: Arc<Mutex<SessionManager>>,
+    aad_handler: Arc<AADAuthHandler>,
+    dialog_manager: Arc<DialogManager>,
 }
 
 impl MainWindow {
     pub fn new() -> Self {
         let window = unsafe { webui_sys::webui_new_window() };
         let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
-        let session_manager = Arc::new(Mutex::new(SessionManager::new(window)));
+        let dialog_manager = Arc::new(DialogManager::new(window));
+        let session_manager = Arc::new(Mutex::new(SessionManager::new(
+            window,
+            Arc::clone(&dialog_manager),
+        )));
+        let aad_handler = Arc::new(AADAuthHandler::new());
+        aad_handler.set_main_window(window);
+        aad_handler.register_global();
         Self {
             window,
             config_manager,
             session_manager,
+            aad_handler,
+            dialog_manager,
         }
     }
 
@@ -51,6 +64,8 @@ impl MainWindow {
             self.window,
             Arc::clone(&self.config_manager),
             Arc::clone(&self.session_manager),
+            Some(Arc::clone(&self.aad_handler)),
+            Arc::clone(&self.dialog_manager),
         );
 
         if embedded_ui::has_files() {

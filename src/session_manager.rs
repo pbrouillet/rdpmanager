@@ -3,11 +3,13 @@
 //! Manages active RDP sessions and coordinates between the RDP launcher,
 //! the window embedding layer, and the React UI via JS bindings.
 
+use crate::dialog_manager::DialogManager;
 use crate::rdp_launcher::{RDPLauncher, SessionInfo};
 use crate::types::ConnectionProfile;
 use crate::window_embedding::{ContentRect, EmbeddingHost};
 use log::{info, warn};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Coordinates RDP sessions with window embedding and the UI.
 pub struct SessionManager {
@@ -22,9 +24,11 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(webui_window: usize) -> Self {
+    pub fn new(webui_window: usize, dialog_manager: Arc<DialogManager>) -> Self {
+        let mut launcher = RDPLauncher::new();
+        launcher.set_dialog_manager(dialog_manager);
         Self {
-            launcher: RDPLauncher::new(),
+            launcher,
             embedding: EmbeddingHost::new(webui_window),
             rects: HashMap::new(),
             active_session: None,
@@ -33,12 +37,15 @@ impl SessionManager {
     }
 
     /// Connect to an RDP server. Returns session ID on success.
+    /// If embedding is supported, passes the WebUI parent window ID to FreeRDP
+    /// so the RDP window is created as a child of the browser window.
     pub fn connect(
         &mut self,
         profile: &ConnectionProfile,
         rect: ContentRect,
     ) -> Result<String, String> {
-        let session_id = self.launcher.launch(profile)?;
+        let parent_window_id = self.embedding.get_parent_window_id();
+        let session_id = self.launcher.launch(profile, parent_window_id)?;
         self.rects.insert(session_id.clone(), rect);
         self.active_session = Some(session_id.clone());
 

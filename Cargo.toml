@@ -33,6 +33,9 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 sha2 = "0.10"
 base64 = "0.22"
 
+# C runtime (malloc/free for FreeRDP callback strings)
+libc = "0.2"
+
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 url = "2"
