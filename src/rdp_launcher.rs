@@ -702,7 +702,6 @@ impl RDPLauncher {
             let nw_clone = Arc::clone(&native_window);
             let sid = session_id.to_string();
             let host = profile.hostname.clone();
-            let parent_hwnd_for_thread = parent_window_id.unwrap_or(0);
 
             // Background thread waits for the FreeRDP session to finish
             let thread = std::thread::spawn(move || {
@@ -714,15 +713,14 @@ impl RDPLauncher {
                     Ordering::Relaxed,
                 );
 
-                // On Windows, poll for the FreeRDP HWND (class "wfreerdp")
-                // created by wf_post_connect after the connection is established.
+                // On Windows, poll for the FreeRDP HWND (class "wfreerdp").
+                // FreeRDP sets GWLP_USERDATA to the wfContext pointer (same
+                // address as rdpContext), so we match by context_addr.
                 #[cfg(target_os = "windows")]
-                if parent_hwnd_for_thread != 0 {
-                    use crate::window_embedding::find_freerdp_child_window;
+                {
+                    use crate::window_embedding::find_freerdp_window;
                     for attempt in 0..200 {
-                        if let Some(hwnd) =
-                            find_freerdp_child_window(parent_hwnd_for_thread as usize)
-                        {
+                        if let Some(hwnd) = find_freerdp_window(context_addr) {
                             nw_clone.store(hwnd as u64, Ordering::Relaxed);
                             info!(
                                 "Session {} — captured HWND=0x{:x} (attempt {})",
@@ -734,7 +732,7 @@ impl RDPLauncher {
                     }
                 }
                 #[cfg(not(target_os = "windows"))]
-                let _ = (nw_clone, parent_hwnd_for_thread);
+                let _ = nw_clone;
 
                 // Wait for internal FreeRDP thread to complete.
                 // rdpClientContext extends rdpContext; the thread handle is in the
@@ -836,18 +834,11 @@ impl RDPLauncher {
         };
         set_str!(FreeRDP_WindowTitle, title);
 
-        // When embedding, set ParentWindowId — FreeRDP auto-sets
-        // EmbeddedWindow=true and Decorations=false.
-        if let Some(parent_id) = parent_window_id {
-            info!("Setting FreeRDP_ParentWindowId=0x{:x}", parent_id);
-            freerdp_sys::freerdp_settings_set_uint64(
-                settings,
-                freerdp_sys::FreeRDP_ParentWindowId as _,
-                parent_id,
-            );
-        } else {
-            set_bool!(FreeRDP_Decorations, true);
-        }
+        // Don't set ParentWindowId — the WebUI HWND can become stale by the
+        // time FreeRDP's internal thread calls CreateWindowEx (error 1400).
+        // Instead, let FreeRDP create a standalone top-level window and
+        // reparent it into the WebUI container afterwards via SetParent.
+        set_bool!(FreeRDP_Decorations, true);
 
         // Dynamic resolution
         if profile.dynamic_resolution {

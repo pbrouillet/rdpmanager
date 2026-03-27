@@ -1,8 +1,8 @@
 //! Platform-specific window embedding for FreeRDP sessions.
 //!
-//! Windows: Uses Win32 SetParent()/ShowWindow()/SetWindowPos() to reparent the
-//!   FreeRDP HWND into the WebUI browser window. FreeRDP_ParentWindowId is set
-//!   before launch so FreeRDP auto-configures EmbeddedWindow and Decorations.
+//! Windows: FreeRDP creates a standalone top-level window. After connection,
+//!   we find it by matching GWLP_USERDATA (== rdpContext pointer) and reparent
+//!   it into the WebUI browser window via SetParent + WS_CHILD style change.
 //! Linux: FreeRDP_ParentWindowId + XReparentWindow (future)
 //! macOS: NSView embedding or separate window fallback (future)
 
@@ -25,6 +25,10 @@ mod win32 {
     pub const SW_SHOW: c_int = 5;
     pub const SW_HIDE: c_int = 0;
     pub const SWP_NOZORDER: UINT = 0x0004;
+    pub const GWL_STYLE: c_int = -16;
+    pub const GWLP_USERDATA: c_int = -21;
+    pub const WS_CHILD: isize = 0x40000000;
+    pub const WS_VISIBLE: isize = 0x10000000;
 
     extern "system" {
         pub fn ShowWindow(hwnd: HWND, cmd: c_int) -> BOOL;
@@ -44,6 +48,8 @@ mod win32 {
             class_name: *const u16,
             window_name: *const u16,
         ) -> HWND;
+        pub fn GetWindowLongPtrW(hwnd: HWND, index: c_int) -> isize;
+        pub fn SetWindowLongPtrW(hwnd: HWND, index: c_int, new_long: isize) -> isize;
     }
 }
 
@@ -57,25 +63,37 @@ pub struct ContentRect {
     pub height: u32,
 }
 
-/// Find the FreeRDP child window (class "wfreerdp") under the given parent HWND.
-/// Returns the HWND as usize, or None if not found.
+/// Find the FreeRDP top-level window (class "wfreerdp") whose GWLP_USERDATA
+/// matches the given context address. FreeRDP's `wf_post_connect` sets
+/// GWLP_USERDATA to the wfContext pointer, which shares the same address as
+/// rdpContext due to struct extension.
 #[cfg(target_os = "windows")]
-pub fn find_freerdp_child_window(parent_hwnd: usize) -> Option<usize> {
-    // FreeRDP's Windows client registers class "wfreerdp" in wf_pre_connect
+pub fn find_freerdp_window(context_addr: usize) -> Option<usize> {
     let class_name: Vec<u16> = "wfreerdp\0".encode_utf16().collect();
-    let hwnd = unsafe {
+    let mut hwnd = unsafe {
         win32::FindWindowExW(
-            parent_hwnd as *mut _,
+            std::ptr::null_mut(), // search top-level windows
             std::ptr::null_mut(),
             class_name.as_ptr(),
             std::ptr::null(),
         )
     };
-    if hwnd.is_null() {
-        None
-    } else {
-        Some(hwnd as usize)
+    while !hwnd.is_null() {
+        let user_data = unsafe { win32::GetWindowLongPtrW(hwnd, win32::GWLP_USERDATA) };
+        if user_data as usize == context_addr {
+            return Some(hwnd as usize);
+        }
+        // Advance to the next "wfreerdp" top-level window
+        hwnd = unsafe {
+            win32::FindWindowExW(
+                std::ptr::null_mut(),
+                hwnd,
+                class_name.as_ptr(),
+                std::ptr::null(),
+            )
+        };
     }
+    None
 }
 
 /// Manages native window containers for embedded RDP sessions.
@@ -136,7 +154,8 @@ impl EmbeddingHost {
         self.sessions.contains_key(session_id)
     }
 
-    /// Show a session's embedded window and reparent it into the WebUI window.
+    /// Show a session's embedded window — reparent into the WebUI window
+    /// and change style from top-level to child.
     pub fn show_session(&self, session_id: &str) {
         #[cfg(target_os = "windows")]
         {
@@ -148,6 +167,12 @@ impl EmbeddingHost {
                 );
                 unsafe {
                     if parent != 0 {
+                        // Strip top-level decorations, make it a child window
+                        win32::SetWindowLongPtrW(
+                            hwnd as *mut _,
+                            win32::GWL_STYLE,
+                            win32::WS_CHILD | win32::WS_VISIBLE,
+                        );
                         win32::SetParent(hwnd as *mut _, parent as *mut _);
                     }
                     win32::ShowWindow(hwnd as *mut _, win32::SW_SHOW);
