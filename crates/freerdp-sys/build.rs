@@ -292,7 +292,7 @@ fn main() {
         for lib in [
             "ws2_32", "rpcrt4", "crypt32", "ncrypt", "bcrypt", "secur32", "advapi32", "user32",
             "gdi32", "shell32", "ole32", "ntdll", "iphlpapi", "winmm", "shlwapi", "dbghelp",
-            "msimg32", "credui",
+            "msimg32", "credui", "winspool",
         ] {
             println!("cargo:rustc-link-lib={lib}");
         }
@@ -333,6 +333,12 @@ fn main() {
         }
         // cJSON (WinPR JSON backend for AAD)
         println!("cargo:rustc-link-lib=cjson");
+        // jansson (FreeRDP AAD auth may use jansson as JSON backend on macOS)
+        let jansson_dir = brew_prefix("jansson").unwrap_or_default();
+        if !jansson_dir.is_empty() {
+            println!("cargo:rustc-link-search=native={}/lib", jansson_dir);
+        }
+        println!("cargo:rustc-link-lib=jansson");
         // CUPS (printer redirection — ippErrorString etc.)
         println!("cargo:rustc-link-lib=cups");
         for fw in [
@@ -342,6 +348,9 @@ fn main() {
             "Cocoa",
             "CoreGraphics",
             "AppKit",
+            "AVFoundation",
+            "AudioToolbox",
+            "CoreAudio",
         ] {
             println!("cargo:rustc-link-lib=framework={fw}");
         }
