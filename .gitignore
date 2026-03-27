@@ -10,3 +10,5 @@ crates/*/target/
 
 # Runtime databases
 *.db
+
+output/
