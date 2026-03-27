@@ -333,6 +333,8 @@ fn main() {
         }
         // cJSON (WinPR JSON backend for AAD)
         println!("cargo:rustc-link-lib=cjson");
+        // CUPS (printer redirection — ippErrorString etc.)
+        println!("cargo:rustc-link-lib=cups");
         for fw in [
             "CoreFoundation",
             "Security",

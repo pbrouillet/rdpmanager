@@ -79,6 +79,7 @@ pub struct FeedResource {
 }
 
 /// Result of a complete discover-and-import operation.
+#[derive(Default)]
 pub struct FeedDiscoveryResult {
     pub success: bool,
     pub error: Option<String>,
@@ -87,19 +88,6 @@ pub struct FeedDiscoveryResult {
     /// Account identifier (populated after authentication).
     pub account_id: String,
     pub account_display_name: String,
-}
-
-impl Default for FeedDiscoveryResult {
-    fn default() -> Self {
-        Self {
-            success: false,
-            error: None,
-            imported_count: 0,
-            tenant_count: 0,
-            account_id: String::new(),
-            account_display_name: String::new(),
-        }
-    }
 }
 
 /// Progress callback: `(message, current, total)`.
@@ -129,6 +117,7 @@ unsafe impl Send for FeedDiscoveryManager {}
 unsafe impl Sync for FeedDiscoveryManager {}
 
 /// Internal mutable state for the popup OAuth flow.
+#[derive(Default)]
 struct PopupState {
     auth_code: String,
     code_verifier: String,
@@ -136,19 +125,6 @@ struct PopupState {
     token_found: bool,
     popup_closed: bool,
     popup_window: usize,
-}
-
-impl Default for PopupState {
-    fn default() -> Self {
-        Self {
-            auth_code: String::new(),
-            code_verifier: String::new(),
-            id_token: String::new(),
-            token_found: false,
-            popup_closed: false,
-            popup_window: 0,
-        }
-    }
 }
 
 // ============================================================================

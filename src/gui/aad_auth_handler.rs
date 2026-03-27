@@ -89,12 +89,11 @@ pub struct AADAuthHandler {
 
 impl AADAuthHandler {
     pub fn new() -> Self {
-        let handler = Self {
+        Self {
             main_window: Mutex::new(0),
             state: Mutex::new(AuthState::default()),
             cv: Condvar::new(),
-        };
-        handler
+        }
     }
 
     /// Register this handler as the global instance for WebUI callbacks.

@@ -197,10 +197,8 @@ impl RdpFileData {
 
         let port = if self.server_port != 3389 && self.server_port > 0 {
             self.server_port as u16
-        } else if let Some(p) = embedded_port {
-            p
         } else {
-            3389
+            embedded_port.unwrap_or(3389)
         };
 
         ConnectionProfile {

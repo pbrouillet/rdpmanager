@@ -660,19 +660,24 @@ impl RDPLauncher {
                     (*instance).Authenticate = Some(authenticate_cb);
                     (*instance).GatewayAuthenticate = Some(gateway_authenticate_cb);
 
-                    // Install AAD access token callback (variadic fn ptr — transmute required)
-                    (*instance).GetAccessToken = std::mem::transmute(
-                        get_access_token_cb
-                            as unsafe extern "C" fn(
-                                *mut freerdp_sys::freerdp,
-                                freerdp_sys::AccessTokenType,
-                                *mut *mut std::os::raw::c_char,
-                                usize,
-                                *const std::os::raw::c_char,
-                                *const std::os::raw::c_char,
-                            )
-                                -> freerdp_sys::BOOL,
-                    );
+                    // Install AAD access token callback (variadic fn ptr — transmute required).
+                    // The target type is platform-dependent (BOOL size varies), so we
+                    // suppress the annotation lint rather than hardcoding a type.
+                    #[allow(clippy::missing_transmute_annotations)]
+                    {
+                        (*instance).GetAccessToken = std::mem::transmute(
+                            get_access_token_cb
+                                as unsafe extern "C" fn(
+                                    *mut freerdp_sys::freerdp,
+                                    freerdp_sys::AccessTokenType,
+                                    *mut *mut std::os::raw::c_char,
+                                    usize,
+                                    *const std::os::raw::c_char,
+                                    *const std::os::raw::c_char,
+                                )
+                                    -> freerdp_sys::BOOL,
+                        );
+                    }
 
                     info!("Installed FreeRDP callbacks for session {}", session_id);
                 }

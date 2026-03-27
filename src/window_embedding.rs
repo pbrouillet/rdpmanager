@@ -7,6 +7,8 @@
 //! macOS: NSView embedding or separate window fallback (future)
 
 use log::info;
+#[cfg(target_os = "windows")]
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
