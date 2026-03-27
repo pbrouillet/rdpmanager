@@ -21,7 +21,8 @@ pub struct SessionManager {
     rects: HashMap<String, ContentRect>,
     /// Currently visible session tab (None = home tab).
     active_session: Option<String>,
-    /// WebUI window handle (for native HWND/XWindow access).
+    /// WebUI window handle — reserved for future embedding support.
+    #[allow(dead_code)]
     webui_window: usize,
 }
 
@@ -50,15 +51,13 @@ impl SessionManager {
     }
 
     /// Connect to an RDP server. Returns session ID on success.
-    /// If embedding is supported, passes the WebUI parent window ID to FreeRDP
-    /// so the RDP window is created as a child of the browser window.
+    /// In popout mode, FreeRDP creates its own standalone window.
     pub fn connect(
         &mut self,
         profile: &ConnectionProfile,
         rect: ContentRect,
     ) -> Result<String, String> {
-        let parent_window_id = self.embedding.get_parent_window_id();
-        let session_id = self.launcher.launch(profile, parent_window_id)?;
+        let session_id = self.launcher.launch(profile, None)?;
         self.rects.insert(session_id.clone(), rect);
         self.active_session = Some(session_id.clone());
 
@@ -73,31 +72,12 @@ impl SessionManager {
             return false;
         }
 
-        // Lazy-register: if the session's HWND has been captured by the
-        // background thread but isn't yet tracked in the embedding host,
-        // register it now before trying to show/reposition.
+        // Track session if not already tracked
         if !self.embedding.has_session(session_id) {
-            let hwnd = self.launcher.get_native_window(session_id);
-            if hwnd != 0 {
-                self.embedding.add_session(session_id, hwnd as usize);
-            }
+            self.embedding.add_session(session_id);
         }
 
-        // Hide all other sessions
-        let other_ids: Vec<String> = self
-            .rects
-            .keys()
-            .filter(|id| id.as_str() != session_id)
-            .cloned()
-            .collect();
-        for id in &other_ids {
-            self.embedding.hide_session(id);
-        }
-
-        // Show and reposition the target session
-        self.rects.insert(session_id.to_string(), rect.clone());
-        self.embedding.show_session(session_id);
-        self.embedding.reposition_session(session_id, &rect);
+        self.rects.insert(session_id.to_string(), rect);
         self.active_session = Some(session_id.to_string());
         true
     }
