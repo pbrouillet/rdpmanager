@@ -129,7 +129,7 @@ impl DialogManager {
         );
 
         let js = format!(
-            r#"showAuthDialog({{"hostname":"{}","isGateway":{},"username":"{}","domain":"{}"}})"#,
+            r#"showAuthDialog({{"hostname":"{}","isGateway":{},"currentUsername":"{}","currentDomain":"{}"}})"#,
             escape_json(&request.hostname),
             request.is_gateway,
             escape_json(&request.current_username),
