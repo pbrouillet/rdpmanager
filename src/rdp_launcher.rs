@@ -19,7 +19,7 @@ use log::{error, info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
@@ -78,9 +78,8 @@ pub struct RDPSession {
     /// FreeRDP instance pointer (as usize) — used as key in the global session map.
     instance_ptr: usize,
     /// Native window handle (HWND on Windows) for the FreeRDP rendering window.
-    /// Currently None — extracting the HWND from wfContext requires bindgen to
-    /// expose the platform-specific struct fields in a future iteration.
-    native_window: Option<u64>,
+    /// Set asynchronously by the background thread after FreeRDP creates the window.
+    native_window: Arc<AtomicU64>,
 }
 
 impl RDPSession {
@@ -89,10 +88,9 @@ impl RDPSession {
     }
 
     /// Get the native window handle for this session's FreeRDP window.
-    /// Returns None until wfContext HWND extraction is implemented.
-    #[allow(dead_code)]
-    pub fn get_native_window(&self) -> Option<u64> {
-        self.native_window
+    /// Returns 0 until the background thread discovers the HWND.
+    pub fn get_native_window(&self) -> u64 {
+        self.native_window.load(Ordering::Relaxed)
     }
 
     pub fn info(&self) -> SessionInfo {
@@ -700,8 +698,11 @@ impl RDPLauncher {
             let context_addr = context as usize;
             let state = Arc::new(AtomicU8::new(state_to_u8(RDPConnectionState::Connecting)));
             let state_clone = Arc::clone(&state);
+            let native_window = Arc::new(AtomicU64::new(0));
+            let nw_clone = Arc::clone(&native_window);
             let sid = session_id.to_string();
             let host = profile.hostname.clone();
+            let parent_hwnd_for_thread = parent_window_id.unwrap_or(0);
 
             // Background thread waits for the FreeRDP session to finish
             let thread = std::thread::spawn(move || {
@@ -712,6 +713,28 @@ impl RDPLauncher {
                     state_to_u8(RDPConnectionState::Connected),
                     Ordering::Relaxed,
                 );
+
+                // On Windows, poll for the FreeRDP HWND (class "wfreerdp")
+                // created by wf_post_connect after the connection is established.
+                #[cfg(target_os = "windows")]
+                if parent_hwnd_for_thread != 0 {
+                    use crate::window_embedding::find_freerdp_child_window;
+                    for attempt in 0..200 {
+                        if let Some(hwnd) =
+                            find_freerdp_child_window(parent_hwnd_for_thread as usize)
+                        {
+                            nw_clone.store(hwnd as u64, Ordering::Relaxed);
+                            info!(
+                                "Session {} — captured HWND=0x{:x} (attempt {})",
+                                sid, hwnd, attempt
+                            );
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                let _ = (nw_clone, parent_hwnd_for_thread);
 
                 // Wait for internal FreeRDP thread to complete.
                 // rdpClientContext extends rdpContext; the thread handle is in the
@@ -737,10 +760,6 @@ impl RDPLauncher {
                 freerdp_sys::freerdp_client_context_free(ctx);
                 info!("Session {} cleaned up", sid);
             });
-
-            // TODO: Extract HWND from wfContext after freerdp_client_start().
-            // Requires bindgen to expose wfContext struct fields.
-            let native_window: Option<u64> = None;
 
             Ok(RDPSession {
                 id: session_id.to_string(),
@@ -933,6 +952,16 @@ impl RDPLauncher {
         self.sessions
             .get(session_id)
             .and_then(|s| s.lock().ok().map(|s| s.info()))
+    }
+
+    /// Get the native window handle (HWND) for a session.
+    /// Returns 0 if the session doesn't exist or the HWND hasn't been captured yet.
+    pub fn get_native_window(&self, session_id: &str) -> u64 {
+        self.sessions
+            .get(session_id)
+            .and_then(|s| s.lock().ok())
+            .map(|s| s.get_native_window())
+            .unwrap_or(0)
     }
 
     /// Send a dynamic resolution update to an active session.

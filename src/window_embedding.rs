@@ -38,6 +38,12 @@ mod win32 {
             flags: UINT,
         ) -> BOOL;
         pub fn SetParent(child: HWND, parent: HWND) -> HWND;
+        pub fn FindWindowExW(
+            parent: HWND,
+            child_after: HWND,
+            class_name: *const u16,
+            window_name: *const u16,
+        ) -> HWND;
     }
 }
 
@@ -49,6 +55,27 @@ pub struct ContentRect {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+/// Find the FreeRDP child window (class "wfreerdp") under the given parent HWND.
+/// Returns the HWND as usize, or None if not found.
+#[cfg(target_os = "windows")]
+pub fn find_freerdp_child_window(parent_hwnd: usize) -> Option<usize> {
+    // FreeRDP's Windows client registers class "wfreerdp" in wf_pre_connect
+    let class_name: Vec<u16> = "wfreerdp\0".encode_utf16().collect();
+    let hwnd = unsafe {
+        win32::FindWindowExW(
+            parent_hwnd as *mut _,
+            std::ptr::null_mut(),
+            class_name.as_ptr(),
+            std::ptr::null(),
+        )
+    };
+    if hwnd.is_null() {
+        None
+    } else {
+        Some(hwnd as usize)
+    }
 }
 
 /// Manages native window containers for embedded RDP sessions.
@@ -99,10 +126,14 @@ impl EmbeddingHost {
     }
 
     /// Register a session's native window handle for embedding management.
-    #[allow(dead_code)] // Will be called once wfContext HWND extraction is implemented
     pub fn add_session(&mut self, session_id: &str, hwnd: usize) {
         info!("add_session {} (hwnd=0x{:x})", session_id, hwnd);
         self.sessions.insert(session_id.to_string(), hwnd);
+    }
+
+    /// Check if a session's window handle is already tracked.
+    pub fn has_session(&self, session_id: &str) -> bool {
+        self.sessions.contains_key(session_id)
     }
 
     /// Show a session's embedded window and reparent it into the WebUI window.

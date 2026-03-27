@@ -73,16 +73,31 @@ impl SessionManager {
             return false;
         }
 
-        // Hide all other sessions
-        for id in self.rects.keys() {
-            if id != session_id {
-                self.embedding.hide_session(id);
+        // Lazy-register: if the session's HWND has been captured by the
+        // background thread but isn't yet tracked in the embedding host,
+        // register it now before trying to show/reposition.
+        if !self.embedding.has_session(session_id) {
+            let hwnd = self.launcher.get_native_window(session_id);
+            if hwnd != 0 {
+                self.embedding.add_session(session_id, hwnd as usize);
             }
         }
 
+        // Hide all other sessions
+        let other_ids: Vec<String> = self
+            .rects
+            .keys()
+            .filter(|id| id.as_str() != session_id)
+            .cloned()
+            .collect();
+        for id in &other_ids {
+            self.embedding.hide_session(id);
+        }
+
         // Show and reposition the target session
-        self.rects.insert(session_id.to_string(), rect);
+        self.rects.insert(session_id.to_string(), rect.clone());
         self.embedding.show_session(session_id);
+        self.embedding.reposition_session(session_id, &rect);
         self.active_session = Some(session_id.to_string());
         true
     }
