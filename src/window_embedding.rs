@@ -15,8 +15,11 @@ use std::collections::HashMap;
 #[cfg(target_os = "windows")]
 mod win32 {
     use std::ffi::c_int;
+    #[allow(clippy::upper_case_acronyms)]
     type HWND = *mut std::ffi::c_void;
+    #[allow(clippy::upper_case_acronyms)]
     type BOOL = c_int;
+    #[allow(clippy::upper_case_acronyms)]
     type UINT = u32;
 
     pub const SW_SHOW: c_int = 5;
