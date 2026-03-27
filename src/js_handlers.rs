@@ -392,10 +392,15 @@ unsafe extern "C" fn on_certificate_response(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn on_auth_response(e: *mut webui_sys::webui_event_t) {
+    // Read the success arg as both bool and string to diagnose WebUI marshaling
     let success = unsafe { webui_sys::webui_get_bool_at(e, 0) };
     let username = unsafe { get_string_at(e, 1) };
     let password = unsafe { get_string_at(e, 2) };
     let domain = unsafe { get_string_at(e, 3) };
+    info!(
+        "authResponse: success={}, user={}, domain={}",
+        success, username, domain
+    );
     if let Some(dm) = DIALOG_STATE.get() {
         dm.on_auth_response(success, &username, &password, &domain);
     } else {
