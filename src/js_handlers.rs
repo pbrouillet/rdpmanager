@@ -392,21 +392,12 @@ unsafe extern "C" fn on_certificate_response(e: *mut webui_sys::webui_event_t) {
 }
 
 unsafe extern "C" fn on_auth_response(e: *mut webui_sys::webui_event_t) {
-    let json_str = unsafe { get_string_at(e, 0) };
+    let success = unsafe { webui_sys::webui_get_bool_at(e, 0) };
+    let username = unsafe { get_string_at(e, 1) };
+    let password = unsafe { get_string_at(e, 2) };
+    let domain = unsafe { get_string_at(e, 3) };
     if let Some(dm) = DIALOG_STATE.get() {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            let success = value
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let username = value.get("username").and_then(|v| v.as_str()).unwrap_or("");
-            let password = value.get("password").and_then(|v| v.as_str()).unwrap_or("");
-            let domain = value.get("domain").and_then(|v| v.as_str()).unwrap_or("");
-            dm.on_auth_response(success, username, password, domain);
-        } else {
-            warn!("authResponse: failed to parse JSON: {}", json_str);
-            dm.on_auth_response(false, "", "", "");
-        }
+        dm.on_auth_response(success, &username, &password, &domain);
     } else {
         warn!("authResponse: DialogManager not initialized");
     }
