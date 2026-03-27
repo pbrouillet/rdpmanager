@@ -23,12 +23,23 @@ fn main() {
 
         if let Ok(output) = check {
             if output.status.success() {
-                let _ = Command::new("git")
-                    .args(["apply", "--3way"])
+                // Use plain `apply` (not `--3way`) — --3way can fail on Windows
+                // even when --check passes, due to merge-base resolution issues.
+                let result = Command::new("git")
+                    .arg("apply")
                     .arg(&patch)
                     .current_dir(&webui_dir)
                     .status();
-                println!("cargo:warning=Applied navigate-passthrough.patch to WebUI");
+                match result {
+                    Ok(s) if s.success() => {
+                        println!("cargo:warning=Applied navigate-passthrough.patch to WebUI");
+                    }
+                    _ => {
+                        println!(
+                            "cargo:warning=Failed to apply navigate-passthrough.patch to WebUI"
+                        );
+                    }
+                }
             }
             // If check fails, patch is likely already applied — that's fine
         }

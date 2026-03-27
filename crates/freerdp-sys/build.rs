@@ -27,12 +27,23 @@ fn main() {
 
         if let Ok(output) = check {
             if output.status.success() {
-                let _ = Command::new("git")
-                    .args(["apply", "--3way"])
+                // Use plain `apply` (not `--3way`) — --3way can fail on Windows
+                // even when --check passes, due to merge-base resolution issues.
+                let result = Command::new("git")
+                    .arg("apply")
                     .arg(&patch)
                     .current_dir(&freerdp_dir)
                     .status();
-                println!("cargo:warning=Applied aad-fallback-parse.patch to FreeRDP");
+                match result {
+                    Ok(s) if s.success() => {
+                        println!("cargo:warning=Applied aad-fallback-parse.patch to FreeRDP");
+                    }
+                    _ => {
+                        println!(
+                            "cargo:warning=Failed to apply aad-fallback-parse.patch to FreeRDP"
+                        );
+                    }
+                }
             }
         }
     }
@@ -153,9 +164,9 @@ fn main() {
     // cJSON / jansson for WinPR JSON backend (needed for AAD auth)
     if is_macos {
         if let Some(dir) = brew_prefix("cjson") {
-            config.define("cJSON_DIR", &format!("{}/lib/cmake/cJSON", dir));
+            config.define("cJSON_DIR", format!("{}/lib/cmake/cJSON", dir));
         } else if let Some(dir) = brew_prefix("jansson") {
-            config.define("JANSSON_DIR", &format!("{}/lib/cmake/jansson", dir));
+            config.define("JANSSON_DIR", format!("{}/lib/cmake/jansson", dir));
         }
     }
 

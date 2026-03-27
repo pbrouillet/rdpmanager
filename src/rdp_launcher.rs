@@ -199,7 +199,7 @@ unsafe fn handle_auth(
     password: *mut *mut std::ffi::c_char,
     domain: *mut *mut std::ffi::c_char,
     is_gateway: bool,
-) -> i32 {
+) -> freerdp_sys::BOOL {
     let state = {
         let map = get_session_map().lock().unwrap();
         map.get(&(instance as usize)).cloned()
@@ -207,7 +207,7 @@ unsafe fn handle_auth(
 
     let Some(state) = state else {
         warn!("authenticate_cb: no session found for instance");
-        return 0;
+        return 0 as freerdp_sys::BOOL;
     };
 
     let request = AuthRequest {
@@ -246,9 +246,9 @@ unsafe fn handle_auth(
             }
             *domain = c_strdup(&response.domain);
         }
-        1 // TRUE
+        1 as freerdp_sys::BOOL // TRUE
     } else {
-        0 // FALSE
+        0 as freerdp_sys::BOOL // FALSE
     }
 }
 
@@ -258,7 +258,7 @@ unsafe extern "C" fn authenticate_cb(
     username: *mut *mut std::ffi::c_char,
     password: *mut *mut std::ffi::c_char,
     domain: *mut *mut std::ffi::c_char,
-) -> i32 {
+) -> freerdp_sys::BOOL {
     handle_auth(instance, username, password, domain, false)
 }
 
@@ -268,7 +268,7 @@ unsafe extern "C" fn gateway_authenticate_cb(
     username: *mut *mut std::ffi::c_char,
     password: *mut *mut std::ffi::c_char,
     domain: *mut *mut std::ffi::c_char,
-) -> i32 {
+) -> freerdp_sys::BOOL {
     handle_auth(instance, username, password, domain, true)
 }
 
@@ -774,7 +774,7 @@ impl RDPLauncher {
                 freerdp_sys::freerdp_settings_set_bool(
                     settings,
                     freerdp_sys::$key as _,
-                    $val as i32,
+                    $val as freerdp_sys::BOOL,
                 );
             };
         }
