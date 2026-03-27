@@ -96,6 +96,23 @@ pub fn find_freerdp_window(context_addr: usize) -> Option<usize> {
     None
 }
 
+/// Immediately reparent a FreeRDP HWND into the WebUI container.
+/// Called from the background thread as soon as the HWND is discovered.
+/// Hides the window, strips decorations, and reparents — but does NOT
+/// position or show it (that happens later in show_session/reposition_session).
+#[cfg(target_os = "windows")]
+pub fn reparent_to_webui(hwnd: usize, parent_hwnd: usize) {
+    unsafe {
+        win32::ShowWindow(hwnd as *mut _, win32::SW_HIDE);
+        win32::SetWindowLongPtrW(hwnd as *mut _, win32::GWL_STYLE, win32::WS_CHILD);
+        win32::SetParent(hwnd as *mut _, parent_hwnd as *mut _);
+    }
+    info!(
+        "reparent_to_webui: hwnd=0x{:x} → parent=0x{:x}",
+        hwnd, parent_hwnd
+    );
+}
+
 /// Manages native window containers for embedded RDP sessions.
 ///
 /// On Windows, reparents FreeRDP HWNDs into the WebUI browser window and
@@ -154,27 +171,13 @@ impl EmbeddingHost {
         self.sessions.contains_key(session_id)
     }
 
-    /// Show a session's embedded window — reparent into the WebUI window
-    /// and change style from top-level to child.
+    /// Show a session's embedded window (already reparented by the background thread).
     pub fn show_session(&self, session_id: &str) {
         #[cfg(target_os = "windows")]
         {
             if let Some(&hwnd) = self.sessions.get(session_id) {
-                let parent = self.get_parent_window_id().unwrap_or(0) as usize;
-                info!(
-                    "show_session {} (hwnd=0x{:x}, parent=0x{:x})",
-                    session_id, hwnd, parent
-                );
+                info!("show_session {} (hwnd=0x{:x})", session_id, hwnd);
                 unsafe {
-                    if parent != 0 {
-                        // Strip top-level decorations, make it a child window
-                        win32::SetWindowLongPtrW(
-                            hwnd as *mut _,
-                            win32::GWL_STYLE,
-                            win32::WS_CHILD | win32::WS_VISIBLE,
-                        );
-                        win32::SetParent(hwnd as *mut _, parent as *mut _);
-                    }
                     win32::ShowWindow(hwnd as *mut _, win32::SW_SHOW);
                 }
             } else {

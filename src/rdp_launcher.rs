@@ -702,6 +702,7 @@ impl RDPLauncher {
             let nw_clone = Arc::clone(&native_window);
             let sid = session_id.to_string();
             let host = profile.hostname.clone();
+            let parent_hwnd = parent_window_id.unwrap_or(0) as usize;
 
             // Background thread waits for the FreeRDP session to finish
             let thread = std::thread::spawn(move || {
@@ -714,11 +715,11 @@ impl RDPLauncher {
                 );
 
                 // On Windows, poll for the FreeRDP HWND (class "wfreerdp").
-                // FreeRDP sets GWLP_USERDATA to the wfContext pointer (same
-                // address as rdpContext), so we match by context_addr.
+                // As soon as we find it, immediately reparent into the WebUI
+                // container so the window never appears as a standalone popup.
                 #[cfg(target_os = "windows")]
                 {
-                    use crate::window_embedding::find_freerdp_window;
+                    use crate::window_embedding::{find_freerdp_window, reparent_to_webui};
                     for attempt in 0..200 {
                         if let Some(hwnd) = find_freerdp_window(context_addr) {
                             nw_clone.store(hwnd as u64, Ordering::Relaxed);
@@ -726,13 +727,16 @@ impl RDPLauncher {
                                 "Session {} — captured HWND=0x{:x} (attempt {})",
                                 sid, hwnd, attempt
                             );
+                            if parent_hwnd != 0 {
+                                reparent_to_webui(hwnd, parent_hwnd);
+                            }
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                 }
                 #[cfg(not(target_os = "windows"))]
-                let _ = nw_clone;
+                let _ = (nw_clone, parent_hwnd);
 
                 // Wait for internal FreeRDP thread to complete.
                 // rdpClientContext extends rdpContext; the thread handle is in the
@@ -776,7 +780,7 @@ impl RDPLauncher {
         &self,
         settings: *mut freerdp_sys::rdpSettings,
         profile: &ConnectionProfile,
-        _parent_window_id: Option<u64>,
+        _parent_window_id: Option<u64>, // not set on FreeRDP settings; used by caller for reparenting
     ) {
         use std::ffi::CString;
 
