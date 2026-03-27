@@ -787,6 +787,9 @@ impl RDPLauncher {
         if !profile.domain.is_empty() {
             set_str!(FreeRDP_Domain, profile.domain);
         }
+        if !profile.plaintext_password.is_empty() {
+            set_str!(FreeRDP_Password, profile.plaintext_password);
+        }
 
         // Display
         set_u32!(FreeRDP_DesktopWidth, profile.width);

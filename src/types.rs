@@ -19,6 +19,13 @@ pub struct ConnectionProfile {
     pub username: String,
     #[serde(default)]
     pub domain: String,
+    /// Encrypted password blob (base64-encoded AES-256-GCM). Stored in DB.
+    #[serde(default)]
+    pub encrypted_password: String,
+    /// Transient plaintext password (never persisted). Used at connect time
+    /// after decrypting encrypted_password, or passed from UI for encryption.
+    #[serde(default)]
+    pub plaintext_password: String,
     // Display
     #[serde(default = "default_width")]
     pub width: u32,

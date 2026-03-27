@@ -16,6 +16,7 @@
 //! - `utils` — URL encoding, base64url, UUID, JWT helpers
 
 mod config_manager;
+mod crypto;
 mod dialog_manager;
 mod embedded_ui;
 mod feed_discovery;

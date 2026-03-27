@@ -212,15 +212,35 @@ impl ConfigManager {
             }
         };
         let name = match val.get("name").and_then(|n| n.as_str()) {
-            Some(n) => n,
+            Some(n) => n.to_string(),
             None => {
                 error!("save_connection: missing 'name' field");
                 return false;
             }
         };
+
+        // Handle password encryption: if plaintext_password is provided,
+        // encrypt it into encrypted_password and strip the plaintext.
+        let mut val = val;
+        if let Some(plaintext) = val.get("plaintext_password").and_then(|v| v.as_str()) {
+            if !plaintext.is_empty() {
+                if let Some(encrypted) = self.encrypt_password(plaintext) {
+                    val["encrypted_password"] = serde_json::Value::String(encrypted);
+                } else {
+                    error!("save_connection: failed to encrypt password");
+                }
+            }
+        }
+        // Never persist plaintext password or save_password flag
+        if let Some(obj) = val.as_object_mut() {
+            obj.remove("plaintext_password");
+            obj.remove("save_password");
+        }
+
+        let sanitized_json = serde_json::to_string(&val).unwrap_or_default();
         match db.execute(
             "INSERT OR REPLACE INTO connections (name, profile_json) VALUES (?1, ?2)",
-            rusqlite::params![name, json_str],
+            rusqlite::params![name, sanitized_json],
         ) {
             Ok(_) => {
                 info!("Saved connection: {name}");
@@ -787,6 +807,10 @@ impl ConfigManager {
                 expires_at INTEGER NOT NULL,
                 PRIMARY KEY (cache_key, scope)
             );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
         "#;
 
         if let Err(e) = db.execute_batch(sql) {
@@ -794,6 +818,72 @@ impl ConfigManager {
             return false;
         }
         true
+    }
+
+    /// Get or create the database encryption key for password storage.
+    /// The key is stored in the settings table as a hex-encoded 256-bit value.
+    pub fn get_encryption_key(&self) -> Option<[u8; 32]> {
+        let db = self.db.as_ref()?;
+
+        // Try to load existing key
+        let existing: Option<String> = db
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'encryption_key'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(hex) = existing {
+            match crate::crypto::key_from_hex(&hex) {
+                Ok(key) => return Some(key),
+                Err(e) => {
+                    error!("Corrupt encryption key in settings: {e}");
+                    return None;
+                }
+            }
+        }
+
+        // Generate and store a new key
+        let key = crate::crypto::generate_key();
+        let hex = crate::crypto::key_to_hex(&key);
+        match db.execute(
+            "INSERT INTO settings (key, value) VALUES ('encryption_key', ?1)",
+            rusqlite::params![hex],
+        ) {
+            Ok(_) => {
+                info!("Generated new database encryption key");
+                Some(key)
+            }
+            Err(e) => {
+                error!("Failed to store encryption key: {e}");
+                None
+            }
+        }
+    }
+
+    /// Encrypt a plaintext password using the database encryption key.
+    pub fn encrypt_password(&self, plaintext: &str) -> Option<String> {
+        let key = self.get_encryption_key()?;
+        match crate::crypto::encrypt(&key, plaintext) {
+            Ok(encrypted) => Some(encrypted),
+            Err(e) => {
+                error!("Password encryption failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Decrypt an encrypted password using the database encryption key.
+    pub fn decrypt_password(&self, encrypted: &str) -> Option<String> {
+        let key = self.get_encryption_key()?;
+        match crate::crypto::decrypt(&key, encrypted) {
+            Ok(plaintext) => Some(plaintext),
+            Err(e) => {
+                error!("Password decryption failed: {e}");
+                None
+            }
+        }
     }
 
     fn resolve_config_dir() -> PathBuf {

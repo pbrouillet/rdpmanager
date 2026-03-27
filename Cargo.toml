@@ -32,6 +32,8 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 # Crypto
 sha2 = "0.10"
 base64 = "0.22"
+aes-gcm = "0.10"
+rand = "0.8"
 
 # C runtime (malloc/free for FreeRDP callback strings)
 libc = "0.2"

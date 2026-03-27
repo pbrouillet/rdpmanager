@@ -5,6 +5,10 @@ export interface ConnectionProfile {
   port: number;
   username: string;
   domain: string;
+  // Password (encrypted at rest)
+  encrypted_password: string;
+  plaintext_password: string;
+  save_password: boolean;
   // Advanced options
   home_drive: boolean;
   clipboard: boolean;
@@ -164,6 +168,9 @@ export function defaultConnectionProfile(): ConnectionProfile {
     port: 3389,
     username: '',
     domain: '',
+    encrypted_password: '',
+    plaintext_password: '',
+    save_password: false,
     home_drive: false,
     clipboard: true,
     cert_tofu: false,

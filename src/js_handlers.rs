@@ -233,7 +233,7 @@ unsafe extern "C" fn on_connect_rdp(e: *mut webui_sys::webui_event_t) {
     }
 
     // Parse connection profile
-    let profile: ConnectionProfile = match serde_json::from_str(&json_str) {
+    let mut profile: ConnectionProfile = match serde_json::from_str(&json_str) {
         Ok(v) => v,
         Err(err) => {
             let msg = format!(
@@ -248,6 +248,15 @@ unsafe extern "C" fn on_connect_rdp(e: *mut webui_sys::webui_event_t) {
     if profile.hostname.is_empty() {
         unsafe { return_string(e, r#"{"success":false,"error":"Hostname cannot be empty"}"#) };
         return;
+    }
+
+    // Decrypt stored password for this session (transient — not persisted)
+    if !profile.encrypted_password.is_empty() && profile.plaintext_password.is_empty() {
+        if let Some(password) =
+            with_config(|cm| cm.decrypt_password(&profile.encrypted_password)).flatten()
+        {
+            profile.plaintext_password = password;
+        }
     }
 
     info!("connectRDP: launching session to {}", profile.hostname);

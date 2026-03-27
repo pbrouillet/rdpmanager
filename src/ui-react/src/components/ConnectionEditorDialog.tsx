@@ -118,7 +118,11 @@ export function ConnectionEditorDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm({ ...profile });
+    setForm({
+      ...profile,
+      save_password: !!profile.encrypted_password,
+      plaintext_password: '',
+    });
     // Initialize overrides from profile (backward compat: old profiles have all fields overridden)
     const initial = profile.overridden_fields
       ? new Set(profile.overridden_fields)
@@ -161,7 +165,12 @@ export function ConnectionEditorDialog({
   }, []);
 
   const handleSave = () => {
-    onSave({ ...form, overridden_fields: Array.from(overrides) });
+    const profile = { ...form, overridden_fields: Array.from(overrides) };
+    if (!profile.save_password) {
+      profile.plaintext_password = '';
+      profile.encrypted_password = '';
+    }
+    onSave(profile);
   };
 
   /** Render an inheritable boolean checkbox with override toggle */
@@ -277,6 +286,22 @@ export function ConnectionEditorDialog({
                   />
                 </div>
               </div>
+
+              <div className={styles.field}>
+                <Label htmlFor="conn-password">Password</Label>
+                <Input
+                  id="conn-password"
+                  type="password"
+                  placeholder={form.encrypted_password ? '••••••••' : 'Optional'}
+                  value={form.plaintext_password}
+                  onChange={(_, d) => update('plaintext_password', d.value)}
+                />
+              </div>
+              <Checkbox
+                label="Save password (encrypted)"
+                checked={form.save_password}
+                onChange={(_, d) => update('save_password', d.checked === true)}
+              />
 
               <Divider />
 
