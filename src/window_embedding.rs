@@ -69,7 +69,7 @@ pub struct ContentRect {
 /// rdpContext due to struct extension.
 #[cfg(target_os = "windows")]
 pub fn find_freerdp_window(context_addr: usize) -> Option<usize> {
-    let class_name: Vec<u16> = "wfreerdp\0".encode_utf16().collect();
+    let class_name: Vec<u16> = "FreeRDP\0".encode_utf16().collect();
     let mut hwnd = unsafe {
         win32::FindWindowExW(
             std::ptr::null_mut(), // search top-level windows

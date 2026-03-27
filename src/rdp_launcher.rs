@@ -118,6 +118,12 @@ struct SessionCallbackState {
     config_manager: Option<Arc<Mutex<ConfigManager>>>,
     gateway_hostname: String,
     use_manual_code_flow: bool,
+    /// Parent HWND for reparenting (Windows only).
+    parent_hwnd: usize,
+    /// Shared atomic for the captured FreeRDP native window handle.
+    native_window: Arc<AtomicU64>,
+    /// Original PostConnect callback (wf_post_connect) to chain through.
+    original_post_connect: freerdp_sys::pConnectCallback,
 }
 
 /// Maps FreeRDP instance pointers to their callback state.
@@ -188,6 +194,52 @@ unsafe extern "C" fn verify_certificate_cb(
     };
 
     state.dialog_manager.handle_certificate_verify(&info) as u32
+}
+
+/// FreeRDP PostConnect callback wrapper.
+/// Chains to the original wf_post_connect (which creates the window), then
+/// captures the HWND and reparents it into the WebUI container immediately.
+unsafe extern "C" fn post_connect_cb(instance: *mut freerdp_sys::freerdp) -> freerdp_sys::BOOL {
+    let state = {
+        let map = get_session_map().lock().unwrap();
+        map.get(&(instance as usize)).cloned()
+    };
+
+    let Some(state) = state else {
+        warn!("post_connect_cb: no session found for instance");
+        return 0;
+    };
+
+    // Call the original PostConnect (wf_post_connect) which creates the window
+    let result = if let Some(original) = state.original_post_connect {
+        original(instance)
+    } else {
+        1 // TRUE — no original to call
+    };
+
+    // If the original succeeded, find and reparent the HWND
+    #[cfg(target_os = "windows")]
+    if result != 0 {
+        let context_addr = (*instance).context as usize;
+        use crate::window_embedding::{find_freerdp_window, reparent_to_webui};
+        if let Some(hwnd) = find_freerdp_window(context_addr) {
+            state.native_window.store(hwnd as u64, Ordering::Relaxed);
+            info!(
+                "post_connect_cb: captured HWND=0x{:x} for context=0x{:x}",
+                hwnd, context_addr
+            );
+            if state.parent_hwnd != 0 {
+                reparent_to_webui(hwnd, state.parent_hwnd);
+            }
+        } else {
+            warn!(
+                "post_connect_cb: could not find FreeRDP window for context=0x{:x}",
+                context_addr
+            );
+        }
+    }
+
+    result
 }
 
 /// Shared implementation for Authenticate and GatewayAuthenticate callbacks.
@@ -639,8 +691,15 @@ impl RDPLauncher {
 
             // Install FreeRDP callbacks for certificate verification and authentication
             let instance = (*context).instance;
+            let native_window = Arc::new(AtomicU64::new(0));
+            let parent_hwnd = parent_window_id.unwrap_or(0) as usize;
+
             let instance_addr = if !instance.is_null() {
                 if let Some(dm) = &self.dialog_manager {
+                    // Save original PostConnect (wf_post_connect on Windows)
+                    // before overriding with our wrapper.
+                    let original_post_connect = (*instance).PostConnect;
+
                     let cb_state = Arc::new(SessionCallbackState {
                         dialog_manager: Arc::clone(dm),
                         hostname: profile.hostname.clone(),
@@ -648,12 +707,16 @@ impl RDPLauncher {
                         config_manager: self.config_manager.clone(),
                         gateway_hostname: profile.gateway_hostname.clone(),
                         use_manual_code_flow: profile.use_manual_code_flow,
+                        parent_hwnd,
+                        native_window: Arc::clone(&native_window),
+                        original_post_connect,
                     });
                     get_session_map()
                         .lock()
                         .unwrap()
                         .insert(instance as usize, cb_state);
 
+                    (*instance).PostConnect = Some(post_connect_cb);
                     (*instance).VerifyCertificateEx = Some(verify_certificate_cb);
                     (*instance).Authenticate = Some(authenticate_cb);
                     (*instance).GatewayAuthenticate = Some(gateway_authenticate_cb);
@@ -698,13 +761,11 @@ impl RDPLauncher {
             let context_addr = context as usize;
             let state = Arc::new(AtomicU8::new(state_to_u8(RDPConnectionState::Connecting)));
             let state_clone = Arc::clone(&state);
-            let native_window = Arc::new(AtomicU64::new(0));
-            let nw_clone = Arc::clone(&native_window);
             let sid = session_id.to_string();
             let host = profile.hostname.clone();
-            let parent_hwnd = parent_window_id.unwrap_or(0) as usize;
 
-            // Background thread waits for the FreeRDP session to finish
+            // Background thread waits for the FreeRDP session to finish.
+            // HWND capture is handled by the PostConnect callback, not polling.
             let thread = std::thread::spawn(move || {
                 let ctx = context_addr as *mut freerdp_sys::rdpContext;
                 info!("Session {} ({}) — waiting for FreeRDP thread", sid, host);
@@ -713,30 +774,6 @@ impl RDPLauncher {
                     state_to_u8(RDPConnectionState::Connected),
                     Ordering::Relaxed,
                 );
-
-                // On Windows, poll for the FreeRDP HWND (class "wfreerdp").
-                // As soon as we find it, immediately reparent into the WebUI
-                // container so the window never appears as a standalone popup.
-                #[cfg(target_os = "windows")]
-                {
-                    use crate::window_embedding::{find_freerdp_window, reparent_to_webui};
-                    for attempt in 0..200 {
-                        if let Some(hwnd) = find_freerdp_window(context_addr) {
-                            nw_clone.store(hwnd as u64, Ordering::Relaxed);
-                            info!(
-                                "Session {} — captured HWND=0x{:x} (attempt {})",
-                                sid, hwnd, attempt
-                            );
-                            if parent_hwnd != 0 {
-                                reparent_to_webui(hwnd, parent_hwnd);
-                            }
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                let _ = (nw_clone, parent_hwnd);
 
                 // Wait for internal FreeRDP thread to complete.
                 // rdpClientContext extends rdpContext; the thread handle is in the
