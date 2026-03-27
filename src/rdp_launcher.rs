@@ -776,7 +776,7 @@ impl RDPLauncher {
         &self,
         settings: *mut freerdp_sys::rdpSettings,
         profile: &ConnectionProfile,
-        parent_window_id: Option<u64>,
+        _parent_window_id: Option<u64>,
     ) {
         use std::ffi::CString;
 
